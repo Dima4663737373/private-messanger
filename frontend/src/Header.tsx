@@ -41,7 +41,7 @@ export const Header: FC<HeaderProps> = ({ programId }) => {
             <header className="header-container">
                 <div className="logo-section">
                     <div className="logo-icon" />
-                    <span className="logo-text">ALE<span className="logo-highlight">MESSENGER</span></span>
+                    <span className="logo-text"><span className="logo-highlight">GHOST</span></span>
                 </div>
                 
                 <button 

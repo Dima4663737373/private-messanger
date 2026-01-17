@@ -1,4 +1,4 @@
-# Private Messenger on Aleo
+# Ghost on Aleo
 
 A decentralized private messaging application built on the Aleo blockchain, enabling encrypted peer-to-peer messaging with full privacy guarantees.
 
@@ -44,7 +44,7 @@ A React + TypeScript application that:
 1. Clone the repository:
 ```bash
 git clone <repository-url>
-cd private_messenger
+cd ghost
 ```
 
 2. Install frontend dependencies:
@@ -113,7 +113,7 @@ leo deploy --network testnet
 ## Project Structure
 
 ```
-private_messenger/
+ghost/
 ├── src/
 │   └── main.leo              # Aleo smart contract
 ├── frontend/

@@ -1739,10 +1739,10 @@ function App() {
     const wallets = useMemo(
         () => [
             new LeoWalletAdapter({
-                appName: "Private Messenger App",
+                appName: "Ghost",
             }),
             new PuzzleWalletAdapter({
-                appName: "Private Messenger App",
+                appName: "Ghost",
                 programIdPermissions: {
                     [WalletAdapterNetwork.TestnetBeta]: [PROGRAM_ID],
                     [WalletAdapterNetwork.MainnetBeta]: [PROGRAM_ID]
