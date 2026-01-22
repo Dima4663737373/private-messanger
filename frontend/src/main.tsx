@@ -1,4 +1,4 @@
-import { StrictMode } from 'react'
+import React, { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import './index.css'
 import App from './App.tsx'
@@ -6,7 +6,6 @@ import ErrorBoundary from './components/ErrorBoundary'
 
 console.log('🚀 Starting app initialization...');
 console.log('React version:', React?.version || 'unknown');
-console.log('ReactDOM version:', ReactDOM?.version || 'unknown');
 
 // Wait for DOM to be ready
 if (document.readyState === 'loading') {
