@@ -14,13 +14,20 @@ export default defineConfig({
     exclude: ['@provablehq/wasm'],
   },
   build: {
-    sourcemap: false,
+    sourcemap: true,
     minify: 'esbuild',
     rollupOptions: {
       output: {
         manualChunks: undefined,
       },
     },
+    commonjsOptions: {
+      include: [/node_modules/],
+      transformMixedEsModules: true,
+    },
+  },
+  resolve: {
+    dedupe: ['react', 'react-dom'],
   },
   server: {
     proxy: {
