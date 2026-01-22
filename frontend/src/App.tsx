@@ -160,7 +160,7 @@ const MessengerUI: FC<NetworkProps> = ({ network }) => {
     const [fetchedProfile, setFetchedProfile] = useState<Profile | null>(null);
     const [isEditingProfile, setIsEditingProfile] = useState(false);
     const [sentHistory, setSentHistory] = useState<SentHistoryItem[]>([]);
-    const [profiles] = useState<Map<string, Profile>>(() => new Map());
+    // const [profiles] = useState<Map<string, Profile>>(() => new Map()); // Unused for now
     const [lastSyncTime, setLastSyncTime] = useState<Date | null>(null);
     const [importTxId, setImportTxId] = useState("");
     const [scanProgress, setScanProgress] = useState(0);
@@ -642,7 +642,8 @@ const MessengerUI: FC<NetworkProps> = ({ network }) => {
         return `${origin.replace(/\/$/, "")}/v1/${networkPath}`;
     };
 
-    const fetchRecordsFromWalletAPI = async (forceRefresh: boolean = false) => {
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    const fetchRecordsFromWalletAPI = async (_forceRefresh: boolean = false) => {
         try {
             console.log(`Fetching records from wallet API (force=${forceRefresh})...`);
             
@@ -982,7 +983,7 @@ const MessengerUI: FC<NetworkProps> = ({ network }) => {
             return;
         }
 
-        const startTime = Date.now();
+        // const startTime = Date.now(); // Unused
         setIsSyncing(true);
         isSyncingRef.current = true;
         setScanProgress(0);
@@ -1067,7 +1068,7 @@ const MessengerUI: FC<NetworkProps> = ({ network }) => {
                 
                 // Get current block height
                 let currentHeight = 0;
-                let lastSyncedHeight = 0;
+                // let lastSyncedHeight = 0; // Unused
                 
                 try {
                     const heightUrl = `${base}/latest/height`;
@@ -1300,7 +1301,10 @@ const MessengerUI: FC<NetworkProps> = ({ network }) => {
                 // Log new messages specifically
                 if (allMessagesMap.size > 0) {
                     const newMessageIds = Array.from(allMessagesMap.keys());
-                    const newMessagesInResult = result.filter(m => newMessageIds.includes(m.id));
+                    const newMessagesInResult = result.filter(m => {
+                        if (!m.id) return false;
+                        return newMessageIds.includes(m.id);
+                    });
                     console.log(`📊 Returning ${result.length} messages to state (${newMessagesInResult.length} new messages included)`);
                     if (newMessagesInResult.length > 0) {
                         console.log(`✅ New messages in result:`, newMessagesInResult.map(m => ({
@@ -1344,7 +1348,10 @@ const MessengerUI: FC<NetworkProps> = ({ network }) => {
                     } else if (foundNew.length > 0) {
                         console.log(`✅ SUCCESS: All ${foundNew.length} new messages are in state!`);
                         // Log first few new messages to verify they're correct
-                        const newMessages = current.filter(m => newMessageIds.includes(m.id));
+                        const newMessages = current.filter(m => {
+                            if (!m.id) return false;
+                            return newMessageIds.includes(m.id);
+                        });
                         console.log(`📋 New messages in state:`, newMessages.slice(0, 3).map(m => ({
                             id: m.id?.substring(0, 20),
                             type: m.type,
@@ -1506,7 +1513,12 @@ const MessengerUI: FC<NetworkProps> = ({ network }) => {
                             hasPermission={hasPermission} 
                             onReconnect={() => {
                                 disconnect();
-                                setTimeout(() => connect(), 100);
+                                // autoConnect will handle reconnection
+                                setTimeout(() => {
+                                    if (wallet?.adapter) {
+                                        wallet.adapter.connect(DecryptPermission.OnChainHistory, network, [PROGRAM_ID]).catch(console.error);
+                                    }
+                                }, 100);
                             }} 
                         />
 
