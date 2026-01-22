@@ -1068,7 +1068,7 @@ const MessengerUI: FC<NetworkProps> = ({ network }) => {
                 
                 // Get current block height
                 let currentHeight = 0;
-                // let lastSyncedHeight = 0; // Unused
+                let lastSyncedHeight = 0;
                 
                 try {
                     const heightUrl = `${base}/latest/height`;
