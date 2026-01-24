@@ -1,4 +1,4 @@
-program priv_messenger_leotest_007.aleo;
+program priv_messenger_leotest_008.aleo;
 
 record Donation:
     owner as address.public;
@@ -39,11 +39,19 @@ mapping sent_donation_index:
     key as field.public;
     value as DonationMeta.public;
 
+mapping contact_names:
+    key as field.public;
+    value as field.public;
+
+mapping deleted_chats:
+    key as field.public;
+    value as u64.public;
+
 function create_profile:
     input r0 as field.public;
     input r1 as field.public;
     async create_profile self.caller r0 r1 into r2;
-    output r2 as priv_messenger_leotest_007.aleo/create_profile.future;
+    output r2 as priv_messenger_leotest_008.aleo/create_profile.future;
 
 finalize create_profile:
     input r0 as address.public;
@@ -56,7 +64,7 @@ function update_profile:
     input r0 as field.public;
     input r1 as field.public;
     async update_profile self.caller r0 r1 into r2;
-    output r2 as priv_messenger_leotest_007.aleo/update_profile.future;
+    output r2 as priv_messenger_leotest_008.aleo/update_profile.future;
 
 finalize update_profile:
     input r0 as address.public;
@@ -76,7 +84,7 @@ function send_donation:
     async send_donation r0 self.caller r1 r6 r3 into r7;
     output r4 as Donation.record;
     output r5 as Donation.record;
-    output r7 as priv_messenger_leotest_007.aleo/send_donation.future;
+    output r7 as priv_messenger_leotest_008.aleo/send_donation.future;
 
 finalize send_donation:
     input r0 as address.public;
@@ -100,6 +108,47 @@ finalize send_donation:
     set r15 into sent_donation_index[r14];
     add r11 1u64 into r16;
     set r16 into sent_donation_count[r1];
+
+function update_contact_name:
+    input r0 as address.public;
+    input r1 as field.public;
+    async update_contact_name self.caller r0 r1 into r2;
+    output r2 as priv_messenger_leotest_008.aleo/update_contact_name.future;
+
+finalize update_contact_name:
+    input r0 as address.public;
+    input r1 as address.public;
+    input r2 as field.public;
+    hash.bhp256 r0 into r3 as field;
+    hash.bhp256 r1 into r4 as field;
+    add r3 r4 into r5;
+    set r2 into contact_names[r5];
+
+function delete_chat:
+    input r0 as address.public;
+    async delete_chat self.caller r0 into r1;
+    output r1 as priv_messenger_leotest_008.aleo/delete_chat.future;
+
+finalize delete_chat:
+    input r0 as address.public;
+    input r1 as address.public;
+    hash.bhp256 r0 into r2 as field;
+    hash.bhp256 r1 into r3 as field;
+    add r2 r3 into r4;
+    set 1u64 into deleted_chats[r4];
+
+function restore_chat:
+    input r0 as address.public;
+    async restore_chat self.caller r0 into r1;
+    output r1 as priv_messenger_leotest_008.aleo/restore_chat.future;
+
+finalize restore_chat:
+    input r0 as address.public;
+    input r1 as address.public;
+    hash.bhp256 r0 into r2 as field;
+    hash.bhp256 r1 into r3 as field;
+    add r2 r3 into r4;
+    set 0u64 into deleted_chats[r4];
 
 constructor:
     assert.eq edition 0u16;

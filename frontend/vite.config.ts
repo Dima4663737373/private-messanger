@@ -1,42 +1,19 @@
-import { defineConfig } from 'vite'
-import react from '@vitejs/plugin-react'
-import wasm from 'vite-plugin-wasm';
-import topLevelAwait from 'vite-plugin-top-level-await';
+import path from 'path';
+import { defineConfig, loadEnv } from 'vite';
+import react from '@vitejs/plugin-react';
 
-// https://vite.dev/config/
-export default defineConfig({
-  plugins: [
-    react(),
-    wasm(),
-    topLevelAwait()
-  ],
-  optimizeDeps: {
-    exclude: ['@provablehq/wasm'],
-  },
-  build: {
-    sourcemap: true,
-    minify: 'esbuild',
-    rollupOptions: {
-      output: {
-        manualChunks: undefined,
+export default defineConfig(({ mode }) => {
+    const env = loadEnv(mode, process.cwd(), '');
+    return {
+      server: {
+        port: 5173,
+        host: '0.0.0.0',
       },
-    },
-    commonjsOptions: {
-      include: [/node_modules/],
-      transformMixedEsModules: true,
-    },
-  },
-  resolve: {
-    dedupe: ['react', 'react-dom'],
-  },
-  server: {
-    proxy: {
-      '/provable': {
-        target: 'https://api.explorer.provable.com',
-        changeOrigin: true,
-        secure: true,
-        rewrite: (path) => path.replace(/^\/provable/, ''),
-      },
-    },
-  },
-})
+      plugins: [react()],
+      resolve: {
+        alias: {
+          '@': path.resolve(__dirname, './src'),
+        }
+      }
+    };
+});
