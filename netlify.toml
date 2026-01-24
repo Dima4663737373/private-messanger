@@ -1,6 +1,6 @@
 [build]
   base = "."
-  command = "cd frontend && npm install && npm run build"
+  command = "cd frontend && npm install --legacy-peer-deps && npm run build"
   publish = "frontend/dist"
 
 # SPA fallback - redirect all routes to index.html
