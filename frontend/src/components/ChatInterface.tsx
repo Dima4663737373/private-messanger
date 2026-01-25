@@ -583,7 +583,11 @@ const ChatInterface: React.FC = () => {
       if (errorMsg.includes("Permission") || errorMsg.includes("NOT_GRANTED")) {
         setTxStatus("Transaction rejected by user");
       } else if (errorMsg.includes("INVALID_PARAMS") || errorMsg.includes("does not exist")) {
-        setTxStatus("Error: Function not found in program. Check deployment.");
+        setTxStatus(`Error: send_message function not found in ${PROGRAM_ID}. The deployed program may be outdated. Please redeploy the program or contact support.`);
+        console.error(`The program ${PROGRAM_ID} does not have the send_message function. This usually means:`);
+        console.error(`1. The program was deployed with an older version of the code`);
+        console.error(`2. The program needs to be redeployed with the current code from src/main.leo`);
+        console.error(`3. Check that the deployed program matches the local code`);
       } else {
         setTxStatus("Error: " + errorMsg.slice(0, 50));
       }

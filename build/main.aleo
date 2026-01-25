@@ -1,6 +1,6 @@
-program priv_messenger_leotest_008.aleo;
+program priv_messenger_leotest_009.aleo;
 
-record Donation:
+record Message:
     owner as address.public;
     sender as address.private;
     recipient as address.private;
@@ -9,12 +9,12 @@ record Donation:
     timestamp as u64.private;
 
 struct ProfileInfo:
-    name as field;
-    bio as field;
+    name_hash as field;
+    bio_hash as field;
 
-struct DonationMeta:
-    sender as address;
-    recipient as address;
+struct MessageMeta:
+    sender_hash as field;
+    recipient_hash as field;
     amount as u64;
     message_hash as field;
     timestamp as u64;
@@ -23,21 +23,21 @@ mapping profiles:
     key as address.public;
     value as ProfileInfo.public;
 
-mapping donation_count:
+mapping message_count:
     key as address.public;
     value as u64.public;
 
-mapping donation_index:
+mapping message_index:
     key as field.public;
-    value as DonationMeta.public;
+    value as MessageMeta.public;
 
-mapping sent_donation_count:
+mapping sent_message_count:
     key as address.public;
     value as u64.public;
 
-mapping sent_donation_index:
+mapping sent_message_index:
     key as field.public;
-    value as DonationMeta.public;
+    value as MessageMeta.public;
 
 mapping contact_names:
     key as field.public;
@@ -51,69 +51,75 @@ function create_profile:
     input r0 as field.public;
     input r1 as field.public;
     async create_profile self.caller r0 r1 into r2;
-    output r2 as priv_messenger_leotest_008.aleo/create_profile.future;
+    output r2 as priv_messenger_leotest_009.aleo/create_profile.future;
 
 finalize create_profile:
     input r0 as address.public;
     input r1 as field.public;
     input r2 as field.public;
-    cast r1 r2 into r3 as ProfileInfo;
-    set r3 into profiles[r0];
+    hash.bhp256 r1 into r3 as field;
+    hash.bhp256 r2 into r4 as field;
+    cast r3 r4 into r5 as ProfileInfo;
+    set r5 into profiles[r0];
 
 function update_profile:
     input r0 as field.public;
     input r1 as field.public;
     async update_profile self.caller r0 r1 into r2;
-    output r2 as priv_messenger_leotest_008.aleo/update_profile.future;
+    output r2 as priv_messenger_leotest_009.aleo/update_profile.future;
 
 finalize update_profile:
     input r0 as address.public;
     input r1 as field.public;
     input r2 as field.public;
-    cast r1 r2 into r3 as ProfileInfo;
-    set r3 into profiles[r0];
+    hash.bhp256 r1 into r3 as field;
+    hash.bhp256 r2 into r4 as field;
+    cast r3 r4 into r5 as ProfileInfo;
+    set r5 into profiles[r0];
 
-function send_donation:
-    input r0 as address.public;
+function send_message:
+    input r0 as address.private;
     input r1 as u64.private;
     input r2 as field.private;
-    input r3 as u64.public;
-    cast r0 self.caller r0 r1 r2 r3 into r4 as Donation.record;
-    cast self.caller self.caller r0 r1 r2 r3 into r5 as Donation.record;
+    input r3 as u64.private;
+    cast r0 self.caller r0 r1 r2 r3 into r4 as Message.record;
+    cast self.caller self.caller r0 r1 r2 r3 into r5 as Message.record;
     hash.bhp256 r2 into r6 as field;
-    async send_donation r0 self.caller r1 r6 r3 into r7;
-    output r4 as Donation.record;
-    output r5 as Donation.record;
-    output r7 as priv_messenger_leotest_008.aleo/send_donation.future;
+    async send_message r0 self.caller r1 r6 r3 into r7;
+    output r4 as Message.record;
+    output r5 as Message.record;
+    output r7 as priv_messenger_leotest_009.aleo/send_message.future;
 
-finalize send_donation:
+finalize send_message:
     input r0 as address.public;
     input r1 as address.public;
     input r2 as u64.public;
     input r3 as field.public;
     input r4 as u64.public;
-    get.or_use donation_count[r0] 0u64 into r5;
+    hash.bhp256 r1 into r5 as field;
     hash.bhp256 r0 into r6 as field;
-    cast r5 into r7 as field;
-    add r6 r7 into r8;
-    cast r1 r0 r2 r3 r4 into r9 as DonationMeta;
-    set r9 into donation_index[r8];
-    add r5 1u64 into r10;
-    set r10 into donation_count[r0];
-    get.or_use sent_donation_count[r1] 0u64 into r11;
-    hash.bhp256 r1 into r12 as field;
-    cast r11 into r13 as field;
-    add r12 r13 into r14;
-    cast r1 r0 r2 r3 r4 into r15 as DonationMeta;
-    set r15 into sent_donation_index[r14];
-    add r11 1u64 into r16;
-    set r16 into sent_donation_count[r1];
+    get.or_use message_count[r0] 0u64 into r7;
+    hash.bhp256 r0 into r8 as field;
+    cast r7 into r9 as field;
+    add r8 r9 into r10;
+    cast r5 r6 r2 r3 r4 into r11 as MessageMeta;
+    set r11 into message_index[r10];
+    add r7 1u64 into r12;
+    set r12 into message_count[r0];
+    get.or_use sent_message_count[r1] 0u64 into r13;
+    hash.bhp256 r1 into r14 as field;
+    cast r13 into r15 as field;
+    add r14 r15 into r16;
+    cast r5 r6 r2 r3 r4 into r17 as MessageMeta;
+    set r17 into sent_message_index[r16];
+    add r13 1u64 into r18;
+    set r18 into sent_message_count[r1];
 
 function update_contact_name:
-    input r0 as address.public;
-    input r1 as field.public;
+    input r0 as address.private;
+    input r1 as field.private;
     async update_contact_name self.caller r0 r1 into r2;
-    output r2 as priv_messenger_leotest_008.aleo/update_contact_name.future;
+    output r2 as priv_messenger_leotest_009.aleo/update_contact_name.future;
 
 finalize update_contact_name:
     input r0 as address.public;
@@ -125,9 +131,9 @@ finalize update_contact_name:
     set r2 into contact_names[r5];
 
 function delete_chat:
-    input r0 as address.public;
+    input r0 as address.private;
     async delete_chat self.caller r0 into r1;
-    output r1 as priv_messenger_leotest_008.aleo/delete_chat.future;
+    output r1 as priv_messenger_leotest_009.aleo/delete_chat.future;
 
 finalize delete_chat:
     input r0 as address.public;
@@ -138,9 +144,9 @@ finalize delete_chat:
     set 1u64 into deleted_chats[r4];
 
 function restore_chat:
-    input r0 as address.public;
+    input r0 as address.private;
     async restore_chat self.caller r0 into r1;
-    output r1 as priv_messenger_leotest_008.aleo/restore_chat.future;
+    output r1 as priv_messenger_leotest_009.aleo/restore_chat.future;
 
 finalize restore_chat:
     input r0 as address.public;

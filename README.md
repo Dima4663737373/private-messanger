@@ -82,6 +82,14 @@ leo build
 leo deploy --network testnet
 ```
 
+**Important**: After deploying, verify that all functions are present:
+
+```bash
+node verify_deployment.js
+```
+
+This script checks that the deployed program includes all required functions (`send_message`, `create_profile`, etc.). If functions are missing, the deployment may have failed or an older version was deployed.
+
 ## Usage
 
 1. **Connect Wallet**: Click "Select Wallet" and choose your Aleo wallet
@@ -153,6 +161,19 @@ The frontend uses the Provable API for blockchain queries:
 2. Check network connection
 3. Ensure recipient address is valid (starts with `aleo1`)
 4. Check transaction status in AleoScan or Provable Explorer
+
+### "Function does not exist" Error
+
+If you see an error like `The called function (send_message) does not exist in program`, this means:
+
+1. **The deployed program is outdated**: The program on the network doesn't match your local code
+2. **Solution**: Redeploy the program with the current code:
+   ```bash
+   leo build
+   leo deploy --network testnet
+   ```
+3. **Verify deployment**: Run `node verify_deployment.js` to confirm all functions are present
+4. **Update program ID**: If deploying a new version, update `frontend/src/deployed_program.ts` with the new program ID
 
 ## License
 
