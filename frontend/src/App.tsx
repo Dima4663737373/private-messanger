@@ -1,4 +1,4 @@
-import React, { useMemo } from 'react';
+import React, { useMemo, useEffect } from 'react';
 import { WalletProvider, useWallet } from "@demox-labs/aleo-wallet-adapter-react";
 import { LeoWalletAdapter } from "@demox-labs/aleo-wallet-adapter-leo";
 import { WalletAdapterNetwork, DecryptPermission } from "@demox-labs/aleo-wallet-adapter-base";
@@ -6,7 +6,23 @@ import LandingPage from './components/LandingPage';
 import ChatInterface from './components/ChatInterface';
 
 const Content: React.FC = () => {
-  const { publicKey } = useWallet();
+  const { publicKey, connecting, error } = useWallet();
+  
+  // Suppress wallet connection errors in console
+  useEffect(() => {
+    if (error) {
+      const errorMsg = error?.message || String(error || '');
+      const errorName = error?.name || '';
+      
+      // Only log non-wallet-selection errors
+      if (!errorMsg.includes('WalletNotSelected') && 
+          !errorName.includes('WalletNotSelected') &&
+          !errorMsg.includes('Failed to connect')) {
+        console.error('Wallet error:', error);
+      }
+    }
+  }, [error]);
+  
   return publicKey ? <ChatInterface /> : <LandingPage />;
 };
 
@@ -25,7 +41,7 @@ function App() {
       wallets={wallets}
       decryptPermission={DecryptPermission.OnChainHistory}
       network={WalletAdapterNetwork.TestnetBeta}
-      autoConnect
+      autoConnect={false}
     >
       <div className="min-h-screen bg-brutal-white font-mono">
         <Content />

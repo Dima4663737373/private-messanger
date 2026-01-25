@@ -10,8 +10,13 @@
       const originalError = console.error;
       
       console.warn = function(...args) {
+        const warnStr = args.join(' ');
         if (args[0] && typeof args[0] === 'string' && args[0].includes('cdn.tailwindcss.com')) {
           return; // Suppress Tailwind CDN warning
+        }
+        if (warnStr.includes('Overwrites EVM default provider') ||
+            warnStr.includes('Unable to redefine window.ethereum')) {
+          return; // Suppress wallet injection warnings
         }
         originalWarn.apply(console, args);
       };
@@ -20,15 +25,21 @@
         // Suppress wallet injection errors from other wallets (Nightly, Razor, etc.)
         const errorMsg = args[0]?.message || String(args[0] || '');
         const errorStr = args.join(' ');
+        const errorName = args[0]?.name || '';
         
         // Suppress wallet-related errors
         if (errorMsg.includes('Invalid property descriptor') || 
             errorMsg.includes('Cannot redefine property: ethereum') ||
             errorMsg.includes('Cannot set property ethereum') ||
+            errorMsg.includes('Overwrites EVM default provider') ||
             errorStr.includes('INVALID_PARAMS') ||
             errorStr.includes('WalletRecordsError') ||
+            errorStr.includes('WalletNotSelectedError') ||
             errorStr.includes('requestRecordPlaintexts') ||
             errorStr.includes('requestRecords') ||
+            errorStr.includes('Failed to connect') ||
+            errorStr.includes('Retry connection failed') ||
+            errorName === 'WalletNotSelectedError' ||
             (errorStr.includes('Not enough balance') && errorStr.includes('pay fee'))) {
           return; // Suppress wallet errors
         }
