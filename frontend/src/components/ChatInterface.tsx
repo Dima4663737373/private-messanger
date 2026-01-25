@@ -124,6 +124,8 @@ const ChatInterface: React.FC = () => {
   const [showProfileModal, setShowProfileModal] = useState(false);
   const [profileName, setProfileName] = useState('');
   const [profileBio, setProfileBio] = useState('');
+  const [showWalletRequiredModal, setShowWalletRequiredModal] = useState(false);
+  const [walletRequiredAction, setWalletRequiredAction] = useState<string>('');
   const [isSending, setIsSending] = useState(false);
   const [txStatus, setTxStatus] = useState<string>('');
   const [isSyncing, setIsSyncing] = useState(false);
@@ -673,22 +675,49 @@ const ChatInterface: React.FC = () => {
         {/* Header with wallet info */}
         <div className="bg-brutal-yellow p-4 border-b-4 border-brutal-black">
           <div className="text-xs font-bold uppercase mb-2">Connected Wallet</div>
-          <div 
-            className="font-black text-xs bg-brutal-black text-brutal-yellow p-2 font-mono break-all cursor-pointer hover:bg-gray-900 transition-colors"
-            onClick={() => publicKey && navigator.clipboard.writeText(publicKey)}
-            title="Click to copy"
-          >
-            {publicKey || 'Not connected'}
-          </div>
+          {publicKey ? (
+            <div 
+              className="font-black text-xs bg-brutal-black text-brutal-yellow p-2 font-mono break-all cursor-pointer hover:bg-gray-900 transition-colors"
+              onClick={() => navigator.clipboard.writeText(publicKey)}
+              title="Click to copy"
+            >
+              {publicKey}
+            </div>
+          ) : (
+            <div 
+              className="font-black text-xs bg-gray-300 text-gray-600 p-2 font-mono text-center cursor-pointer hover:bg-gray-400 transition-colors"
+              onClick={() => {
+                setWalletRequiredAction('view wallet information');
+                setShowWalletRequiredModal(true);
+              }}
+              title="Click to see wallet connection requirements"
+            >
+              NOT CONNECTED
+            </div>
+          )}
           <div className="flex gap-2 mt-2">
             <button 
-              onClick={() => setShowNewChatModal(true)}
+              onClick={() => {
+                if (!publicKey) {
+                  setWalletRequiredAction('create a new chat');
+                  setShowWalletRequiredModal(true);
+                } else {
+                  setShowNewChatModal(true);
+                }
+              }}
               className="flex-1 text-xs font-bold border-2 border-black p-2 hover:bg-black hover:text-white transition-colors uppercase bg-white"
             >
               + NEW CHAT
             </button>
             <button 
-              onClick={() => setShowProfileModal(true)}
+              onClick={() => {
+                if (!publicKey) {
+                  setWalletRequiredAction('view or create your profile');
+                  setShowWalletRequiredModal(true);
+                } else {
+                  setShowProfileModal(true);
+                }
+              }}
               className="text-xs font-bold border-2 border-black p-2 hover:bg-black hover:text-white transition-colors uppercase bg-white"
             >
               PROFILE
@@ -722,7 +751,14 @@ const ChatInterface: React.FC = () => {
             )}
           </div>
           <button
-            onClick={syncMessages}
+            onClick={() => {
+              if (!publicKey) {
+                setWalletRequiredAction('sync messages from the blockchain');
+                setShowWalletRequiredModal(true);
+              } else {
+                syncMessages();
+              }
+            }}
             disabled={isSyncing || !publicKey}
             className="w-full p-2 border-2 border-brutal-black bg-brutal-yellow hover:bg-yellow-300 font-bold uppercase text-xs disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
           >
@@ -888,7 +924,14 @@ const ChatInterface: React.FC = () => {
                       <span className="text-xs font-bold text-green-600">● SECURE ON-CHAIN</span>
                       {activeContact?.address && (
                         <button
-                          onClick={() => setShowAddressDetails(showAddressDetails === activeContact.id ? null : activeContact.id)}
+                          onClick={() => {
+                            if (!publicKey) {
+                              setWalletRequiredAction('view contact address details');
+                              setShowWalletRequiredModal(true);
+                            } else {
+                              setShowAddressDetails(showAddressDetails === activeContact.id ? null : activeContact.id);
+                            }
+                          }}
                           className="text-xs font-bold text-gray-600 hover:text-black underline"
                         >
                           {showAddressDetails === activeContact.id ? 'HIDE' : 'SHOW'} ADDRESS
@@ -945,20 +988,35 @@ const ChatInterface: React.FC = () => {
                   {txStatus}
                 </div>
               )}
-              <form onSubmit={handleSend} className="flex gap-2 md:gap-4">
+              <form onSubmit={(e) => {
+                e.preventDefault();
+                if (!publicKey) {
+                  setWalletRequiredAction('send a message');
+                  setShowWalletRequiredModal(true);
+                } else {
+                  handleSend(e);
+                }
+              }} className="flex gap-2 md:gap-4">
                 <input
                   type="text"
                   value={input}
                   onChange={(e) => setInput(e.target.value)}
                   onKeyDown={handleKeyDown}
-                  disabled={isSending}
+                  disabled={isSending || !publicKey}
                   className="flex-1 bg-gray-50 border-4 border-brutal-black p-3 md:p-4 font-bold text-lg focus:outline-none focus:bg-white placeholder-gray-400 shadow-hard-sm focus:shadow-none transition-all disabled:opacity-50"
-                  placeholder="Type encrypted message..."
+                  placeholder={publicKey ? "Type encrypted message..." : "Connect wallet to send messages..."}
                   autoComplete="off"
                 />
                 <button
                   type="submit"
                   disabled={!input.trim() || isSending || !publicKey}
+                  onClick={(e) => {
+                    if (!publicKey) {
+                      e.preventDefault();
+                      setWalletRequiredAction('send a message');
+                      setShowWalletRequiredModal(true);
+                    }
+                  }}
                   className="bg-brutal-yellow border-4 border-brutal-black px-6 md:px-8 font-black uppercase text-lg md:text-xl hover:translate-x-1 hover:translate-y-1 hover:shadow-none shadow-hard transition-all disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   <span className="hidden md:inline">{isSending ? 'SENDING...' : 'SEND'}</span>
@@ -1178,6 +1236,48 @@ const ChatInterface: React.FC = () => {
                   CANCEL
                 </button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Wallet Required Modal */}
+      {showWalletRequiredModal && (
+        <div 
+          className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50"
+          onClick={() => setShowWalletRequiredModal(false)}
+        >
+          <div 
+            className="bg-white border-4 border-brutal-black p-6 max-w-md w-full mx-4 shadow-hard-lg"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="text-center mb-6">
+              <div className="w-20 h-20 bg-brutal-yellow border-4 border-brutal-black mx-auto mb-4 flex items-center justify-center">
+                <span className="text-4xl font-black">🔒</span>
+              </div>
+              <h2 className="text-2xl font-black uppercase mb-2">WALLET REQUIRED</h2>
+              <p className="font-bold text-sm text-gray-700">
+                You need to connect your wallet to {walletRequiredAction}.
+              </p>
+            </div>
+            <div className="space-y-3">
+              <p className="text-xs font-bold text-gray-600 text-center">
+                Connect your Aleo wallet (Leo Wallet) to access all features including:
+              </p>
+              <ul className="text-xs font-bold space-y-1 text-left bg-gray-50 p-3 border-2 border-brutal-black">
+                <li>• Send and receive encrypted messages</li>
+                <li>• View transaction history</li>
+                <li>• Manage your profile</li>
+                <li>• Sync messages from blockchain</li>
+              </ul>
+            </div>
+            <div className="flex gap-2 mt-6">
+              <button
+                onClick={() => setShowWalletRequiredModal(false)}
+                className="flex-1 bg-brutal-yellow border-4 border-brutal-black px-4 py-3 font-black uppercase hover:translate-x-1 hover:translate-y-1 hover:shadow-none shadow-hard transition-all"
+              >
+                GOT IT
+              </button>
             </div>
           </div>
         </div>
