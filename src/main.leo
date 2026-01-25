@@ -76,11 +76,11 @@ program priv_messenger_leotest_008.aleo {
         Mapping::set(profiles, user, info);
     }
 
-    // Send message with encryption
-    // recipient is public so we can index messages
-    // Send message with encryption
-    // recipient is public so we can index messages
-    async transition send_message(
+    // Send donation with encryption
+    // recipient is public so we can index donations
+    // Send donation with encryption
+    // recipient is public so we can index donations
+    async transition send_donation(
         public recipient: address,
         private amount: u64,
         private message: field,
@@ -112,10 +112,10 @@ program priv_messenger_leotest_008.aleo {
         let message_hash: field = BHP256::hash_to_field(message);
         
         // Pass metadata to finalize for indexing
-        return (recipient_donation, sender_donation, finalize_send_message(recipient, sender, amount, message_hash, timestamp));
+        return (recipient_donation, sender_donation, finalize_send_donation(recipient, sender, amount, message_hash, timestamp));
     }
 
-    async function finalize_send_message(
+    async function finalize_send_donation(
         recipient: address,
         sender: address,
         amount: u64,

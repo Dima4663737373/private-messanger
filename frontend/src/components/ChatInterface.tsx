@@ -302,8 +302,10 @@ const ChatInterface: React.FC = () => {
             if (existingContact) {
               newContactsMap.set(otherParty, existingContact);
             } else {
+              // Create new contact
+              const contactId = `contact-${otherParty}`;
               newContactsMap.set(otherParty, {
-                id: `contact-${otherParty}`,
+                id: contactId,
                 name: otherParty.slice(0, 10) + '...' + otherParty.slice(-6),
                 description: otherParty,
                 context: '',
@@ -314,8 +316,10 @@ const ChatInterface: React.FC = () => {
             }
           }
 
-          // Add message
-          const contactId = newContactsMap.get(otherParty)!.id;
+          // Add message - use the contact from the map
+          const contact = newContactsMap.get(otherParty)!;
+          const contactId = contact.id;
+          
           if (!newMessagesMap.has(contactId)) {
             newMessagesMap.set(contactId, []);
           }
@@ -335,12 +339,13 @@ const ChatInterface: React.FC = () => {
       }
 
       // Update contacts and messages
-      if (newContactsMap.size > 0) {
+      if (newContactsMap.size > 0 || newMessagesMap.size > 0) {
         setContacts(prev => {
           const updated = [...prev];
           newContactsMap.forEach((contact, address) => {
             const existing = updated.find(c => c.address?.toLowerCase() === address.toLowerCase());
             if (!existing) {
+              // Add new contact
               updated.push(contact);
             } else {
               // Update unread count if received new message
@@ -349,7 +354,12 @@ const ChatInterface: React.FC = () => {
                 const newMessages = newMessagesMap.get(contact.id) || [];
                 const hasNewReceived = newMessages.some(m => !m.isUser);
                 if (hasNewReceived) {
-                  updated[contactIndex] = { ...updated[contactIndex], unreadCount: (updated[contactIndex].unreadCount || 0) + 1 };
+                  updated[contactIndex] = { 
+                    ...updated[contactIndex], 
+                    unreadCount: (updated[contactIndex].unreadCount || 0) + 1,
+                    lastMessage: newMessages[newMessages.length - 1]?.text || updated[contactIndex].lastMessage,
+                    lastMessageTime: newMessages[newMessages.length - 1]?.timestamp || updated[contactIndex].lastMessageTime
+                  };
                 }
               }
             }
@@ -624,35 +634,82 @@ const ChatInterface: React.FC = () => {
     try {
       // Convert message to field
       const messageField = stringToField(messageText);
-      const timestamp = BigInt(Date.now());
+      const timestamp = Date.now();
+      const amount = 0; // Amount is 0 for messages
 
-      // Create transaction for send_message
-      // Based on deployed program priv_messenger_leotest_007.aleo
-      // send_message(public recipient: address, private message: field)
+      // Create transaction for send_donation
+      // Based on deployed program priv_messenger_leotest_008.aleo
+      // send_donation(public recipient: address, private amount: u64, private message: field, public timestamp: u64)
       const transaction = Transaction.createTransaction(
         publicKey,
         network,
         PROGRAM_ID,
-        "send_message",
-        [activeContact.address, messageField],
+        "send_donation",
+        [
+          activeContact.address,           // public recipient: address
+          `${amount}u64`,                   // private amount: u64
+          messageField,                     // private message: field
+          `${timestamp}u64`                  // public timestamp: u64
+        ],
         TRANSACTION_FEE,
         false
       );
 
       setTxStatus('Waiting for signature...');
+      console.log("Creating transaction with params:", {
+        recipient: activeContact.address,
+        amount: `${amount}u64`,
+        message: messageField,
+        timestamp: `${timestamp}u64`
+      });
+      
       const txId = await adapter.requestTransaction(transaction);
+      console.log("Transaction ID received:", txId);
 
       if (txId) {
-        setTxStatus(`Sent! TX: ${txId.slice(0, 8)}...`);
-        setTimeout(() => setTxStatus(''), 3000);
+        setTxStatus(`Sent! TX: ${txId.slice(0, 8)}... Check explorer: https://explorer.hamp.app/transaction?id=${txId}`);
+        
+        // Ensure the contact exists in the list (in case it was deleted or not synced)
+        const contactExists = contacts.find(c => 
+          c.address?.toLowerCase() === activeContact.address?.toLowerCase()
+        );
+        
+        if (!contactExists && activeContact.address) {
+          // Add contact if it doesn't exist
+          const newContact: Contact = {
+            id: `contact-${activeContact.address}`,
+            name: activeContact.name || activeContact.address.slice(0, 10) + '...' + activeContact.address.slice(-6),
+            description: activeContact.address,
+            context: '',
+            initials: getInitialsFromAddress(activeContact.address),
+            address: activeContact.address,
+            unreadCount: 0
+          };
+          setContacts(prev => {
+            const exists = prev.find(c => c.address?.toLowerCase() === activeContact.address?.toLowerCase());
+            return exists ? prev : [...prev, newContact];
+          });
+        }
+        
+        // Sync messages after a short delay to allow transaction to be processed
+        setTimeout(() => {
+          syncMessages();
+        }, 2000);
+        
+        setTimeout(() => setTxStatus(''), 5000);
+      } else {
+        setTxStatus('Transaction failed - no transaction ID returned');
+        setTimeout(() => setTxStatus(''), 5000);
       }
     } catch (error: any) {
       console.error("Send message error:", error);
       const errorMsg = error?.message || String(error);
       if (errorMsg.includes("Permission") || errorMsg.includes("NOT_GRANTED")) {
-        setTxStatus("Transaction rejected");
+        setTxStatus("Transaction rejected by user");
+      } else if (errorMsg.includes("INVALID_PARAMS") || errorMsg.includes("does not exist")) {
+        setTxStatus("Error: Function not found in program. Check deployment.");
       } else {
-        setTxStatus("Error: " + errorMsg.slice(0, 30));
+        setTxStatus("Error: " + errorMsg.slice(0, 50));
       }
       
       // Remove optimistic message on error
