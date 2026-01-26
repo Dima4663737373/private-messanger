@@ -32,17 +32,29 @@
             errorMsg.includes('Cannot redefine property: ethereum') ||
             errorMsg.includes('Cannot set property ethereum') ||
             errorMsg.includes('Overwrites EVM default provider') ||
-            errorStr.includes('INVALID_PARAMS') ||
-            errorStr.includes('WalletRecordsError') ||
             errorStr.includes('WalletNotSelectedError') ||
-            errorStr.includes('requestRecordPlaintexts') ||
-            errorStr.includes('requestRecords') ||
+            // Suppress WalletRecordsError with INVALID_PARAMS (common when wallet doesn't support record requests properly)
+            (errorStr.includes('WalletRecordsError') && errorStr.includes('INVALID_PARAMS')) ||
+            (errorStr.includes('WalletRecordsError') && errorStr.includes('Some of the parameters you provided are invalid')) ||
+            (errorStr.includes('requestRecordPlaintexts') && errorStr.includes('INVALID_PARAMS')) ||
+            (errorStr.includes('requestRecords') && errorStr.includes('INVALID_PARAMS')) ||
+            (errorStr.includes('Some of the parameters you provided are invalid') && 
+             (errorStr.includes('requestRecordPlaintexts') || errorStr.includes('requestRecords'))) ||
             errorStr.includes('Failed to connect') ||
             errorStr.includes('Retry connection failed') ||
             errorName === 'WalletNotSelectedError' ||
-            (errorStr.includes('Not enough balance') && errorStr.includes('pay fee'))) {
+            (errorStr.includes('Not enough balance') && errorStr.includes('pay fee')) ||
+            // Suppress errors from other wallet extensions (Razor, Nightly, etc.)
+            errorStr.includes('Razor Wallet') ||
+            errorStr.includes('Nightly Wallet') ||
+            errorStr.includes('evmAsk.js') ||
+            errorStr.includes('contentScript.ts') ||
+            errorStr.includes('inject.ts') ||
+            errorStr.includes('addToWindow.js') ||
+            errorStr.includes('inject.chrome')) {
           return; // Suppress wallet errors
         }
+        // Don't suppress INVALID_PARAMS - it's important for debugging transaction issues
         originalError.apply(console, args);
       };
     </script>

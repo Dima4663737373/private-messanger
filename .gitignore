@@ -7,3 +7,6 @@ node_modules/
 build/
 deploy_output/
 .DS_Store
+
+# Local Netlify folder
+.netlify

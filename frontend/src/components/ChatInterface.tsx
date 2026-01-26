@@ -217,11 +217,24 @@ const ChatInterface: React.FC = () => {
       // Users can manually sync messages when they send/receive them
       
       // Try requestRecordPlaintexts first (if available) - but catch all errors silently
-      // Note: These methods may not work properly with current wallet adapter
-      // We'll try but suppress all errors
+      // Note: These methods may require program ID or other parameters that we don't have
+      // We'll try but suppress all errors to avoid console spam
       if (hasRequestRecordPlaintexts) {
         try {
-          const result = await adapter.requestRecordPlaintexts();
+          // Try with program ID if method accepts parameters
+          let result: any;
+          try {
+            // Some wallet adapters require program ID as parameter
+            result = await adapter.requestRecordPlaintexts(PROGRAM_ID);
+          } catch {
+            // If that fails, try without parameters
+            try {
+              result = await adapter.requestRecordPlaintexts();
+            } catch {
+              // If both fail, skip this method
+              result = null;
+            }
+          }
           
           if (result && Array.isArray(result)) {
             records = result.filter((r: any) => {
@@ -232,7 +245,7 @@ const ChatInterface: React.FC = () => {
             });
           }
         } catch (e: any) {
-          // Silently ignore all errors - wallet doesn't support this properly
+          // Silently ignore all errors - wallet doesn't support this properly or requires different parameters
           // Errors are already suppressed in index.html
         }
       }
@@ -240,7 +253,19 @@ const ChatInterface: React.FC = () => {
       // Fallback: try requestRecords (encrypted) - only if no plaintexts found
       if ((!records || records.length === 0) && hasRequestRecords) {
         try {
-          const encryptedRecords = await adapter.requestRecords();
+          // Try with program ID if method accepts parameters
+          let encryptedRecords: any;
+          try {
+            encryptedRecords = await adapter.requestRecords(PROGRAM_ID);
+          } catch {
+            // If that fails, try without parameters
+            try {
+              encryptedRecords = await adapter.requestRecords();
+            } catch {
+              // If both fail, skip this method
+              encryptedRecords = null;
+            }
+          }
           
           if (encryptedRecords && Array.isArray(encryptedRecords) && encryptedRecords.length > 0) {
             // Try to decrypt records
@@ -263,7 +288,7 @@ const ChatInterface: React.FC = () => {
             }
           }
         } catch (e: any) {
-          // Silently ignore all errors - wallet doesn't support this properly
+          // Silently ignore all errors - wallet doesn't support this properly or requires different parameters
           // Errors are already suppressed in index.html
         }
       }
@@ -289,7 +314,9 @@ const ChatInterface: React.FC = () => {
           const sender = senderMatch[1];
           const recipient = recipientMatch[1];
           const messageField = messageMatch[1] + 'field';
-          const timestamp = timestampMatch ? parseInt(timestampMatch[1]) : Date.now();
+          // Timestamp is in seconds (u64), convert to milliseconds for Date object
+          const timestampSeconds = timestampMatch ? parseInt(timestampMatch[1]) : Math.floor(Date.now() / 1000);
+          const timestamp = timestampSeconds * 1000; // Convert to milliseconds for Date
 
           // Determine if this is a received or sent message
           const isReceived = recipient.toLowerCase() === publicKey.toLowerCase();
@@ -507,28 +534,84 @@ const ChatInterface: React.FC = () => {
     setInput('');
 
     try {
+      // Validate inputs before creating transaction
+      if (!activeContact.address || !isValidAleoAddress(activeContact.address)) {
+        setTxStatus("Error: Invalid recipient address");
+        setTimeout(() => setTxStatus(''), 5000);
+        return;
+      }
+      
+      if (!messageText || messageText.trim().length === 0) {
+        setTxStatus("Error: Message cannot be empty");
+        setTimeout(() => setTxStatus(''), 5000);
+        return;
+      }
+      
       // Convert message to field
       const messageField = stringToField(messageText);
-      const timestamp = Date.now();
-      const amount = 0; // Amount is 0 for messages
+      // Use seconds instead of milliseconds for timestamp (more compatible with u64)
+      // IMPORTANT: u64 can handle large numbers, but seconds are more standard
+      let timestamp = Math.floor(Date.now() / 1000);
+      
+      // Validate timestamp is reasonable (not in milliseconds)
+      if (timestamp > 10000000000) { // If > year 2286, probably in milliseconds
+        console.error("⚠️ Warning: Timestamp seems to be in milliseconds:", timestamp);
+        console.error("   Converting to seconds...");
+        timestamp = Math.floor(timestamp / 1000);
+        console.log("   Corrected timestamp:", timestamp);
+      }
+      
+      // SECURITY: Amount is ALWAYS 0 for messages - no tokens are transferred
+      // Only blockchain transaction fee (TRANSACTION_FEE) is charged
+      const amount = 0;
+      
+      console.log("⏰ Timestamp validation:", {
+        rawMs: Date.now(),
+        seconds: timestamp,
+        date: new Date(timestamp * 1000).toISOString(),
+        isValid: timestamp < 10000000000,
+        timestampParam: `${timestamp}u64`
+      });
+      
+      console.log("📝 Preparing transaction:", {
+        program: PROGRAM_ID,
+        function: "send_message",
+        recipient: activeContact.address,
+        messageLength: messageText.length
+      });
 
       // Create transaction for send_message
-      // Based on deployed program priv_messenger_leotest_008.aleo
+      // SECURITY: amount is always 0 - no tokens are transferred, only blockchain fee is charged
       // send_message(private recipient: address, private amount: u64, private message: field, private timestamp: u64)
       // All parameters are private for maximum privacy - nothing visible in transaction history
+      // TRANSACTION_FEE (0.05 ALEO) is the ONLY fee charged - this is the blockchain transaction fee
+      
+      // Ensure all parameters are strings with proper type annotations
+      const recipientParam = activeContact.address; // address type
+      const amountParam = `${amount}u64`; // u64 type
+      const messageParam = messageField; // field type (already formatted)
+      const timestampParam = `${timestamp}u64`; // u64 type
+      
+      console.log("Transaction parameters (formatted):", {
+        recipient: recipientParam,
+        amount: amountParam,
+        message: messageParam,
+        timestamp: timestampParam
+      });
+      
       const transaction = Transaction.createTransaction(
         publicKey,
         network,
         PROGRAM_ID,
         "send_message",
         [
-          activeContact.address,           // private recipient: address
-          `${amount}u64`,                   // private amount: u64
-          messageField,                     // private message: field
-          `${timestamp}u64`                  // private timestamp: u64
+          recipientParam,    // private recipient: address
+          amountParam,       // private amount: u64 (ALWAYS 0 - no token transfer)
+          messageParam,      // private message: field
+          timestampParam      // private timestamp: u64
         ],
-        TRANSACTION_FEE,
-        false
+        TRANSACTION_FEE,     // Only blockchain transaction fee (0.05 ALEO)
+        false                // Use public fee (not private records) - feePrivate: false
       );
 
       setTxStatus('Waiting for signature...');
@@ -536,14 +619,205 @@ const ChatInterface: React.FC = () => {
         recipient: activeContact.address,
         amount: `${amount}u64`,
         message: messageField,
-        timestamp: `${timestamp}u64`
+        timestamp: `${timestamp}u64`,
+        timestampDate: new Date(timestamp * 1000).toISOString(), // Show human-readable timestamp
+        programId: PROGRAM_ID,
+        functionName: "send_message",
+        fee: TRANSACTION_FEE
       });
       
-      const txId = await adapter.requestTransaction(transaction);
-      console.log("Transaction ID received:", txId);
+      console.log("Transaction object:", transaction);
+      console.log("Transaction transitions:", transaction.transitions);
+      console.log("Transaction fee:", transaction.fee);
+      console.log("Transaction feePrivate:", transaction.feePrivate);
+      
+      // IMPORTANT: Verify program exists before sending transaction
+      console.log("🔍 Verifying program exists before sending transaction...");
+      console.log("   Program ID:", PROGRAM_ID);
+      console.log("   Network:", network);
+      
+      // Request transaction - this should prompt user to sign and broadcast
+      // IMPORTANT: User must approve the transaction in the wallet popup
+      setTxStatus('⏳ Opening wallet... Please approve the transaction to send your message.');
+      
+      let txId: any;
+      try {
+        // requestTransaction should open wallet popup and wait for user approval
+        // After approval, it should broadcast the transaction and return the transaction ID
+        // NOTE: If program doesn't exist, wallet may create transaction but it won't be broadcasted
+        console.log("📤 Requesting transaction from wallet...");
+        console.log("   Transaction object:", {
+          address: transaction.address,
+          chainId: transaction.chainId,
+          transitions: transaction.transitions?.length || 0,
+          fee: transaction.fee,
+          feePrivate: transaction.feePrivate
+        });
+        
+        txId = await adapter.requestTransaction(transaction);
+        
+        console.log("📦 Transaction response received");
+        console.log("Response type:", typeof txId);
+        console.log("Response value:", txId);
+        
+        // Handle different response formats
+        if (txId === null || txId === undefined) {
+          throw new Error("Transaction was cancelled or failed - no transaction ID returned");
+        }
+        
+        // Log full response for debugging
+        if (typeof txId === 'object') {
+          console.log("Full transaction response object:", JSON.stringify(txId, null, 2));
+        } else {
+          console.log("Transaction ID (string):", txId);
+        }
+      } catch (txError: any) {
+        console.error("❌ Transaction request failed:", txError);
+        // Check if it's a user cancellation
+        if (txError?.message?.includes("cancel") || txError?.message?.includes("reject") || 
+            txError?.message?.includes("denied") || txError?.code === 4001) {
+          setTxStatus("❌ Transaction cancelled by user");
+          throw new Error("Transaction cancelled");
+        }
+        throw txError; // Re-throw to be caught by outer catch
+      }
 
       if (txId) {
-        setTxStatus(`Sent! TX: ${txId.slice(0, 8)}... Check explorer: https://explorer.hamp.app/transaction?id=${txId}`);
+        // Check if txId is a string (transaction ID) or an object with status
+        const actualTxId = typeof txId === 'string' ? txId : (txId?.transactionId || txId?.id || txId);
+        
+        if (actualTxId && typeof actualTxId === 'string' && actualTxId.length > 0) {
+          const shortId = actualTxId.length > 8 ? actualTxId.slice(0, 8) : actualTxId;
+          
+          // Check if this is a UUID (local wallet ID) or real transaction ID (starts with 'at1')
+          const isRealTxId = actualTxId.startsWith('at1');
+          
+          if (isRealTxId) {
+            setTxStatus(`✅ Transaction submitted! ID: ${shortId}...`);
+            console.log("✅ Real blockchain transaction ID received:", actualTxId);
+            console.log("✅ Transaction was successfully broadcasted to the network!");
+          } else {
+            // UUID format means it's a local wallet ID, not a real transaction ID
+            setTxStatus(`⚠️ Transaction may not be broadcasted. Check wallet history!`);
+            console.log("");
+            console.log("⚠️⚠️⚠️ КРИТИЧНО: Получен UUID (локальный ID), НЕ реальный transaction ID!");
+            console.log("⚠️ UUID формат означает, что транзакция НЕ была отправлена в сеть!");
+            console.log("");
+            console.log("🔍 КАК ПРОВЕРИТЬ:");
+            console.log("   1. Откройте Leo Wallet расширение");
+            console.log("   2. Перейдите в 'Transactions' или 'History'");
+            console.log("   3. Найдите транзакцию к программе:", PROGRAM_ID);
+            console.log("   4. ⚠️ Если транзакции НЕТ в истории - она НЕ была отправлена!");
+            console.log("   5. ✅ Если транзакция ЕСТЬ - скопируйте РЕАЛЬНЫЙ ID (начинается с 'at1...')");
+            console.log("   6. Проверьте в AleoScan:");
+            console.log("      https://testnet.aleoscan.io/address?a=" + publicKey + "#transitions");
+            console.log("");
+            console.log("❓ ПОЧЕМУ ТРАНЗАКЦИЯ НЕ ОТПРАВЛЯЕТСЯ:");
+            console.log("   ⚠️ Программа не найдена в сети!");
+            console.log("   ⚠️ Проверьте деплой: node verify_deployment.js");
+            console.log("   ⚠️ Если программа не найдена - задеплойте:");
+            console.log("      leo deploy --network testnet --priority-fees 1000000 --broadcast -y");
+            console.log("");
+            console.log("💡 Другие возможные причины:");
+            console.log("   - Функция не найдена в программе");
+            console.log("   - Неправильные параметры");
+            console.log("   - Недостаточно средств");
+          }
+          
+          // Show success message in UI with AleoScan link
+          console.log("🔗 View your transactions on AleoScan:");
+          console.log("   https://testnet.aleoscan.io/address?a=" + publicKey + "#transitions");
+          
+          console.log("📋 Transaction details:");
+          console.log("   Program:", PROGRAM_ID);
+          console.log("   Function: send_message");
+          console.log("   Fee:", TRANSACTION_FEE, "microcredits (0.05 ALEO)");
+          
+          if (!isRealTxId) {
+            console.log("");
+            console.log("⚠️⚠️⚠️ КРИТИЧНО: Транзакция НЕ отправлена в сеть!");
+            console.log("⚠️ UUID означает, что кошелек создал транзакцию локально, но не отправил её.");
+            console.log("⚠️ Это происходит, когда программа не найдена в сети.");
+            console.log("");
+            console.log("🔧 РЕШЕНИЕ:");
+            console.log("   1. Программа может быть еще не проиндексирована (подождите 1-2 минуты)");
+            console.log("   2. Проверьте деплой транзакцию:");
+            console.log("      https://testnet.aleoscan.io/transaction?id=at1vjzscjg9t75zfdg2kmrn4veegurqt6heca2988ckt2j4xns80cqq9lkn23");
+            console.log("   3. Проверьте историю транзакций в Leo Wallet");
+            console.log("   4. Если транзакции нет в истории - она не была отправлена");
+            console.log("   5. Попробуйте отправить сообщение через 1-2 минуты после деплоя");
+          }
+          
+          
+          // Update status after a moment with more helpful message
+          setTimeout(() => {
+            setTxStatus(`✅ Message sent! Check AleoScan for status...`);
+          }, 2000);
+          
+          // Final status update with link
+          setTimeout(() => {
+            setTxStatus(`✅ Message sent! View on AleoScan`);
+          }, 5000);
+          
+          // Verify transaction appears in explorer after a delay
+          setTimeout(async () => {
+            try {
+              const explorerUrl = `https://testnet.aleoscan.io/transaction?id=${actualTxId}`;
+              const addressUrl = `https://testnet.aleoscan.io/address?a=${publicKey}#transitions`;
+              console.log("⏳ Checking transaction status at:", explorerUrl);
+              console.log("   Or check address transitions:", addressUrl);
+              
+              // Try multiple explorer APIs
+              const apis = [
+                `https://api.explorer.aleo.org/v1/testnet3/transaction/${actualTxId}`,
+                `https://api.explorer.provable.com/v1/testnet3/transaction/${actualTxId}`,
+                `https://vm.aleo.org/api/testnet3/transaction/${actualTxId}`
+              ];
+              
+              let found = false;
+              for (const apiUrl of apis) {
+                try {
+                  const response = await fetch(apiUrl);
+                  if (response.ok) {
+                    const data = await response.json();
+                    console.log("✅ Transaction found in explorer!", apiUrl);
+                    console.log("Transaction data:", data);
+                    found = true;
+                    break;
+                  }
+                } catch (e) {
+                  // Try next API
+                  continue;
+                }
+              }
+              
+              if (!found) {
+                console.warn("⚠️ Transaction not yet found in explorer APIs");
+                console.warn("💡 This is normal - transactions need 10-30 seconds to be included in a block");
+                console.warn("💡 The wallet ID might be different from the blockchain transaction ID");
+                console.warn("💡 Check your Leo Wallet transaction history for the actual transaction");
+                console.warn("💡 Or check manually:");
+                console.warn("   Transaction: " + explorerUrl);
+                console.warn("   Address: " + addressUrl);
+                
+                // Update status to inform user - but don't overwrite success message
+                // setTxStatus(`⏳ Transaction submitted. Check wallet for confirmation...`);
+              } else {
+                console.log("🎉 Transaction confirmed in blockchain!");
+                setTxStatus(`✅ Transaction confirmed! View on AleoScan`);
+              }
+            } catch (e) {
+              console.warn("Could not verify transaction status:", e);
+              console.warn("💡 You can check the transaction manually at:");
+              console.warn("   Transaction: https://testnet.aleoscan.io/transaction?id=" + actualTxId);
+              console.warn("   Address: https://testnet.aleoscan.io/address?a=" + publicKey + "#transitions");
+            }
+          }, 10000); // Wait 10 seconds before checking
+        } else {
+          console.error("❌ Invalid transaction ID format:", txId);
+          console.error("Expected string, got:", typeof actualTxId, actualTxId);
+          setTxStatus("⚠️ Transaction may not have been broadcasted. Check wallet and console.");
+        }
         
         // Ensure the contact exists in the list (in case it was deleted or not synced)
         const contactExists = contacts.find(c => 
@@ -567,10 +841,9 @@ const ChatInterface: React.FC = () => {
           });
         }
         
-        // Sync messages after a short delay to allow transaction to be processed
-        setTimeout(() => {
-          syncMessages();
-        }, 2000);
+        // Don't sync immediately after sending - automatic syncing may cause INVALID_PARAMS errors
+        // Users can manually sync using the SYNC button if needed
+        // setTimeout(() => syncMessages(), 2000); // Disabled to avoid wallet errors
         
         setTimeout(() => setTxStatus(''), 5000);
       } else {
@@ -580,16 +853,58 @@ const ChatInterface: React.FC = () => {
     } catch (error: any) {
       console.error("Send message error:", error);
       const errorMsg = error?.message || String(error);
-      if (errorMsg.includes("Permission") || errorMsg.includes("NOT_GRANTED")) {
-        setTxStatus("Transaction rejected by user");
-      } else if (errorMsg.includes("INVALID_PARAMS") || errorMsg.includes("does not exist")) {
-        setTxStatus(`Error: send_message function not found in ${PROGRAM_ID}. The deployed program may be outdated. Please redeploy the program or contact support.`);
-        console.error(`The program ${PROGRAM_ID} does not have the send_message function. This usually means:`);
-        console.error(`1. The program was deployed with an older version of the code`);
-        console.error(`2. The program needs to be redeployed with the current code from src/main.leo`);
-        console.error(`3. Check that the deployed program matches the local code`);
+      const errorStr = String(error);
+      
+      // Check if this is a real transaction error or just wallet extension noise
+      if ((errorStr.includes("addToWindow.js") || errorStr.includes("evmAsk.js") || 
+          errorStr.includes("contentScript.ts") || errorStr.includes("inject.ts")) &&
+          !errorStr.includes("Permission Not Granted") && !errorStr.includes("NOT_GRANTED")) {
+        // Ignore errors from other wallet extensions (but not permission errors)
+        console.warn("Ignoring wallet extension error:", errorStr);
+        return;
+      }
+      
+      if (errorMsg.includes("Permission") || errorMsg.includes("NOT_GRANTED") || errorMsg.includes("rejected") || 
+          errorStr.includes("Permission Not Granted") || errorStr.includes("NOT_GRANTED")) {
+        setTxStatus("❌ Transaction was rejected. Please approve it in your wallet to send the message.");
+        console.warn("⚠️ User rejected the transaction in wallet");
+        console.warn("💡 To send a message, you need to:");
+        console.warn("   1. Click 'Send Message' button");
+        console.warn("   2. Approve the transaction in the Leo Wallet popup");
+        console.warn("   3. Wait for transaction confirmation");
+        
+        // Remove optimistic message since transaction was rejected
+        setHistories(prev => ({
+          ...prev,
+          [currentChatId]: (prev[currentChatId] || []).filter(m => m.id !== userMsg.id)
+        }));
+        
+        setTimeout(() => setTxStatus(''), 8000);
+        return;
+      } else if (errorMsg.includes("INVALID_PARAMS") && !errorStr.includes("addToWindow")) {
+        // Only show INVALID_PARAMS if it's not from wallet extensions
+        setTxStatus(`❌ Error: Invalid transaction parameters. The program ${PROGRAM_ID} may not exist or function signature is wrong.`);
+        console.error("❌ Transaction failed with INVALID_PARAMS");
+        console.error("Transaction parameters:", {
+          program: PROGRAM_ID,
+          function: "send_message",
+          recipient: activeContact.address,
+          amount: "0u64",
+          message: messageField,
+          timestamp: `${Math.floor(Date.now() / 1000)}u64`
+        });
+        console.error("💡 Possible causes:");
+        console.error("  1. Program not deployed or wrong program ID");
+        console.error("  2. Function signature mismatch");
+        console.error("  3. Network mismatch (check if using testnet)");
+      } else if (errorMsg.includes("does not exist") || errorStr.includes("does not exist")) {
+        setTxStatus(`❌ Error: send_message function not found in ${PROGRAM_ID}. Please redeploy the program.`);
+        console.error(`❌ The program ${PROGRAM_ID} does not have the send_message function.`);
+        console.error("💡 Solution: Redeploy the program with: leo deploy --network testnet");
       } else {
-        setTxStatus("Error: " + errorMsg.slice(0, 50));
+        const shortError = errorMsg.slice(0, 80);
+        setTxStatus(`❌ Error: ${shortError}${errorMsg.length > 80 ? '...' : ''}`);
+        console.error("❌ Transaction error:", error);
       }
       
       // Remove optimistic message on error

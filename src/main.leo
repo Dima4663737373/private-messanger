@@ -1,4 +1,4 @@
-program priv_messenger_leotest_009.aleo {
+program priv_messenger_leotest_010.aleo {
     // This is the constructor for the program.
     // It is called when the program is deployed.
     @noupgrade

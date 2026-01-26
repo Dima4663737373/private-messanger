@@ -3,7 +3,7 @@
  * Run this after deploying to ensure the deployment was successful
  */
 
-const PROGRAM_ID = "priv_messenger_leotest_009.aleo";
+const PROGRAM_ID = "priv_messenger_leotest_010.aleo";
 const REQUIRED_FUNCTIONS = [
     "send_message",
     "create_profile",
