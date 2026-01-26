@@ -715,17 +715,21 @@ const ChatInterface: React.FC = () => {
           
           if (isRealTxId) {
             setTxStatus(`Transaction submitted! ID: ${shortId}...`);
+            setTimeout(() => setTxStatus(''), 5000);
           } else {
-            setTxStatus(`Transaction may not be broadcasted. Check wallet history.`);
+            // UUID means transaction was NOT broadcasted - program not found
+            setTxStatus('ERROR: Transaction not broadcasted. Program not found.');
+            setIsSending(false);
+            setHistories(prev => ({
+              ...prev,
+              [currentChatId]: (prev[currentChatId] || []).filter(m => m.id !== userMsg.id)
+            }));
+            setTimeout(() => {
+              setTxStatus(`Program ${PROGRAM_ID} not found. Deploy: leo deploy --network testnet`);
+              setTimeout(() => setTxStatus(''), 10000);
+            }, 1000);
+            return;
           }
-          
-          setTimeout(() => {
-            setTxStatus(isRealTxId ? `Message sent! Check AleoScan for status.` : `Check wallet transaction history.`);
-          }, 2000);
-          
-          setTimeout(() => {
-            setTxStatus('');
-          }, 5000);
         } else {
           setTxStatus("Transaction may not have been broadcasted. Check wallet.");
         }
