@@ -830,9 +830,18 @@ const ChatInterface: React.FC = () => {
         return;
       } else if (errorMsg.includes("INVALID_PARAMS") && !errorStr.includes("addToWindow")) {
         const aleoScanUrl = getAleoScanUrl();
-        setTxStatus(`⚠️ Program not indexed on wallet RPC. Check: ${aleoScanUrl}`);
-        console.error("INVALID_PARAMS: Program may exist but not indexed on wallet's RPC endpoints.");
-        console.error("This usually means the program was recently deployed and needs time to index.");
+        // Check if program was recently deployed (within last 30 minutes)
+        const deploymentTime = new Date('2026-01-26T18:47:00Z').getTime(); // Approximate deployment time for 012
+        const now = Date.now();
+        const minutesSinceDeployment = Math.floor((now - deploymentTime) / 60000);
+        
+        if (minutesSinceDeployment < 30) {
+          setTxStatus(`⏳ Program deployed ${minutesSinceDeployment}m ago. Indexing in progress... (5-15 min)`);
+          console.warn(`Program ${PROGRAM_ID} deployed recently. Waiting for RPC indexing (${minutesSinceDeployment} minutes ago).`);
+        } else {
+          setTxStatus(`⚠️ Program not indexed on wallet RPC. Check: ${aleoScanUrl}`);
+          console.error("INVALID_PARAMS: Program may exist but not indexed on wallet's RPC endpoints.");
+        }
         console.error(`Check if program exists: ${aleoScanUrl}`);
         console.error("If program exists on AleoScan but wallet shows error, wait for RPC indexing.");
       } else if (errorMsg.includes("does not exist") || errorStr.includes("does not exist")) {

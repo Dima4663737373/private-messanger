@@ -11,11 +11,17 @@
       
       console.warn = function(...args) {
         const warnStr = args.join(' ');
+        const warnObj = args[0];
         if (args[0] && typeof args[0] === 'string' && args[0].includes('cdn.tailwindcss.com')) {
           return; // Suppress Tailwind CDN warning
         }
         if (warnStr.includes('Overwrites EVM default provider') ||
-            warnStr.includes('Unable to redefine window.ethereum')) {
+            warnStr.includes('Unable to redefine window.ethereum') ||
+            warnStr.includes('Could not attach to provider') ||
+            warnStr.includes('Razor Wallet') ||
+            warnStr.includes('Nightly Wallet') ||
+            warnStr.includes('Failed to assign ethereum proxy') ||
+            (warnObj && typeof warnObj === 'object' && warnObj.isNightly)) {
           return; // Suppress wallet injection warnings
         }
         originalWarn.apply(console, args);
@@ -26,6 +32,7 @@
         const errorMsg = args[0]?.message || String(args[0] || '');
         const errorStr = args.join(' ');
         const errorName = args[0]?.name || '';
+        const errorStack = args[0]?.stack || '';
         
         // Suppress wallet-related errors
         if (errorMsg.includes('Invalid property descriptor') || 
@@ -51,7 +58,18 @@
             errorStr.includes('contentScript.ts') ||
             errorStr.includes('inject.ts') ||
             errorStr.includes('addToWindow.js') ||
-            errorStr.includes('inject.chrome')) {
+            errorStr.includes('inject.chrome') ||
+            errorStack.includes('evmAsk.js') ||
+            errorStack.includes('contentScript.ts') ||
+            errorStack.includes('inject.ts') ||
+            errorStack.includes('addToWindow.js') ||
+            errorStack.includes('inject.chrome') ||
+            // Suppress specific TypeError from wallet extensions
+            (errorName === 'TypeError' && (
+              errorMsg.includes('Cannot redefine property') ||
+              errorMsg.includes('Cannot set property') ||
+              errorMsg.includes('Invalid property descriptor')
+            ))) {
           return; // Suppress wallet errors
         }
         // Don't suppress INVALID_PARAMS - it's important for debugging transaction issues
