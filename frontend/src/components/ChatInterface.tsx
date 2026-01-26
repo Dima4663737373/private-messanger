@@ -646,16 +646,31 @@ const ChatInterface: React.FC = () => {
       // TRANSACTION_FEE (0.01 ALEO) is the ONLY fee charged - this is the blockchain transaction fee
       
       // Ensure all parameters are strings with proper type annotations
-      const recipientParam = activeContact.address; // address type
-      const amountParam = `${amount}u64`; // u64 type
-      const messageParam = messageField; // field type (already formatted)
-      const timestampParam = `${timestamp}u64`; // u64 type
+      // For private parameters in Aleo, we pass them as plain strings
+      // The wallet adapter will handle the encryption/private formatting
+      const recipientParam = activeContact.address; // address type (private)
+      const amountParam = `${amount}u64`; // u64 type (private, always 0)
+      const messageParam = messageField; // field type (private, already formatted as "numberfield")
+      const timestampParam = `${timestamp}u64`; // u64 type (private)
       
-      console.log("Transaction parameters (formatted):", {
+      // Validate all parameters before creating transaction
+      if (!recipientParam || !recipientParam.startsWith('aleo1')) {
+        throw new Error("Invalid recipient address format");
+      }
+      if (!messageParam || !messageParam.endsWith('field')) {
+        throw new Error("Invalid message field format");
+      }
+      if (!timestampParam || !timestampParam.endsWith('u64')) {
+        throw new Error("Invalid timestamp format");
+      }
+      
+      console.log("📋 Transaction parameters (formatted):", {
         recipient: recipientParam,
         amount: amountParam,
         message: messageParam,
-        timestamp: timestampParam
+        timestamp: timestampParam,
+        messageFieldLength: messageField.length,
+        timestampValue: timestamp
       });
       
       const transaction = Transaction.createTransaction(
@@ -669,7 +684,7 @@ const ChatInterface: React.FC = () => {
           messageParam,      // private message: field
           timestampParam      // private timestamp: u64
         ],
-        TRANSACTION_FEE,     // Only blockchain transaction fee (0.01 ALEO)
+        TRANSACTION_FEE,     // Only blockchain transaction fee (0.01 ALEO = 10,000,000,000 microcredits)
         false                // Use public fee (not private records) - feePrivate: false
       );
 
@@ -719,11 +734,21 @@ const ChatInterface: React.FC = () => {
         }
         
         if (!programExists) {
-          console.warn("⚠️ Програма не знайдена в мережі!");
-          console.warn("⚠️ Транзакція може не пройти!");
-          console.warn("💡 Перевірте деплой: node verify_deployment.js");
-          setTxStatus('⚠️ Програма не знайдена в мережі. Транзакція може не пройти!');
-          // Don't block - continue anyway, wallet will handle it
+          console.error("❌ КРИТИЧНО: Програма не знайдена в мережі!");
+          console.error("❌ Транзакція НЕ ПРОЙДЕ, якщо програма не задеплоєна!");
+          console.error("💡 Перевірте деплой: node verify_deployment.js");
+          console.error("💡 Якщо програма не задеплоєна, задеплойте:");
+          console.error("   leo deploy --network testnet --private-key YOUR_KEY --priority-fees 1000000 --broadcast -y");
+          setTxStatus('❌ КРИТИЧНО: Програма не знайдена в мережі! Транзакція не пройде!');
+          // Block transaction if program doesn't exist
+          setIsSending(false);
+          // Remove optimistic message
+          setHistories(prev => ({
+            ...prev,
+            [currentChatId]: (prev[currentChatId] || []).filter(m => m.id !== userMsg.id)
+          }));
+          setTimeout(() => setTxStatus(''), 10000);
+          return;
         } else {
           console.log("✅ Програма існує в мережі");
         }
