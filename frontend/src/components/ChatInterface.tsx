@@ -645,9 +645,38 @@ const ChatInterface: React.FC = () => {
       // All parameters are private for maximum privacy - nothing visible in transaction history
       // TRANSACTION_FEE (0.01 ALEO) is the ONLY fee charged - this is the blockchain transaction fee
       
+      // CRITICAL: Program must be deployed and indexed for transactions to work
+      // If program is not found, wallet returns INVALID_PARAMS and transaction won't be broadcasted
+      // This causes tokens to be deducted but transaction never appears in explorers
+      setTxStatus('Verifying program deployment...');
+      let programFound = false;
+      try {
+        // Check Provable API first (most reliable)
+        const provableUrl = `https://api.explorer.provable.com/v1/testnet3/program/${PROGRAM_ID}`;
+        const response = await fetch(provableUrl);
+        if (response.ok) {
+          programFound = true;
+        }
+      } catch (e) {
+        // Continue - program might exist but API check failed
+      }
+      
+      if (!programFound) {
+        setTxStatus('ERROR: Program not found. Transaction will fail.');
+        setIsSending(false);
+        setHistories(prev => ({
+          ...prev,
+          [currentChatId]: (prev[currentChatId] || []).filter(m => m.id !== userMsg.id)
+        }));
+        setTimeout(() => {
+          setTxStatus(`Program ${PROGRAM_ID} not found. Deploy it first.`);
+          setTimeout(() => setTxStatus(''), 10000);
+        }, 1000);
+        return;
+      }
+      
       // Ensure all parameters are strings with proper type annotations
-      // For private parameters in Aleo, we pass them as plain strings
-      // The wallet adapter will handle the encryption/private formatting
+      // For private parameters in Aleo wallet adapter, pass as plain strings
       const recipientParam = activeContact.address; // address type (private)
       const amountParam = `${amount}u64`; // u64 type (private, always 0)
       const messageParam = messageField; // field type (private, already formatted as "numberfield")
@@ -663,7 +692,6 @@ const ChatInterface: React.FC = () => {
       if (!timestampParam || !timestampParam.endsWith('u64')) {
         throw new Error("Invalid timestamp format");
       }
-      
       
       const transaction = Transaction.createTransaction(
         publicKey,
@@ -785,8 +813,10 @@ const ChatInterface: React.FC = () => {
         setTimeout(() => setTxStatus(''), 8000);
         return;
       } else if (errorMsg.includes("INVALID_PARAMS") && !errorStr.includes("addToWindow")) {
-        setTxStatus(`Error: Invalid transaction parameters. Program ${PROGRAM_ID} may not exist.`);
-        console.error("Transaction failed with INVALID_PARAMS - program may not be deployed");
+        setTxStatus(`ERROR: Program ${PROGRAM_ID} not found. Transaction cannot be broadcasted.`);
+        console.error("INVALID_PARAMS: Program not found on network. Transaction was not broadcasted.");
+        console.error("This means tokens were deducted but transaction never reached the blockchain.");
+        console.error("Solution: Deploy program: leo deploy --network testnet");
       } else if (errorMsg.includes("does not exist") || errorStr.includes("does not exist")) {
         setTxStatus(`Error: send_message function not found in ${PROGRAM_ID}.`);
       } else if (errorMsg.includes("insufficient") || errorMsg.includes("balance")) {
