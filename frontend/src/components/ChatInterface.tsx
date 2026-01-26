@@ -5,6 +5,7 @@ import { Message, Contact } from '../types';
 import { PROGRAM_ID } from '../deployed_program';
 import { stringToField, fieldToString } from '../utils/messageUtils';
 import { TRANSACTION_FEE } from '../utils/constants';
+import { requestTransactionWithRetry } from '../utils/walletUtils';
 
 // Helper function to generate initials from address
 const getInitialsFromAddress = (address: string): string => {
@@ -667,109 +668,112 @@ const ChatInterface: React.FC = () => {
         throw new Error("Invalid timestamp format");
       }
       
-      // Create transaction object directly (like tipzo) to ensure proper fee display
-      // Fee is in microcredits: 10,000,000,000 = 0.01 ALEO
-      // Wallet should display this as 0.01 ALEO, not 10000
+      // Create transaction object exactly like tipzo for proper fee display
+      // Fee format: 10,000,000,000 microcredits = 0.01 ALEO
+      // Wallet should display this as 0.01 ALEO
       const transaction = {
         address: String(publicKey),
         chainId: network,
         fee: TRANSACTION_FEE, // 10,000,000,000 microcredits = 0.01 ALEO
-        feePrivate: false, // Use public fee (not private records)
         transitions: [
           {
             program: String(PROGRAM_ID),
             functionName: "send_message",
             inputs: [
-              recipientParam,    // private recipient: address
-              amountParam,       // private amount: u64 (ALWAYS 0 - no token transfer)
-              messageParam,      // private message: field
-              timestampParam      // private timestamp: u64
+              String(recipientParam),    // private recipient: address
+              String(amountParam),       // private amount: u64 (ALWAYS 0 - no token transfer)
+              String(messageParam),      // private message: field
+              String(timestampParam)      // private timestamp: u64
             ]
           }
         ]
       };
 
-      setTxStatus('Waiting for signature...');
-      
-      // Request transaction - this should prompt user to sign and broadcast
+      // Validate inputs don't contain invalid values (like tipzo)
+      const allInputs = transaction.transitions[0].inputs;
+      if (allInputs.some((inp: string) => inp.includes("NaN") || inp === "undefined" || inp === "null")) {
+        throw new Error(`Invalid inputs detected: ${JSON.stringify(allInputs)}`);
+      }
+
       setTxStatus('Opening wallet... Please approve the transaction.');
       
-      let txId: any;
+      // Use requestTransactionWithRetry like tipzo
+      let txId: string;
       try {
-        txId = await adapter.requestTransaction(transaction);
-        
-        if (txId === null || txId === undefined) {
-          throw new Error("Transaction cancelled or failed - no transaction ID returned");
-        }
+        txId = await requestTransactionWithRetry(adapter, transaction, {
+          timeout: 30000,
+          maxRetries: 3
+        });
       } catch (txError: any) {
-        if (txError?.message?.includes("cancel") || txError?.message?.includes("reject") || 
-            txError?.message?.includes("denied") || txError?.code === 4001) {
+        const errorMsg = txError?.message || String(txError);
+        if (errorMsg.includes("cancel") || errorMsg.includes("reject") || 
+            errorMsg.includes("denied") || errorMsg.includes("User rejected") ||
+            errorMsg.includes("User cancelled") || txError?.code === 4001) {
           setTxStatus("Transaction cancelled by user");
-          throw new Error("Transaction cancelled");
+          setIsSending(false);
+          setHistories(prev => ({
+            ...prev,
+            [currentChatId]: (prev[currentChatId] || []).filter(m => m.id !== userMsg.id)
+          }));
+          setTimeout(() => setTxStatus(''), 5000);
+          return;
         }
         throw txError;
       }
 
-      if (txId) {
-        // Check if txId is a string (transaction ID) or an object with status
-        const actualTxId = typeof txId === 'string' ? txId : (txId?.transactionId || txId?.id || txId);
+      // txId is already a string from requestTransactionWithRetry
+      if (txId && typeof txId === 'string' && txId.length > 0) {
+        const shortId = txId.length > 8 ? txId.slice(0, 8) : txId;
         
-        if (actualTxId && typeof actualTxId === 'string' && actualTxId.length > 0) {
-          const shortId = actualTxId.length > 8 ? actualTxId.slice(0, 8) : actualTxId;
+        // Check if this is a UUID (local wallet ID) or real transaction ID (starts with 'at1')
+        const isRealTxId = txId.startsWith('at1');
+        
+        if (isRealTxId) {
+          setTxStatus(`Transaction submitted! ID: ${shortId}...`);
           
-          // Check if this is a UUID (local wallet ID) or real transaction ID (starts with 'at1')
-          const isRealTxId = actualTxId.startsWith('at1');
+          // Ensure the contact exists in the list
+          const contactExists = contacts.find(c => 
+            c.address?.toLowerCase() === activeContact.address?.toLowerCase()
+          );
           
-          if (isRealTxId) {
-            setTxStatus(`Transaction submitted! ID: ${shortId}...`);
-            setTimeout(() => setTxStatus(''), 5000);
-          } else {
-            // UUID means transaction was NOT broadcasted - program not found
-            setTxStatus('ERROR: Transaction not broadcasted. Program not found.');
-            setIsSending(false);
-            setHistories(prev => ({
-              ...prev,
-              [currentChatId]: (prev[currentChatId] || []).filter(m => m.id !== userMsg.id)
-            }));
-            setTimeout(() => {
-              setTxStatus(`Program ${PROGRAM_ID} not found. Deploy: leo deploy --network testnet`);
-              setTimeout(() => setTxStatus(''), 10000);
-            }, 1000);
-            return;
+          if (!contactExists && activeContact.address) {
+            const newContact: Contact = {
+              id: `contact-${activeContact.address}`,
+              name: activeContact.name || activeContact.address.slice(0, 10) + '...' + activeContact.address.slice(-6),
+              description: activeContact.address,
+              context: '',
+              initials: getInitialsFromAddress(activeContact.address),
+              address: activeContact.address,
+              unreadCount: 0
+            };
+            setContacts(prev => {
+              const exists = prev.find(c => c.address?.toLowerCase() === activeContact.address?.toLowerCase());
+              return exists ? prev : [...prev, newContact];
+            });
           }
+          
+          setTimeout(() => setTxStatus(''), 5000);
         } else {
-          setTxStatus("Transaction may not have been broadcasted. Check wallet.");
+          // UUID means transaction was NOT broadcasted - program not found
+          setTxStatus('ERROR: Transaction not broadcasted. Program not found.');
+          setIsSending(false);
+          setHistories(prev => ({
+            ...prev,
+            [currentChatId]: (prev[currentChatId] || []).filter(m => m.id !== userMsg.id)
+          }));
+          setTimeout(() => {
+            setTxStatus(`Program ${PROGRAM_ID} not found. Deploy: leo deploy --network testnet`);
+            setTimeout(() => setTxStatus(''), 10000);
+          }, 1000);
+          return;
         }
-        
-        // Ensure the contact exists in the list (in case it was deleted or not synced)
-        const contactExists = contacts.find(c => 
-          c.address?.toLowerCase() === activeContact.address?.toLowerCase()
-        );
-        
-        if (!contactExists && activeContact.address) {
-          // Add contact if it doesn't exist
-          const newContact: Contact = {
-            id: `contact-${activeContact.address}`,
-            name: activeContact.name || activeContact.address.slice(0, 10) + '...' + activeContact.address.slice(-6),
-            description: activeContact.address,
-            context: '',
-            initials: getInitialsFromAddress(activeContact.address),
-            address: activeContact.address,
-            unreadCount: 0
-          };
-          setContacts(prev => {
-            const exists = prev.find(c => c.address?.toLowerCase() === activeContact.address?.toLowerCase());
-            return exists ? prev : [...prev, newContact];
-          });
-        }
-        
-        // Don't sync immediately after sending - automatic syncing may cause INVALID_PARAMS errors
-        // Users can manually sync using the SYNC button if needed
-        // setTimeout(() => syncMessages(), 2000); // Disabled to avoid wallet errors
-        
-        setTimeout(() => setTxStatus(''), 5000);
       } else {
-        setTxStatus('Transaction failed - no transaction ID returned');
+        setTxStatus('Transaction failed - invalid response');
+        setIsSending(false);
+        setHistories(prev => ({
+          ...prev,
+          [currentChatId]: (prev[currentChatId] || []).filter(m => m.id !== userMsg.id)
+        }));
         setTimeout(() => setTxStatus(''), 5000);
       }
     } catch (error: any) {
@@ -1318,18 +1322,25 @@ const ChatInterface: React.FC = () => {
                         address: String(publicKey),
                         chainId: network,
                         fee: TRANSACTION_FEE, // 10,000,000,000 microcredits = 0.01 ALEO
-                        feePrivate: false,
                         transitions: [
                           {
                             program: String(PROGRAM_ID),
                             functionName: "create_profile",
-                            inputs: [nameField, bioField]
+                            inputs: [String(nameField), String(bioField)]
                           }
                         ]
                       };
 
+                      // Validate inputs
+                      if (transaction.transitions[0].inputs.some((inp: string) => inp.includes("NaN") || inp === "undefined" || inp === "null")) {
+                        throw new Error(`Invalid inputs detected`);
+                      }
+
                       setTxStatus('Waiting for signature...');
-                      const txId = await adapter.requestTransaction(transaction);
+                      const txId = await requestTransactionWithRetry(adapter, transaction, {
+                        timeout: 30000,
+                        maxRetries: 3
+                      });
 
                       if (txId) {
                         setTxStatus(`Profile created! TX: ${txId.slice(0, 8)}...`);
