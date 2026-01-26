@@ -1,4 +1,4 @@
-program priv_messenger_leotest_011.aleo;
+program priv_messenger_leotest_012.aleo;
 
 record Message:
     owner as address.public;
@@ -51,7 +51,7 @@ function create_profile:
     input r0 as field.public;
     input r1 as field.public;
     async create_profile self.caller r0 r1 into r2;
-    output r2 as priv_messenger_leotest_011.aleo/create_profile.future;
+    output r2 as priv_messenger_leotest_012.aleo/create_profile.future;
 
 finalize create_profile:
     input r0 as address.public;
@@ -66,7 +66,7 @@ function update_profile:
     input r0 as field.public;
     input r1 as field.public;
     async update_profile self.caller r0 r1 into r2;
-    output r2 as priv_messenger_leotest_011.aleo/update_profile.future;
+    output r2 as priv_messenger_leotest_012.aleo/update_profile.future;
 
 finalize update_profile:
     input r0 as address.public;
@@ -88,7 +88,7 @@ function send_message:
     async send_message r0 self.caller r1 r6 r3 into r7;
     output r4 as Message.record;
     output r5 as Message.record;
-    output r7 as priv_messenger_leotest_011.aleo/send_message.future;
+    output r7 as priv_messenger_leotest_012.aleo/send_message.future;
 
 finalize send_message:
     input r0 as address.public;
@@ -119,7 +119,7 @@ function update_contact_name:
     input r0 as address.private;
     input r1 as field.private;
     async update_contact_name self.caller r0 r1 into r2;
-    output r2 as priv_messenger_leotest_011.aleo/update_contact_name.future;
+    output r2 as priv_messenger_leotest_012.aleo/update_contact_name.future;
 
 finalize update_contact_name:
     input r0 as address.public;
@@ -133,7 +133,7 @@ finalize update_contact_name:
 function delete_chat:
     input r0 as address.private;
     async delete_chat self.caller r0 into r1;
-    output r1 as priv_messenger_leotest_011.aleo/delete_chat.future;
+    output r1 as priv_messenger_leotest_012.aleo/delete_chat.future;
 
 finalize delete_chat:
     input r0 as address.public;
@@ -146,7 +146,7 @@ finalize delete_chat:
 function restore_chat:
     input r0 as address.private;
     async restore_chat self.caller r0 into r1;
-    output r1 as priv_messenger_leotest_011.aleo/restore_chat.future;
+    output r1 as priv_messenger_leotest_012.aleo/restore_chat.future;
 
 finalize restore_chat:
     input r0 as address.public;

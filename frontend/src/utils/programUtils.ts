@@ -1,6 +1,6 @@
 // Utility functions for checking program deployment status
 
-const PROGRAM_ID = "priv_messenger_leotest_010.aleo";
+const PROGRAM_ID = "priv_messenger_leotest_012.aleo";
 
 // Provable API v2 endpoint (recommended)
 const PROVABLE_API_V2 = "https://api.explorer.provable.com/v2";
