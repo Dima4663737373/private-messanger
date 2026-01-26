@@ -14,9 +14,10 @@ const REQUIRED_FUNCTIONS = [
 ];
 
 const RPC_BASES = [
-    "https://api.explorer.provable.com/v1",
-    "https://api.explorer.aleo.org/v1",
-    "https://vm.aleo.org/api"
+    { base: "https://api.explorer.provable.com/v2", paths: [`/programs/${PROGRAM_ID}`] },
+    { base: "https://api.explorer.provable.com/v1", paths: [`/testnet3/program/${PROGRAM_ID}`, `/program/${PROGRAM_ID}`] },
+    { base: "https://api.explorer.aleo.org/v1", paths: [`/testnet3/program/${PROGRAM_ID}`, `/program/${PROGRAM_ID}`] },
+    { base: "https://vm.aleo.org/api", paths: [`/testnet3/program/${PROGRAM_ID}`, `/program/${PROGRAM_ID}`] }
 ];
 
 async function verifyDeployment() {
@@ -25,25 +26,32 @@ async function verifyDeployment() {
 
     let programFound = false;
     let programContent = "";
+    let foundUrl = "";
 
-    for (const RPC_BASE of RPC_BASES) {
-        const paths = [
-            `/testnet3/program/${PROGRAM_ID}`,
-            `/program/${PROGRAM_ID}`,
-        ];
-
-        for (const path of paths) {
-            const url = `${RPC_BASE}${path}`;
+    for (const rpc of RPC_BASES) {
+        for (const path of rpc.paths) {
+            const url = `${rpc.base}${path}`;
             try {
                 console.log(`Checking ${url}...`);
                 const res = await fetch(url);
                 if (res.ok) {
-                    programContent = await res.text();
+                    const contentType = res.headers.get("content-type");
+                    if (contentType && contentType.includes("application/json")) {
+                        const data = await res.json();
+                        // Provable API v2 returns JSON, extract program content
+                        programContent = data.program || data.source || JSON.stringify(data);
+                    } else {
+                        programContent = await res.text();
+                    }
                     programFound = true;
+                    foundUrl = url;
                     console.log(`✅ Program found at ${url}\n`);
                     break;
+                } else {
+                    console.log(`   ❌ ${res.status} ${res.statusText}`);
                 }
             } catch (e) {
+                console.log(`   ❌ Error: ${e.message}`);
                 // Continue to next URL
             }
         }

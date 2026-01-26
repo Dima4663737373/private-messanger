@@ -6,6 +6,7 @@ import { PROGRAM_ID } from '../deployed_program';
 import { stringToField, fieldToString } from '../utils/messageUtils';
 import { TRANSACTION_FEE } from '../utils/constants';
 import { requestTransactionWithRetry } from '../utils/walletUtils';
+import { checkProgramExists, getAleoScanUrl } from '../utils/programUtils';
 
 // Helper function to generate initials from address
 const getInitialsFromAddress = (address: string): string => {
@@ -25,6 +26,8 @@ const ChatInterface: React.FC = () => {
   const network = WalletAdapterNetwork.TestnetBeta;
   // State for active chat selection
   const [activeContactId, setActiveContactId] = useState<string | null>(null);
+  // Program deployment status
+  const [programStatus, setProgramStatus] = useState<{ exists: boolean; checking: boolean }>({ exists: false, checking: true });
   
   // Message history per contact - load from localStorage (persistent storage)
   const [histories, setHistories] = useState<Record<string, Message[]>>(() => {
@@ -432,6 +435,30 @@ const ChatInterface: React.FC = () => {
   };
 
   // Auto-sync on mount and periodically (with delay to avoid immediate errors)
+  // Check program deployment status on mount
+  useEffect(() => {
+    const checkProgram = async () => {
+      setProgramStatus({ exists: false, checking: true });
+      try {
+        const status = await checkProgramExists();
+        setProgramStatus({ exists: status.exists, checking: false });
+        if (!status.exists) {
+          console.warn(`⚠️ Program ${PROGRAM_ID} not found on RPC endpoints.`);
+          console.warn(`Check on AleoScan: ${getAleoScanUrl()}`);
+        } else {
+          console.log(`✅ Program ${PROGRAM_ID} found at ${status.url}`);
+        }
+      } catch (error) {
+        console.error("Error checking program status:", error);
+        setProgramStatus({ exists: false, checking: false });
+      }
+    };
+    checkProgram();
+    // Re-check every 2 minutes
+    const interval = setInterval(checkProgram, 120000);
+    return () => clearInterval(interval);
+  }, []);
+
   useEffect(() => {
     if (publicKey && adapter) {
       // Wait a bit for wallet to be ready
@@ -802,10 +829,11 @@ const ChatInterface: React.FC = () => {
         setTimeout(() => setTxStatus(''), 8000);
         return;
       } else if (errorMsg.includes("INVALID_PARAMS") && !errorStr.includes("addToWindow")) {
-        setTxStatus(`⚠️ Program ${PROGRAM_ID} not indexed on RPC. Wait 5-10 min or check AleoScan.`);
+        const aleoScanUrl = getAleoScanUrl();
+        setTxStatus(`⚠️ Program not indexed on wallet RPC. Check: ${aleoScanUrl}`);
         console.error("INVALID_PARAMS: Program may exist but not indexed on wallet's RPC endpoints.");
         console.error("This usually means the program was recently deployed and needs time to index.");
-        console.error("Check if program exists: https://testnet.aleoscan.io/program/" + PROGRAM_ID);
+        console.error(`Check if program exists: ${aleoScanUrl}`);
         console.error("If program exists on AleoScan but wallet shows error, wait for RPC indexing.");
       } else if (errorMsg.includes("does not exist") || errorStr.includes("does not exist")) {
         setTxStatus(`Error: send_message function not found in ${PROGRAM_ID}.`);
@@ -1212,6 +1240,16 @@ const ChatInterface: React.FC = () => {
 
             {/* Input */}
             <footer className="bg-white border-t-4 border-brutal-black p-4 sticky bottom-0 z-20">
+              {programStatus.checking && (
+                <div className="mb-2 text-xs font-bold uppercase bg-gray-200 border-2 border-black p-2">
+                  🔍 Checking program status...
+                </div>
+              )}
+              {!programStatus.checking && !programStatus.exists && (
+                <div className="mb-2 text-xs font-bold uppercase bg-brutal-yellow border-2 border-black p-2">
+                  ⚠️ PROGRAM {PROGRAM_ID} NOT FOUND. Check: <a href={getAleoScanUrl()} target="_blank" rel="noopener noreferrer" className="underline">AleoScan</a>
+                </div>
+              )}
               {txStatus && (
                 <div className="mb-2 text-xs font-bold uppercase bg-brutal-yellow border-2 border-black p-2">
                   {txStatus}
