@@ -14,6 +14,7 @@ const REQUIRED_FUNCTIONS = [
 ];
 
 const RPC_BASES = [
+    "https://api.explorer.provable.com/v1",
     "https://api.explorer.aleo.org/v1",
     "https://vm.aleo.org/api"
 ];

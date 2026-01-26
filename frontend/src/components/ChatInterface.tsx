@@ -734,21 +734,12 @@ const ChatInterface: React.FC = () => {
         }
         
         if (!programExists) {
-          console.error("❌ КРИТИЧНО: Програма не знайдена в мережі!");
-          console.error("❌ Транзакція НЕ ПРОЙДЕ, якщо програма не задеплоєна!");
-          console.error("💡 Перевірте деплой: node verify_deployment.js");
-          console.error("💡 Якщо програма не задеплоєна, задеплойте:");
-          console.error("   leo deploy --network testnet --private-key YOUR_KEY --priority-fees 1000000 --broadcast -y");
-          setTxStatus('❌ КРИТИЧНО: Програма не знайдена в мережі! Транзакція не пройде!');
-          // Block transaction if program doesn't exist
-          setIsSending(false);
-          // Remove optimistic message
-          setHistories(prev => ({
-            ...prev,
-            [currentChatId]: (prev[currentChatId] || []).filter(m => m.id !== userMsg.id)
-          }));
-          setTimeout(() => setTxStatus(''), 10000);
-          return;
+          console.warn("⚠️ Програма не знайдена на RPC endpoints!");
+          console.warn("⚠️ Це може означати, що програма ще не проіндексована.");
+          console.warn("💡 Wallet може знайти програму навіть якщо RPC не знайшов.");
+          console.warn("💡 Спробуємо відправити транзакцію - wallet перевірить існування програми.");
+          setTxStatus('⚠️ Програма не знайдена на RPC, але спробуємо відправити...');
+          // Don't block - wallet will check if program exists
         } else {
           console.log("✅ Програма існує в мережі");
         }
