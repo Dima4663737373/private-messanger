@@ -30,7 +30,6 @@ const LandingPage: React.FC = () => {
         setShowModal(true);
       }
     } catch (error: any) {
-      console.error("Failed to connect:", error);
       const errorMsg = error?.message || String(error);
       
       // If wallet not selected, try to select it
@@ -41,7 +40,7 @@ const LandingPage: React.FC = () => {
             await new Promise(resolve => setTimeout(resolve, 500));
             await connect(DecryptPermission.OnChainHistory, WalletAdapterNetwork.TestnetBeta);
           } catch (retryError) {
-            console.error("Retry connection failed:", retryError);
+            // Silently fail - not critical
             if (wallets.length > 1) {
               setShowModal(true);
             } else {
@@ -65,7 +64,7 @@ const LandingPage: React.FC = () => {
       await connect(DecryptPermission.OnChainHistory, WalletAdapterNetwork.TestnetBeta);
       setShowModal(false);
     } catch (e) {
-      console.error("Connection failed", e);
+      // Silently fail - not critical
       alert('Failed to connect wallet. Please try again.');
     }
   };

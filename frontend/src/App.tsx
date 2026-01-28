@@ -14,11 +14,11 @@ const Content: React.FC = () => {
       const errorMsg = error?.message || String(error || '');
       const errorName = error?.name || '';
       
-      // Only log non-wallet-selection errors
+      // Only log critical wallet errors
       if (!errorMsg.includes('WalletNotSelected') && 
           !errorName.includes('WalletNotSelected') &&
           !errorMsg.includes('Failed to connect')) {
-        console.error('Wallet error:', error);
+        console.error('❌ Wallet error:', error);
       }
     }
   }, [error]);

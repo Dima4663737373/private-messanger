@@ -7,6 +7,12 @@ import { stringToField, fieldToString } from '../utils/messageUtils';
 import { TRANSACTION_FEE } from '../utils/constants';
 import { requestTransactionWithRetry } from '../utils/walletUtils';
 import { checkProgramExists, getAleoScanUrl } from '../utils/programUtils';
+import { useContract } from '../hooks/useContract';
+import { ProgramStatus } from './ProgramStatus';
+import { checkProgramExists as checkProgramRPC, waitForProgram } from '../utils/aleo-rpc';
+import { validateTransactionParams, cleanAddress } from '../utils/validation';
+import { isRealTransactionId, isWalletUuid, getTransactionExplorerUrl } from '../utils/transactionUtils';
+import { logger } from '../utils/logger';
 
 // Helper function to generate initials from address
 const getInitialsFromAddress = (address: string): string => {
@@ -24,6 +30,7 @@ const ChatInterface: React.FC = () => {
   const { publicKey, wallet, disconnect } = useWallet();
   const adapter = wallet?.adapter as any;
   const network = WalletAdapterNetwork.TestnetBeta;
+  const { sendMessage: sendMessageContract, createProfile: createProfileContract, loading: contractLoading, error: contractError } = useContract();
   // State for active chat selection
   const [activeContactId, setActiveContactId] = useState<string | null>(null);
   // Program deployment status
@@ -47,7 +54,7 @@ const ChatInterface: React.FC = () => {
           return result;
         }
       } catch (e) {
-        console.warn("Failed to load messages from localStorage:", e);
+        // Silently fail - not critical
       }
     }
     return {};
@@ -72,7 +79,7 @@ const ChatInterface: React.FC = () => {
           }
         }
       } catch (e) {
-        console.warn("Failed to reload messages:", e);
+        // Silently fail - not critical
       }
     }
   }, [publicKey]);
@@ -91,7 +98,7 @@ const ChatInterface: React.FC = () => {
           }));
         }
       } catch (e) {
-        console.warn("Failed to load contacts from localStorage:", e);
+        // Silently fail - not critical
       }
     }
     return [];
@@ -113,7 +120,7 @@ const ChatInterface: React.FC = () => {
           }
         }
       } catch (e) {
-        console.warn("Failed to reload contacts:", e);
+        // Silently fail - not critical
       }
     }
   }, [publicKey]);
@@ -180,7 +187,7 @@ const ChatInterface: React.FC = () => {
           localStorage.setItem(`ghost_contacts_${publicKey}`, JSON.stringify([]));
         }
       } catch (e) {
-        console.warn("Failed to save contacts to localStorage:", e);
+        // Silently fail - not critical
       }
     }
   }, [contacts, publicKey]);
@@ -196,7 +203,7 @@ const ChatInterface: React.FC = () => {
           localStorage.setItem(`ghost_messages_${publicKey}`, JSON.stringify({}));
         }
       } catch (e) {
-        console.warn("Failed to save messages to localStorage:", e);
+        // Silently fail - not critical
       }
     }
   }, [histories, publicKey]);
@@ -367,7 +374,7 @@ const ChatInterface: React.FC = () => {
 
           newMessagesMap.get(contactId)!.push(message);
         } catch (e) {
-          console.warn("Failed to parse record:", e);
+          // Silently fail - not critical
         }
       }
 
@@ -426,7 +433,7 @@ const ChatInterface: React.FC = () => {
 
       setTimeout(() => setSyncStatus(''), 3000);
     } catch (error) {
-      console.error("Sync error:", error);
+      // Silently fail - not critical
       setSyncStatus('Sync failed');
       setTimeout(() => setSyncStatus(''), 3000);
     } finally {
@@ -435,21 +442,22 @@ const ChatInterface: React.FC = () => {
   };
 
   // Auto-sync on mount and periodically (with delay to avoid immediate errors)
-  // Check program deployment status on mount
+  // Check program deployment status on mount (using new RPC check)
   useEffect(() => {
     const checkProgram = async () => {
       setProgramStatus({ exists: false, checking: true });
       try {
-        const status = await checkProgramExists();
-        setProgramStatus({ exists: status.exists, checking: false });
-        if (!status.exists) {
+        // Use new RPC check function
+        const info = await checkProgramRPC(PROGRAM_ID);
+        setProgramStatus({ exists: info.exists, checking: false });
+        if (!info.exists) {
           console.warn(`⚠️ Program ${PROGRAM_ID} not found on RPC endpoints.`);
           console.warn(`Check on AleoScan: ${getAleoScanUrl()}`);
         } else {
-          console.log(`✅ Program ${PROGRAM_ID} found at ${status.url}`);
+          logger.debug(`Program ${PROGRAM_ID} found at ${info.url || 'public RPC'}`);
         }
       } catch (error) {
-        console.error("Error checking program status:", error);
+        logger.debug("Error checking program status:", error);
         setProgramStatus({ exists: false, checking: false });
       }
     };
@@ -592,7 +600,7 @@ const ChatInterface: React.FC = () => {
       try {
         if (adapter.requestBalance && typeof adapter.requestBalance === 'function') {
           const balance = await adapter.requestBalance();
-          console.log("💰 Current balance:", balance);
+          logger.debug("Current balance:", balance);
           
           // Balance might be in different formats, check if it's sufficient
           // TRANSACTION_FEE = 10,000,000,000 microcredits = 0.01 ALEO
@@ -630,7 +638,6 @@ const ChatInterface: React.FC = () => {
           }
         }
       } catch (balanceError) {
-        console.warn("Could not check balance:", balanceError);
         // Continue anyway - balance check is optional
       }
       
@@ -642,17 +649,15 @@ const ChatInterface: React.FC = () => {
       
       // Validate timestamp is reasonable (not in milliseconds)
       if (timestamp > 10000000000) { // If > year 2286, probably in milliseconds
-        console.error("⚠️ Warning: Timestamp seems to be in milliseconds:", timestamp);
-        console.error("   Converting to seconds...");
+        console.warn("⚠️ Warning: Timestamp seems to be in milliseconds, converting to seconds...");
         timestamp = Math.floor(timestamp / 1000);
-        console.log("   Corrected timestamp:", timestamp);
       }
       
       // SECURITY: Amount is ALWAYS 0 for messages - no tokens are transferred
       // Only blockchain transaction fee (TRANSACTION_FEE) is charged
       const amount = 0;
       
-      console.log("⏰ Timestamp validation:", {
+      logger.debug("Timestamp validation:", {
         rawMs: Date.now(),
         seconds: timestamp,
         date: new Date(timestamp * 1000).toISOString(),
@@ -660,79 +665,70 @@ const ChatInterface: React.FC = () => {
         timestampParam: `${timestamp}u64`
       });
       
-      console.log("📝 Preparing transaction:", {
+      logger.debug("Preparing transaction:", {
         program: PROGRAM_ID,
         function: "send_message",
         recipient: activeContact.address,
         messageLength: messageText.length
       });
 
-      // Create transaction for send_message
-      // SECURITY: amount is always 0 - no tokens are transferred, only blockchain fee is charged
-      // send_message(private recipient: address, private amount: u64, private message: field, private timestamp: u64)
-      // All parameters are private for maximum privacy - nothing visible in transaction history
-      // TRANSACTION_FEE (0.01 ALEO) is the ONLY fee charged - this is the blockchain transaction fee
+      // Clean and validate parameters
+      const cleanRecipient = cleanAddress(activeContact.address);
       
-      // Note: Program verification - program exists on Provable Explorer
-      // Wallet will verify program existence when creating transaction
-      // If program not found, wallet returns INVALID_PARAMS and transaction won't be broadcasted
-      
-      // Ensure all parameters are strings with proper type annotations
-      // For private parameters in Aleo wallet adapter, pass as plain strings
-      const recipientParam = activeContact.address; // address type (private)
-      const amountParam = `${amount}u64`; // u64 type (private, always 0)
-      const messageParam = messageField; // field type (private, already formatted as "numberfield")
-      const timestampParam = `${timestamp}u64`; // u64 type (private)
-      
-      // Validate all parameters before creating transaction
-      if (!recipientParam || !recipientParam.startsWith('aleo1')) {
-        throw new Error("Invalid recipient address format");
-      }
-      if (!messageParam || !messageParam.endsWith('field')) {
-        throw new Error("Invalid message field format");
-      }
-      if (!timestampParam || !timestampParam.endsWith('u64')) {
-        throw new Error("Invalid timestamp format");
-      }
-      
-      // Create transaction object exactly like tipzo for proper fee display
-      // Fee format: 10,000,000,000 microcredits = 0.01 ALEO
-      // Wallet should display this as 0.01 ALEO
-      const transaction = {
-        address: String(publicKey),
-        chainId: network,
-        fee: TRANSACTION_FEE, // 10,000,000,000 microcredits = 0.01 ALEO
-        transitions: [
-          {
-            program: String(PROGRAM_ID),
-            functionName: "send_message",
-            inputs: [
-              String(recipientParam),    // private recipient: address
-              String(amountParam),       // private amount: u64 (ALWAYS 0 - no token transfer)
-              String(messageParam),      // private message: field
-              String(timestampParam)      // private timestamp: u64
-            ]
-          }
-        ]
-      };
+      logger.debug('Validating parameters...');
+      const validation = validateTransactionParams(
+        cleanRecipient,
+        amount,
+        messageText,
+        timestamp
+      );
 
-      // Validate inputs don't contain invalid values (like tipzo)
-      const allInputs = transaction.transitions[0].inputs;
-      if (allInputs.some((inp: string) => inp.includes("NaN") || inp === "undefined" || inp === "null")) {
-        throw new Error(`Invalid inputs detected: ${JSON.stringify(allInputs)}`);
+      if (!validation.valid) {
+        const errorMsg = 'Invalid parameters:\n' + validation.errors.join('\n');
+        console.error('❌ Validation errors:', validation.errors);
+        setTxStatus(errorMsg);
+        setIsSending(false);
+        setHistories(prev => ({
+          ...prev,
+          [currentChatId]: (prev[currentChatId] || []).filter(m => m.id !== userMsg.id)
+        }));
+        setTimeout(() => setTxStatus(''), 8000);
+        return;
       }
 
-      setTxStatus('Opening wallet... Please approve the transaction.');
+      logger.debug('Parameters valid');
+
+      // Additional check for message field format
+      if (!messageField || !messageField.endsWith('field')) {
+        const errorMsg = "Invalid message field format";
+        console.error('❌', errorMsg);
+        setTxStatus(errorMsg);
+        setIsSending(false);
+        setHistories(prev => ({
+          ...prev,
+          [currentChatId]: (prev[currentChatId] || []).filter(m => m.id !== userMsg.id)
+        }));
+        setTimeout(() => setTxStatus(''), 5000);
+        return;
+      }
+
+      setTxStatus('Checking program status...');
       
-      // Use requestTransactionWithRetry like tipzo
-      // Note: Wallet may return INVALID_PARAMS if program is not indexed on its RPC endpoints
-      // But the program might still be deployed and work - wallet will try to broadcast anyway
+      // Use useContract hook with bypass logic
+      // This will check program on public RPC and wait for indexing if needed
       let txId: string;
       try {
-        txId = await requestTransactionWithRetry(adapter, transaction, {
-          timeout: 30000,
-          maxRetries: 1 // Don't retry on INVALID_PARAMS - it won't help
-        });
+        txId = await sendMessageContract(
+          cleanRecipient,  // Use cleaned address
+          amount,
+          messageField,
+          timestamp,
+          {
+            waitForIndexing: true, // Wait for program to be indexed
+            maxWaitAttempts: 5,    // Wait up to 5 attempts (50 seconds)
+            maxRetries: 1          // Don't retry on wallet errors
+          }
+        );
       } catch (txError: any) {
         const errorMsg = txError?.message || String(txError);
         if (errorMsg.includes("cancel") || errorMsg.includes("reject") || 
@@ -750,15 +746,14 @@ const ChatInterface: React.FC = () => {
         throw txError;
       }
 
-      // txId is already a string from requestTransactionWithRetry
+      // txId can be either real TX ID (at1...) or wallet UUID
       if (txId && typeof txId === 'string' && txId.length > 0) {
         const shortId = txId.length > 8 ? txId.slice(0, 8) : txId;
         
-        // Check if this is a UUID (local wallet ID) or real transaction ID (starts with 'at1')
-        const isRealTxId = txId.startsWith('at1');
-        
-        if (isRealTxId) {
-          setTxStatus(`Transaction submitted! ID: ${shortId}...`);
+        // Check if this is a real transaction ID (starts with 'at1')
+        if (isRealTransactionId(txId)) {
+          const explorerUrl = getTransactionExplorerUrl(txId, 'testnet');
+          setTxStatus(`✅ Transaction submitted! ID: ${shortId}... ${explorerUrl ? `View: ${explorerUrl}` : ''}`);
           
           // Ensure the contact exists in the list
           const contactExists = contacts.find(c => 
@@ -781,20 +776,28 @@ const ChatInterface: React.FC = () => {
             });
           }
           
-          setTimeout(() => setTxStatus(''), 5000);
+          setTimeout(() => setTxStatus(''), 8000);
+        } else if (isWalletUuid(txId)) {
+          // UUID - transaction created but not yet signed/broadcasted
+          setTxStatus(`⏳ Transaction created (UUID: ${shortId}...). Waiting for wallet approval and broadcast...`);
+          console.log('💡 Please approve the transaction in your wallet if popup appears.');
+          
+          // Don't remove message from UI, because transaction may be in process
+          // useContract already attempts to get real TX ID
+          // If it didn't get it, show UUID
+          setTimeout(() => {
+            setTxStatus(`Transaction created but not yet broadcasted. UUID: ${shortId}... Check wallet for status.`);
+            setTimeout(() => setTxStatus(''), 10000);
+          }, 5000);
         } else {
-          // UUID means transaction was NOT broadcasted - program not found
-          setTxStatus('ERROR: Transaction not broadcasted. Program not found.');
+          // Unknown format
+          setTxStatus(`⚠️ Transaction response received: ${shortId}... (unknown format)`);
           setIsSending(false);
           setHistories(prev => ({
             ...prev,
             [currentChatId]: (prev[currentChatId] || []).filter(m => m.id !== userMsg.id)
           }));
-          setTimeout(() => {
-            setTxStatus(`Program ${PROGRAM_ID} not found. Deploy: leo deploy --network testnet`);
-            setTimeout(() => setTxStatus(''), 10000);
-          }, 1000);
-          return;
+          setTimeout(() => setTxStatus(''), 5000);
         }
       } else {
         setTxStatus('Transaction failed - invalid response');
@@ -806,7 +809,7 @@ const ChatInterface: React.FC = () => {
         setTimeout(() => setTxStatus(''), 5000);
       }
     } catch (error: any) {
-      console.error("Send message error:", error);
+      console.error("❌ Send message error:", error);
       const errorMsg = error?.message || String(error);
       const errorStr = String(error);
       
@@ -815,7 +818,7 @@ const ChatInterface: React.FC = () => {
           errorStr.includes("contentScript.ts") || errorStr.includes("inject.ts")) &&
           !errorStr.includes("Permission Not Granted") && !errorStr.includes("NOT_GRANTED")) {
         // Ignore errors from other wallet extensions (but not permission errors)
-        console.warn("Ignoring wallet extension error:", errorStr);
+        // Silently ignore - not critical
         return;
       }
       
@@ -830,17 +833,27 @@ const ChatInterface: React.FC = () => {
         
         setTimeout(() => setTxStatus(''), 8000);
         return;
-      } else if (errorMsg.includes("INVALID_PARAMS") && !errorStr.includes("addToWindow")) {
+      } else if ((errorMsg.includes("INVALID_PARAMS") || errorMsg.includes("program not found") || errorMsg.includes("not indexed") || errorMsg.includes("not broadcasted") || errorMsg.includes("rejected it before")) && !errorStr.includes("addToWindow")) {
         const aleoScanUrl = getAleoScanUrl();
         // Program is deployed but wallet's RPC endpoints haven't indexed it yet
         // This is a known issue - wallet uses different RPC endpoints than public explorers
-        setTxStatus(`⚠️ Wallet RPC hasn't indexed program yet. Program is deployed but wallet can't find it.`);
-        console.error("INVALID_PARAMS: Program is deployed but wallet's RPC endpoints haven't indexed it.");
-        console.error("This is a known issue with Aleo testnet RPC indexing delays.");
-        console.error(`Program deployment confirmed: Transaction at1u75cc5pghlkmxvwjt3dzuy02dv4fpdwkvv2nauszuxr6qav2uqqqnextgh`);
-        console.error(`Check program on explorer: ${aleoScanUrl}`);
-        console.error("Solution: Wait for wallet's RPC endpoints to index the program (can take hours).");
-        console.error("Alternative: Try using a different wallet or wait for network sync.");
+        setTxStatus(`⚠️ Wallet rejected transaction (INVALID_PARAMS). Program exists on public RPC but wallet's RPC hasn't indexed it yet. No popup appeared because wallet rejected it before showing.`);
+        // Keep detailed logs for INVALID_PARAMS - this is a critical error
+        console.error("❌ INVALID_PARAMS: Program is deployed but wallet's RPC endpoints haven't indexed it.");
+        console.error("📋 This is a known issue with Aleo testnet RPC indexing delays.");
+        console.error(`✅ Program deployment confirmed: Transaction at1u75cc5pghlkmxvwjt3dzuy02dv4fpdwkvv2nauszuxr6qav2uqqqnextgh`);
+        console.error(`🔍 Check program on explorer: ${aleoScanUrl}`);
+        console.error("⏰ Solution: Wait 5-10 minutes for wallet's RPC endpoints to index the program.");
+        console.error("💡 Why no popup? Wallet checks program on its RPC BEFORE showing popup. If program not found, it rejects silently.");
+        
+        // Show detailed message
+        setTimeout(() => {
+          setTxStatus('💡 Wallet RPC needs to index the program. Wait 5-10 minutes and try again. Check wallet extension for any pending transactions.');
+          setTimeout(() => {
+            setTxStatus(`Program: ${PROGRAM_ID} | Check: ${aleoScanUrl}`);
+            setTimeout(() => setTxStatus(''), 20000);
+          }, 5000);
+        }, 3000);
       } else if (errorMsg.includes("does not exist") || errorStr.includes("does not exist")) {
         setTxStatus(`Error: send_message function not found in ${PROGRAM_ID}.`);
       } else if (errorMsg.includes("insufficient") || errorMsg.includes("balance")) {
@@ -1246,16 +1259,9 @@ const ChatInterface: React.FC = () => {
 
             {/* Input */}
             <footer className="bg-white border-t-4 border-brutal-black p-4 sticky bottom-0 z-20">
-              {programStatus.checking && (
-                <div className="mb-2 text-xs font-bold uppercase bg-gray-200 border-2 border-black p-2">
-                  🔍 Checking program status...
-                </div>
-              )}
-              {!programStatus.checking && !programStatus.exists && (
-                <div className="mb-2 text-xs font-bold uppercase bg-brutal-yellow border-2 border-black p-2">
-                  ⚠️ PROGRAM {PROGRAM_ID} NOT FOUND. Check: <a href={getAleoScanUrl()} target="_blank" rel="noopener noreferrer" className="underline">AleoScan</a>
-                </div>
-              )}
+              <div className="mb-2">
+                <ProgramStatus />
+              </div>
               {txStatus && (
                 <div className="mb-2 text-xs font-bold uppercase bg-brutal-yellow border-2 border-black p-2">
                   {txStatus}
@@ -1351,7 +1357,7 @@ const ChatInterface: React.FC = () => {
               <div className="flex gap-2">
                 <button
                   onClick={async () => {
-                    if (!profileName.trim() || !profileBio.trim() || !publicKey || !adapter) {
+                    if (!profileName.trim() || !profileBio.trim() || !publicKey) {
                       alert('Please fill all fields');
                       return;
                     }
@@ -1363,29 +1369,16 @@ const ChatInterface: React.FC = () => {
                       const nameField = stringToField(profileName);
                       const bioField = stringToField(profileBio);
 
-                      const transaction = {
-                        address: String(publicKey),
-                        chainId: network,
-                        fee: TRANSACTION_FEE, // 10,000,000,000 microcredits = 0.01 ALEO
-                        transitions: [
-                          {
-                            program: String(PROGRAM_ID),
-                            functionName: "create_profile",
-                            inputs: [String(nameField), String(bioField)]
-                          }
-                        ]
-                      };
-
-                      // Validate inputs
-                      if (transaction.transitions[0].inputs.some((inp: string) => inp.includes("NaN") || inp === "undefined" || inp === "null")) {
-                        throw new Error(`Invalid inputs detected`);
-                      }
-
-                      setTxStatus('Waiting for signature...');
-                      const txId = await requestTransactionWithRetry(adapter, transaction, {
-                        timeout: 30000,
-                        maxRetries: 3
-                      });
+                      setTxStatus('Checking program status...');
+                      const txId = await createProfileContract(
+                        nameField,
+                        bioField,
+                        {
+                          waitForIndexing: true,
+                          maxWaitAttempts: 5,
+                          maxRetries: 1
+                        }
+                      );
 
                       if (txId) {
                         setTxStatus(`Profile created! TX: ${txId.slice(0, 8)}...`);
@@ -1397,12 +1390,15 @@ const ChatInterface: React.FC = () => {
                         }, 2000);
                       }
                     } catch (error: any) {
-                      console.error("Profile creation error:", error);
+                      console.error("❌ Profile creation error:", error);
                       const errorMsg = error?.message || String(error);
-                      if (errorMsg.includes("Permission") || errorMsg.includes("NOT_GRANTED")) {
+                      if (errorMsg.includes("Permission") || errorMsg.includes("NOT_GRANTED") || 
+                          errorMsg.includes("rejected") || errorMsg.includes("cancelled")) {
                         setTxStatus("Transaction rejected");
+                      } else if (errorMsg.includes("not indexed") || errorMsg.includes("program not found")) {
+                        setTxStatus("Program not indexed yet. Please wait 5-10 minutes and try again.");
                       } else {
-                        setTxStatus("Error: " + errorMsg.slice(0, 30));
+                        setTxStatus("Error: " + errorMsg.slice(0, 50));
                       }
                     } finally {
                       setIsSending(false);

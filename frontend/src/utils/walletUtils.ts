@@ -1,5 +1,7 @@
 // Wallet utilities with timeout and retry logic (from tipzo)
 
+import { logger } from './logger';
+
 const WALLET_TIMEOUT = 30000; // 30 seconds
 const MAX_RETRIES = 3;
 const RETRY_DELAY = 2000; // 2 seconds
@@ -43,7 +45,7 @@ export async function withWalletTimeout<T>(
             const result = await Promise.race([operation(), timeoutPromise]);
             
             const duration = Date.now() - startTime;
-            console.log(`[Wallet] Completed in ${(duration / 1000).toFixed(2)}s`);
+            logger.debug(`[Wallet] Completed in ${(duration / 1000).toFixed(2)}s`);
             
             return result;
         } catch (error: any) {
@@ -59,7 +61,7 @@ export async function withWalletTimeout<T>(
 
             // Don't retry on invalid parameters - but log it for debugging
             if (errorMsg.includes("INVALID_PARAMS") || errorMsg.includes("Some of the parameters you provided are invalid")) {
-                console.warn(`[Wallet] INVALID_PARAMS error (attempt ${attempt}/${maxRetries}):`, errorMsg);
+                logger.debug(`[Wallet] INVALID_PARAMS error (attempt ${attempt}/${maxRetries}):`, errorMsg);
                 // Still throw, but with more context
                 throw new Error(`INVALID_PARAMS: Program may not be indexed on wallet's RPC endpoints. Error: ${errorMsg}`);
             }

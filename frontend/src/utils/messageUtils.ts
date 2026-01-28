@@ -1,4 +1,6 @@
 // Convert string to Aleo field
+import { logger } from './logger';
+
 export const stringToField = (str: string): string => {
   try {
     if (!str) return "0field";
@@ -10,7 +12,7 @@ export const stringToField = (str: string): string => {
     }
     return val.toString() + "field";
   } catch (e) {
-    console.error("Error encoding string to field:", e);
+    logger.debug("Error encoding string to field:", e);
     return "0field";
   }
 };
@@ -43,7 +45,7 @@ export const fieldToString = (fieldStr: string): string => {
 
     return decoded.trim();
   } catch (e) {
-    console.error("Error decoding field to string:", e);
+    logger.debug("Error decoding field to string:", e);
     return fieldStr;
   }
 };
