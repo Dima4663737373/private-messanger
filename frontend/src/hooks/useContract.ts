@@ -1,21 +1,15 @@
-// Contract hook with bypass logic for wallet's program check
-// Uses public RPC endpoints to verify program existence before creating transactions
+// Contract hook — transaction logic aligned with tipzo (same fee 10_000, shape, requestTransactionWithRetry, return txId as-is)
 
 import { useState } from 'react';
 import { useWallet } from '@demox-labs/aleo-wallet-adapter-react';
 import { WalletAdapterNetwork } from '@demox-labs/aleo-wallet-adapter-base';
 import { PROGRAM_ID } from '../deployed_program';
 import { TRANSACTION_FEE } from '../utils/constants';
-import { checkProgramExists, waitForProgram } from '../utils/aleo-rpc';
 import { requestTransactionWithRetry } from '../utils/walletUtils';
-import { isRealTransactionId, isWalletUuid, getRealTransactionId, getTransactionExplorerUrl } from '../utils/transactionUtils';
 import { logger } from '../utils/logger';
 
 export interface ExecuteTransactionOptions {
-  skipProgramCheck?: boolean;
   maxRetries?: number;
-  waitForIndexing?: boolean;
-  maxWaitAttempts?: number;
 }
 
 export function useContract() {
@@ -41,39 +35,11 @@ export function useContract() {
     setError(null);
 
     try {
-      // Step 1: Check program via public RPC
-      if (!options.skipProgramCheck) {
-        logger.debug('Checking program on public RPC...');
-        const programInfo = await checkProgramExists(PROGRAM_ID);
-
-        if (!programInfo.exists) {
-          if (options.waitForIndexing) {
-            // If program not found, wait
-            logger.debug('Program not found on RPC, waiting...');
-            const maxAttempts = options.maxWaitAttempts || 5;
-            const found = await waitForProgram(PROGRAM_ID, maxAttempts, 10000);
-
-            if (!found) {
-              throw new Error(
-                'Program not indexed yet. Please try again in 5-10 minutes.'
-              );
-            }
-          } else {
-            // Just warn but continue
-            console.warn('⚠️ Program not found on public RPC, but continuing anyway...');
-          }
-        } else {
-          logger.debug('Program found on public RPC:', programInfo.url);
-        }
-      }
-
-      // Step 2: Create transaction
-      logger.debug('Creating transaction...');
-
       const transaction = {
         address: String(publicKey),
         chainId: network,
         fee: TRANSACTION_FEE,
+        feePrivate: false,
         transitions: [
           {
             program: String(PROGRAM_ID),
@@ -83,165 +49,19 @@ export function useContract() {
         ]
       };
 
-      // Validate inputs
-      if (transaction.transitions[0].inputs.some((inp: string) => 
+      if (transaction.transitions[0].inputs.some((inp: string) =>
         inp.includes("NaN") || inp === "undefined" || inp === "null")) {
         throw new Error(`Invalid inputs detected: ${JSON.stringify(transaction.transitions[0].inputs)}`);
       }
 
-      // Attempt 1: Standard method with retry
-      try {
-        const maxRetries = options.maxRetries || 1;
-        const txResponse = await requestTransactionWithRetry(adapter, transaction, {
-          timeout: 30000,
-          maxRetries: maxRetries,
-        });
+      const txId = await requestTransactionWithRetry(adapter, transaction, {
+        timeout: 30000,
+        maxRetries: options.maxRetries ?? 3,
+      });
 
-        logger.debug('Transaction response:', txResponse);
-        
-        // Check if this is real TX ID or wallet UUID
-        if (isRealTransactionId(txResponse)) {
-          logger.debug('Real transaction ID received:', txResponse);
-          const explorerUrl = getTransactionExplorerUrl(txResponse, 'testnet');
-          if (explorerUrl) {
-            logger.debug('View transaction:', explorerUrl);
-          }
-          return txResponse;
-        }
-        
-        if (isWalletUuid(txResponse)) {
-          logger.debug('Wallet UUID received:', txResponse);
-          console.log('💡 Check your Leo Wallet extension for a popup to approve the transaction.');
-          console.log('💡 Use only Leo Wallet on this site; other wallets (EVM) can cause console errors.');
-          
-          // Wait for real TX ID — give user time to approve (popup can be slow)
-          logger.debug('Attempting to get real transaction ID...');
-          const waitAttempts = 25;
-          const waitDelayMs = 2000;
-          logger.debug(`Waiting up to ${waitAttempts * waitDelayMs / 1000}s for wallet to broadcast...`);
-          
-          const realTxId = await getRealTransactionId(
-            wallet,
-            txResponse,
-            waitAttempts,
-            waitDelayMs
-          );
-          
-          if (realTxId) {
-            logger.debug('Real transaction ID obtained:', realTxId);
-            const explorerUrl = getTransactionExplorerUrl(realTxId, 'testnet');
-            if (explorerUrl) {
-              logger.debug('View transaction in explorer:', explorerUrl);
-            }
-            return realTxId;
-          } else {
-            // UUID is wallet-internal only; transaction was never broadcast, so it won't appear on scan
-            console.warn('⚠️ Could not get real TX ID after', waitAttempts, 'attempts');
-            console.warn('⚠️ The UUID is only in your wallet; the transaction was never broadcast, so it will NOT appear on AleoScan.');
-            console.warn('⚠️ Wallet rejected before showing popup (program not indexed on wallet RPC).');
-            console.warn('⚠️ Program on public RPC:', `https://api.explorer.aleo.org/v1/testnet/program/${PROGRAM_ID}`);
-            
-            const programInfo = await checkProgramExists(PROGRAM_ID);
-            
-            if (programInfo.exists) {
-              throw new Error(
-                `Transaction was not broadcast — it will not appear on AleoScan. ` +
-                `The wallet returned an internal UUID but rejected the transaction before showing the approval popup (wallet RPC has not indexed ${PROGRAM_ID} yet). ` +
-                `Use only Leo Wallet. Wait 5–10 minutes and try again; if the popup still doesn’t appear, wait longer for wallet RPC to sync.`
-              );
-            } else {
-              throw new Error(
-                `Transaction was not broadcast. Program ${PROGRAM_ID} not found on any RPC. Verify the program is deployed.`
-              );
-            }
-          }
-        }
-        
-        // If not UUID and not real TX ID, return as is
-        console.warn('⚠️ Unknown transaction ID format:', txResponse);
-        return txResponse;
-
-      } catch (walletError: any) {
-        const errorMsg = walletError?.message || String(walletError);
-        const errorCode = walletError?.code || '';
-        const errorData = walletError?.data || '';
-        
-        console.error('❌ Wallet transaction failed:', {
-          message: errorMsg,
-          code: errorCode,
-          data: errorData,
-          fullError: walletError,
-        });
-        
-        // If error occurred after receiving UUID, this means transaction was rejected
-        if (errorMsg.includes('INVALID_PARAMS') && errorMsg.includes('UUID')) {
-          console.error('❌ Transaction was created but rejected by wallet');
-          console.error('❌ Wallet RPC endpoints have not indexed the program yet');
-          console.error('❌ This is a known issue - wallet uses different RPC than public explorers');
-        }
-
-        // Detailed handling of INVALID_PARAMS error
-        if (errorMsg.includes('INVALID_PARAMS') || errorCode === 'INVALID_PARAMS') {
-          console.error('❌ INVALID_PARAMS Error Details:');
-          console.error('  - Program:', PROGRAM_ID);
-          console.error('  - Function:', functionName);
-          console.error('  - Inputs:', JSON.stringify(inputs, null, 2));
-          console.error('  - Inputs Count:', inputs.length);
-          console.error('  - Expected: 4 parameters (recipient: address, amount: u64, message: field, timestamp: u64)');
-          
-          // Check if program exists
-          const programInfo = await checkProgramExists(PROGRAM_ID);
-          
-          if (programInfo.exists) {
-            // Program exists but parameters are invalid
-            throw new Error(
-              `INVALID_PARAMS: Transaction parameters are invalid. ` +
-              `Program ${PROGRAM_ID} exists but wallet rejected the transaction. ` +
-              `Please check:\n` +
-              `1. Recipient address format (must be aleo1...)\n` +
-              `2. Amount format (must be numberu64)\n` +
-              `3. Message format (must be numberfield)\n` +
-              `4. Timestamp format (must be numberu64, in seconds not milliseconds)\n` +
-              `\nReceived inputs: ${JSON.stringify(inputs)}`
-            );
-          } else {
-            // Program not found
-            throw new Error(
-              `Program ${PROGRAM_ID} not found on any RPC endpoint. ` +
-              `Please verify the program is deployed.`
-            );
-          }
-        }
-        
-        // Handle "program not found" error
-        if (errorMsg.includes('program not found') || 
-            errorMsg.includes('does not exist')) {
-          
-          // Check again via public RPC
-          const programInfo = await checkProgramExists(PROGRAM_ID);
-          
-          if (programInfo.exists) {
-            // Program exists on public RPC but wallet doesn't see it
-            throw new Error(
-              `Program ${PROGRAM_ID} is deployed but wallet's RPC endpoints haven't indexed it yet. ` +
-              `This usually takes 5-10 minutes after deployment. ` +
-              `Program confirmed at: ${programInfo.url || 'public RPC'}`
-            );
-          } else {
-            // Program not found even on public RPC
-            throw new Error(
-              `Program ${PROGRAM_ID} not found on any RPC endpoint. ` +
-              `Please verify the program is deployed.`
-            );
-          }
-        }
-
-        // Other errors just throw further
-        throw walletError;
-      }
-
+      logger.debug('Transaction response:', txId);
+      return txId;
     } catch (err: any) {
-      console.error('❌ Transaction failed:', err);
       const errorMsg = err?.message || 'Transaction failed';
       setError(errorMsg);
       throw err;
@@ -343,13 +163,7 @@ export function useContract() {
       return txId;
       
     } catch (err: any) {
-      console.error('❌ Transaction Failed');
-      console.error('Error Message:', err.message);
-      console.error('Error Code:', err.code);
-      console.error('Error Stack:', err.stack);
-      console.error('Full Error:', err);
       logger.groupEnd();
-      
       throw err;
     }
   };

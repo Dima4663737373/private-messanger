@@ -718,15 +718,11 @@ const ChatInterface: React.FC = () => {
       let txId: string;
       try {
         txId = await sendMessageContract(
-          cleanRecipient,  // Use cleaned address
+          cleanRecipient,
           amount,
           messageField,
           timestamp,
-          {
-            waitForIndexing: true, // Wait for program to be indexed
-            maxWaitAttempts: 5,    // Wait up to 5 attempts (50 seconds)
-            maxRetries: 1          // Don't retry on wallet errors
-          }
+          { maxRetries: 3 }
         );
       } catch (txError: any) {
         const errorMsg = txError?.message || String(txError);
@@ -808,51 +804,35 @@ const ChatInterface: React.FC = () => {
         setTimeout(() => setTxStatus(''), 5000);
       }
     } catch (error: any) {
-      console.error("❌ Send message error:", error);
       const errorMsg = error?.message || String(error);
       const errorStr = String(error);
-      
-      // Check if this is a real transaction error or just wallet extension noise
-      if ((errorStr.includes("addToWindow.js") || errorStr.includes("evmAsk.js") || 
+
+      if ((errorStr.includes("addToWindow.js") || errorStr.includes("evmAsk.js") ||
           errorStr.includes("contentScript.ts") || errorStr.includes("inject.ts")) &&
           !errorStr.includes("Permission Not Granted") && !errorStr.includes("NOT_GRANTED")) {
-        // Ignore errors from other wallet extensions (but not permission errors)
-        // Silently ignore - not critical
         return;
       }
-      
-      if (errorMsg.includes("Permission") || errorMsg.includes("NOT_GRANTED") || errorMsg.includes("rejected") || 
-          errorStr.includes("Permission Not Granted") || errorStr.includes("NOT_GRANTED")) {
+
+      if (errorMsg.includes("Permission") || errorMsg.includes("NOT_GRANTED") || (errorMsg.includes("rejected") && !errorMsg.includes("INVALID_PARAMS"))) {
         setTxStatus("Transaction was rejected. Please approve it in your wallet.");
-        
         setHistories(prev => ({
           ...prev,
           [currentChatId]: (prev[currentChatId] || []).filter(m => m.id !== userMsg.id)
         }));
-        
         setTimeout(() => setTxStatus(''), 8000);
         return;
-      } else if ((errorMsg.includes("INVALID_PARAMS") || errorMsg.includes("program not found") || errorMsg.includes("not indexed") || errorMsg.includes("not broadcast") || errorMsg.includes("rejected it before")) && !errorStr.includes("addToWindow")) {
-        const aleoScanUrl = getAleoScanUrl();
-        // Transaction was never broadcast — no popup, so it won't appear on scan
-        setTxStatus(`Transaction was not broadcast (no approval popup). It will NOT appear on AleoScan. Use Leo Wallet only; wait 5–10 min and try again.`);
-        console.error("❌ Transaction not broadcast: wallet rejected before popup (RPC has not indexed program yet).");
-        console.error("📋 Use only Leo Wallet. Wait 5–10 min for wallet RPC to index the program, then try again.");
-        console.error(`🔍 Program on explorer: ${aleoScanUrl}`);
-        setTimeout(() => {
-          setTxStatus('💡 Use only Leo Wallet. Wait 5–10 min and try again — transaction will then appear on scan after you approve.');
-          setTimeout(() => setTxStatus(''), 15000);
-        }, 4000);
-      } else if (errorMsg.includes("does not exist") || errorStr.includes("does not exist")) {
-        setTxStatus(`Error: send_message function not found in ${PROGRAM_ID}.`);
-      } else if (errorMsg.includes("insufficient") || errorMsg.includes("balance")) {
-        setTxStatus(`Error: Insufficient funds. Need at least 0.01 ALEO for fee.`);
-      } else {
-        const shortError = errorMsg.slice(0, 60);
-        setTxStatus(`Error: ${shortError}${errorMsg.length > 60 ? '...' : ''}`);
       }
-      
-      // Remove optimistic message on error
+      if (errorMsg.includes("INVALID_PARAMS") || errorMsg.includes("not broadcast") || errorMsg.includes("not indexed") || errorMsg.includes("Wallet RPC")) {
+        setTxStatus(errorMsg.length > 80 ? errorMsg.slice(0, 77) + '...' : errorMsg);
+        setTimeout(() => setTxStatus(''), 12000);
+      } else if (errorMsg.includes("does not exist")) {
+        setTxStatus(`Error: send_message not found in ${PROGRAM_ID}.`);
+      } else if (errorMsg.includes("insufficient") || errorMsg.includes("balance")) {
+        setTxStatus("Error: Insufficient funds. Need sufficient balance for transaction fee.");
+      } else {
+        setTxStatus(errorMsg.length > 80 ? errorMsg.slice(0, 77) + '...' : errorMsg);
+      }
+
       setHistories(prev => ({
         ...prev,
         [currentChatId]: (prev[currentChatId] || []).filter(m => m.id !== userMsg.id)
@@ -1358,15 +1338,11 @@ const ChatInterface: React.FC = () => {
                       const nameField = stringToField(profileName);
                       const bioField = stringToField(profileBio);
 
-                      setTxStatus('Checking program status...');
+                      setTxStatus('Creating profile...');
                       const txId = await createProfileContract(
                         nameField,
                         bioField,
-                        {
-                          waitForIndexing: true,
-                          maxWaitAttempts: 5,
-                          maxRetries: 1
-                        }
+                        { maxRetries: 3 }
                       );
 
                       if (txId) {

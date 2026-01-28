@@ -59,11 +59,9 @@ export async function withWalletTimeout<T>(
                 throw error;
             }
 
-            // Don't retry on invalid parameters - but log it for debugging
+            // Don't retry on invalid parameters (same as tipzo: throw original error)
             if (errorMsg.includes("INVALID_PARAMS") || errorMsg.includes("Some of the parameters you provided are invalid")) {
-                logger.debug(`[Wallet] INVALID_PARAMS error (attempt ${attempt}/${maxRetries}):`, errorMsg);
-                // Still throw, but with more context
-                throw new Error(`INVALID_PARAMS: Program may not be indexed on wallet's RPC endpoints. Error: ${errorMsg}`);
+                throw error;
             }
 
             // If this was the last attempt, throw the error

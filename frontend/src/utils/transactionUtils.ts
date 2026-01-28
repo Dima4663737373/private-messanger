@@ -109,7 +109,7 @@ export async function getRealTransactionId(
     }
   }
 
-  console.warn(`⚠️ Could not find real TX ID after ${maxAttempts} attempts`);
+  logger.debug(`Could not find real TX ID after ${maxAttempts} attempts`);
   return null;
 }
 
