@@ -1,185 +1,228 @@
-# Ghost on Aleo
+# Ghost — Private Messenger on Aleo
 
-A decentralized private messaging application built on the Aleo blockchain, enabling encrypted peer-to-peer messaging with full privacy guarantees.
+A decentralized private messaging app on the Aleo blockchain with encrypted messages and privacy-preserving state.
 
-## Overview
+---
 
-This project consists of a smart contract written in Leo and a React-based frontend that allows users to send and receive encrypted messages on the Aleo blockchain. Messages are stored as private records on-chain, ensuring that only the intended recipient can decrypt and read them.
+## Program Name and Deploy Commands
 
-## Features
+**Program ID:** `priv_messenger_leotest_012.aleo`
 
-- **Private Messaging**: Send encrypted messages to any Aleo address
-- **Profile Management**: Create and update user profiles with name and bio
-- **Message Sync**: Automatically sync messages from the blockchain
-- **Wallet Integration**: Supports Leo Wallet
-- **Transaction History**: Track sent messages with transaction status
-- **Blockchain Indexing**: Fast message retrieval using on-chain mappings
+### Deploy Commands
 
-## Architecture
-
-### Smart Contract (`src/main.leo`)
-
-The Aleo program provides:
-- `send_message`: Send an encrypted message to a recipient
-- `create_profile` / `update_profile`: Manage user profiles
-- Message indexing via mappings for efficient retrieval
-- Private record encryption for message content
-
-### Frontend (`frontend/`)
-
-A React + TypeScript application that:
-- Connects to Aleo wallets (Leo Wallet)
-- Handles message encryption/decryption
-- Syncs messages from blockchain records
-- Provides a user-friendly messaging interface
-
-## Prerequisites
-
-- Node.js 18+ and npm
-- Leo CLI (for contract compilation)
-- Aleo wallet (Leo Wallet)
-
-## Installation
-
-1. Clone the repository:
+**Build the contract:**
 ```bash
-git clone <repository-url>
+leo build
+```
+
+**Deploy to Testnet:**
+```bash
+leo deploy --network testnet
+```
+
+**Deploy to Mainnet** (requires `.env` with `PRIVATE_KEY`):
+```bash
+# Create .env with:
+# PRIVATE_KEY=your_private_key
+
+./deploy_mainnet.sh
+```
+
+Or manually:
+```bash
+leo deploy --network mainnet --private-key "$PRIVATE_KEY" --priority-fee 1000000
+```
+
+**Verify after deploy:**
+```bash
+node verify_deployment.js
+```
+
+The script checks that all required functions exist on the network (`send_message`, `create_profile`, `update_profile`, `update_contact_name`, `delete_chat`, `restore_chat`).
+
+---
+
+## Smart Contract: Main Functions
+
+Contract source: `src/main.leo`.
+
+### Transitions
+
+| Function | Parameters | Description |
+|----------|------------|-------------|
+| `create_profile` | `public name: field`, `public bio: field` | Create profile (name and bio stored as hashes). |
+| `update_profile` | `public name: field`, `public bio: field` | Update profile (overwrites mapping). |
+| `send_message` | `private recipient`, `private amount`, `private message`, `private timestamp` | Send message: creates two private records (recipient + sender) and updates public indexes. |
+| `update_contact_name` | `private contact_address`, `private contact_name` | Store local contact name for the user (key = hash(user + contact)). |
+| `delete_chat` | `private contact_address` | Mark chat as deleted/archived for the current user. |
+| `restore_chat` | `private contact_address` | Restore chat after "deletion". |
+
+### Data Structures
+
+- **`ProfileInfo`** — profile: `name_hash`, `bio_hash` (both fields, hashes for privacy).
+- **`Message`** — private message record: `owner`, `sender`, `recipient`, `amount`, `message`, `timestamp`.
+- **`MessageMeta`** — public metadata for indexing: `sender_hash`, `recipient_hash`, `amount`, `message_hash`, `timestamp`.
+
+### On-Chain Mappings
+
+- `profiles: address => ProfileInfo` — profiles by address.
+- `message_count: address => u64` — number of received messages per address.
+- `message_index: field => MessageMeta` — inbox index (key = hash(recipient) + index).
+- `sent_message_count: address => u64` — number of sent messages.
+- `sent_message_index: field => MessageMeta` — outbox index (key = hash(sender) + index).
+- `contact_names: field => field` — local contact names (key = hash(user, contact)).
+- `deleted_chats: field => u64` — deleted/archived chats (1 = deleted, 0 = active).
+
+---
+
+## How It Works
+
+1. **Profile**  
+   User calls `create_profile` or `update_profile` with `name` and `bio`. The contract hashes them (BHP256) and stores `name_hash` and `bio_hash` in `profiles`. Raw name/bio are not stored on-chain.
+
+2. **Sending a message**  
+   `send_message(recipient, amount, message, timestamp)` creates two private `Message` records (one with `owner: recipient`, one with `owner: sender`). In `finalize_send_message`, addresses and message content are hashed; `MessageMeta` is stored in `message_index` (recipient) and `sent_message_index` (sender); `message_count` and `sent_message_count` are updated.
+
+3. **Contacts and chats**  
+   `update_contact_name` stores a local contact name under key `hash(user) + hash(contact_address)`. `delete_chat` / `restore_chat` set `deleted_chats` under the same key to 1 or 0.
+
+4. **Frontend**  
+   Connects Leo Wallet, builds transactions to `priv_messenger_leotest_012.aleo`, encodes text to field (`messageUtils`), sends transitions and syncs messages via wallet records and RPC (mappings, blocks).
+
+---
+
+## Public vs Private Data
+
+### Private (Aleo encryption / records)
+
+- **`Message` record** — fully private: `owner`, `sender`, `recipient`, `amount`, `message`, `timestamp`. Only the record owner can decrypt; message content is not visible in public state.
+- **Transition inputs:** `recipient`, `amount`, `message`, `timestamp` in `send_message`; `contact_address`, `contact_name` in `update_contact_name`; `contact_address` in `delete_chat` / `restore_chat` — all passed as private inputs.
+
+### Public but hashed (privacy-preserving)
+
+- **`ProfileInfo`**: only `name_hash` and `bio_hash` (BHP256) stored; no raw name/bio.
+- **`MessageMeta`**: mappings store `sender_hash`, `recipient_hash`, `message_hash`, plus `amount` and `timestamp` — for indexing without revealing sender/recipient/content.
+- **`contact_names`**: key = `hash(user) + hash(contact_address)`; value = field (encoded contact name).
+- **`deleted_chats`**: same key; value 0 or 1.
+
+### Public (addresses and counts)
+
+- **`message_count`**, **`sent_message_count`**: key = address, value = u64. Address is visible; message count is public.
+- Keys in `message_index` and `sent_message_index` are built from hashes and indices, so records are not trivially linkable without the address.
+
+---
+
+## How to Install and Configure the Frontend
+
+Follow these steps so the frontend runs and works with the Ghost program and Leo Wallet.
+
+### 1. Prerequisites
+
+- **Node.js** 18 or newer ([nodejs.org](https://nodejs.org))
+- **npm** (comes with Node.js)
+- **Leo Wallet** browser extension ([leo wallet](https://www.aleo.org/get-started)) — install and create/unlock a wallet
+- **Leo CLI** — only if you build or deploy the contract yourself; not required to run the frontend
+
+### 2. Clone and go to the project
+
+```bash
+git clone <your-repo-url>
 cd ghost
 ```
 
-2. Install frontend dependencies:
+### 3. Install frontend dependencies
+
+From the project root:
+
 ```bash
 cd frontend
 npm install
 ```
 
-3. Build the smart contract:
+Wait until install finishes without errors.
+
+### 4. Configure Program ID (only if you use your own deployment)
+
+The app talks to the Aleo program defined in `frontend/src/deployed_program.ts`.
+
+- **Default:** `priv_messenger_leotest_012.aleo` — no change needed; frontend is already set for the shared Testnet deployment.
+- **Your own program:** If you deployed a different program (e.g. your own `priv_messenger_*`), open `frontend/src/deployed_program.ts` and set:
+
+  ```ts
+  export const PROGRAM_ID = "your_program_id.aleo";
+  ```
+
+  Use the exact Program ID you deployed (e.g. from `program.json` or `leo deploy` output).
+
+### 5. Network and environment
+
+- **Network:** The frontend is configured for **Aleo Testnet** in `frontend/src/hooks/useContract.ts` (`WalletAdapterNetwork.TestnetBeta`). For Mainnet you’d change that and redeploy the contract there.
+- **Environment variables:** No `.env` or API keys are required. The app uses public RPC endpoints (aleo.org, provable.com, etc.) for program and mapping checks.
+
+### 6. Run the frontend (dev)
+
+From the `frontend` folder:
+
 ```bash
-cd ..
-leo build
-```
-
-## Development
-
-### Running the Frontend
-
-```bash
-cd frontend
 npm run dev
 ```
 
-The application will be available at `http://localhost:5173`
+- Open **http://localhost:5173** in your browser.
+- Install/use **Leo Wallet** in that browser and switch it to **Testnet** (or the same network as your program).
+- In the app: connect the wallet, allow permissions if asked, then you can create a profile, send messages, and sync inbox.
 
-### Compiling the Contract
+### 7. Production build (optional)
 
-```bash
-leo build
-```
-
-### Deploying the Contract
+To build for production:
 
 ```bash
-leo deploy --network testnet
+cd frontend
+npm run build
 ```
 
-**Important**: After deploying, verify that all functions are present:
+Static files will be in `frontend/dist`. To preview:
 
 ```bash
-node verify_deployment.js
+npm run preview
 ```
 
-This script checks that the deployed program includes all required functions (`send_message`, `create_profile`, etc.). If functions are missing, the deployment may have failed or an older version was deployed.
+### Troubleshooting
 
-## Usage
+| Issue | What to check |
+|-------|----------------|
+| App doesn’t load / blank page | Console (F12) for errors; ensure `npm install` and `npm run dev` finished without errors. |
+| Wallet not connecting | Leo Wallet extension installed and unlocked; same browser as the app; wallet network = Testnet (or Mainnet if you use it). |
+| “Function does not exist” / transaction fails | Program ID in `frontend/src/deployed_program.ts` must match the program on the network. Run `node verify_deployment.js` from project root to confirm the deployed program has all functions. |
+| Messages not syncing | In Leo Wallet, enable “On-Chain History” (or equivalent) if available; use the app’s SYNC / Force Refresh. |
+| Transaction rejected or insufficient credits | Ensure the wallet has enough credits (e.g. Testnet credits) for fees. |
 
-1. **Connect Wallet**: Click "Select Wallet" and choose your Aleo wallet
-2. **Grant Permissions**: Allow "On-Chain History" access for faster message syncing
-3. **Create Profile**: Set your name and bio (optional)
-4. **Send Messages**: Enter a recipient address and message, then click "Send Message"
-5. **Sync Messages**: Click "SYNC" to retrieve messages from the blockchain
-6. **View Inbox**: Received messages appear in the inbox after syncing
-
-## How It Works
-
-### Message Flow
-
-1. **Sending**: When you send a message, the frontend creates a transaction calling `send_message` with the recipient address and encrypted content
-2. **On-Chain Storage**: The contract creates two private records - one for the recipient and one for the sender
-3. **Indexing**: Message metadata is stored in public mappings for efficient retrieval
-4. **Receiving**: Recipients sync messages by:
-   - First checking wallet records (fastest, requires On-Chain History permission)
-   - Falling back to cache if available
-   - Scanning recent blocks if needed
-
-### Privacy Features
-
-- Message content is encrypted and stored in private records
-- Only the recipient can decrypt their messages
-- Message metadata (sender, timestamp) is indexed for performance but content remains private
-- All encryption/decryption happens client-side using wallet adapters
+---
 
 ## Project Structure
 
 ```
 ghost/
 ├── src/
-│   └── main.leo              # Aleo smart contract
+│   └── main.leo                 # Leo smart contract
 ├── frontend/
 │   ├── src/
-│   │   ├── App.tsx           # Main application component
-│   │   ├── components/       # React components
-│   │   ├── hooks/            # Custom React hooks
-│   │   └── utils/            # Utility functions
+│   │   ├── deployed_program.ts  # Program ID for frontend
+│   │   ├── hooks/useContract.ts # Contract calls (send_message, create_profile, …)
+│   │   ├── components/         # ChatInterface, Login, LandingPage, ProgramStatus
+│   │   └── utils/              # aleo-rpc, messageUtils, constants, walletUtils, …
 │   └── package.json
-├── build/                    # Compiled contract
+├── program.json                 # Program name and metadata (priv_messenger_leotest_012.aleo)
+├── deploy_mainnet.sh            # Mainnet deploy script
+├── verify_deployment.js        # Verify functions after deploy
 └── README.md
 ```
 
-## Configuration
+---
 
-The deployed program ID is configured in `frontend/src/deployed_program.ts`. Update this if deploying a new contract version.
+## Summary
 
-## API Endpoints
-
-The frontend uses the Provable API for blockchain queries:
-- `/program/{PROGRAM_ID}/mapping/message_count/{address}` - Get message count
-- `/block/{height}` - Get block data
-- `/transaction/{txId}` - Get transaction data
-
-## Troubleshooting
-
-### Messages Not Appearing
-
-1. Ensure wallet has "On-Chain History" permission enabled
-2. Click "SYNC" to manually sync messages
-3. Check browser console for errors
-4. Try "Force Refresh" to clear cache and rescan
-
-### Transaction Failures
-
-1. Verify you have sufficient credits in your wallet
-2. Check network connection
-3. Ensure recipient address is valid (starts with `aleo1`)
-4. Check transaction status in AleoScan or Provable Explorer
-
-### "Function does not exist" Error
-
-If you see an error like `The called function (send_message) does not exist in program`, this means:
-
-1. **The deployed program is outdated**: The program on the network doesn't match your local code
-2. **Solution**: Redeploy the program with the current code:
-   ```bash
-   leo build
-   leo deploy --network testnet
-   ```
-3. **Verify deployment**: Run `node verify_deployment.js` to confirm all functions are present
-4. **Update program ID**: If deploying a new version, update `frontend/src/deployed_program.ts` with the new program ID
-
-## License
-
-[Add your license here]
-
-## Contributing
-
-[Add contribution guidelines here]
-
+- **Program:** `priv_messenger_leotest_012.aleo`.
+- **Deploy:** `leo build` → `leo deploy --network testnet` (or mainnet with `PRIVATE_KEY`); then `node verify_deployment.js`.
+- **Private:** full message content and addresses in `Message` records; contact names and "deleted" chats keyed by hashes.
+- **Public but protected:** profiles and message metadata as hashes; message counts public per address.
+- **Frontend:** `cd frontend && npm install` → optionally update `deployed_program.ts` → `npm run dev` to run with the contract and wallet.
