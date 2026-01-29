@@ -217,7 +217,7 @@ const LandingPage: React.FC = () => {
 
       {/* Footer */}
       <footer className="bg-brutal-yellow border-t-4 border-brutal-black p-8 text-center">
-        <div className="font-black text-xl uppercase mb-4">Ghost Messenger © 2025</div>
+        <div className="font-black text-xl uppercase mb-4">Ghost Messenger © 2026</div>
         <div className="text-xs font-bold font-mono">
           RUNNING ON ALEO TESTNET V3 • SMART CONTRACT: 0x...GHOST
         </div>
