@@ -278,73 +278,27 @@ const Sidebar: React.FC<SidebarProps> = ({
               </div>
             ))}
 
-            {/* Channels List */}
-            {currentView === 'channels' && channels.filter(c => c.name.toLowerCase().includes(searchQuery.toLowerCase())).map(ch => (
-              <div
-                key={ch.id}
-                onClick={() => onSelectRoom?.(ch.id)}
-                onContextMenu={(e) => handleContextMenu(e, ch.id, 'channel')}
-                className={`flex items-center gap-3 p-2.5 rounded-xl cursor-pointer transition-all border ${
-                  activeRoomId === ch.id
-                    ? 'bg-[#1A1A1A] border-[#FF8C00]/50'
-                    : 'bg-transparent border-transparent hover:bg-[#1A1A1A]'
-                }`}
-              >
-                <div className="w-10 h-10 bg-[#1A1A1A] border border-[#2A2A2A] rounded-xl flex items-center justify-center shrink-0">
-                  <Hash size={16} className="text-[#FF8C00]" />
+            {/* Channels — Coming Soon */}
+            {currentView === 'channels' && (
+              <div className="flex flex-col items-center justify-center py-16 px-4">
+                <div className="w-16 h-16 bg-[#1A1A1A] border border-[#2A2A2A] rounded-2xl flex items-center justify-center mb-4">
+                  <Radio size={28} className="text-[#FF8C00]/40" />
                 </div>
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center justify-between mb-0.5">
-                    <h3 className="text-sm font-bold text-[#E5E5E5] truncate">
-                      {pinnedIds.includes(ch.id) && <Pin size={10} className="inline mr-1 text-[#FF8C00]" />}
-                      {ch.name}
-                    </h3>
-                    {ch.lastMessageTime && (
-                      <span className="text-[10px] text-[#666] font-mono shrink-0 ml-2">
-                        {new Date(Number(ch.lastMessageTime)).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                      </span>
-                    )}
-                  </div>
-                  <p className="text-xs text-[#888] truncate font-light">
-                    {ch.lastMessage || `${ch.memberCount || 0} members`}
-                  </p>
-                </div>
+                <h3 className="text-white font-bold text-base mb-1">Channels</h3>
+                <p className="text-[#666] text-xs text-center">Coming soon</p>
               </div>
-            ))}
+            )}
 
-            {/* Groups List */}
-            {currentView === 'groups' && groups.filter(g => g.name.toLowerCase().includes(searchQuery.toLowerCase())).map(gr => (
-              <div
-                key={gr.id}
-                onClick={() => onSelectRoom?.(gr.id)}
-                onContextMenu={(e) => handleContextMenu(e, gr.id, 'group')}
-                className={`flex items-center gap-3 p-2.5 rounded-xl cursor-pointer transition-all border ${
-                  activeRoomId === gr.id
-                    ? 'bg-[#1A1A1A] border-[#FF8C00]/50'
-                    : 'bg-transparent border-transparent hover:bg-[#1A1A1A]'
-                }`}
-              >
-                <div className="w-10 h-10 bg-[#1A1A1A] border border-[#2A2A2A] rounded-xl flex items-center justify-center shrink-0">
-                  <Lock size={16} className="text-[#FF8C00]" />
+            {/* Groups — Coming Soon */}
+            {currentView === 'groups' && (
+              <div className="flex flex-col items-center justify-center py-16 px-4">
+                <div className="w-16 h-16 bg-[#1A1A1A] border border-[#2A2A2A] rounded-2xl flex items-center justify-center mb-4">
+                  <Users size={28} className="text-[#FF8C00]/40" />
                 </div>
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center justify-between mb-0.5">
-                    <h3 className="text-sm font-bold text-[#E5E5E5] truncate">
-                      {pinnedIds.includes(gr.id) && <Pin size={10} className="inline mr-1 text-[#FF8C00]" />}
-                      {gr.name}
-                    </h3>
-                    {gr.lastMessageTime && (
-                      <span className="text-[10px] text-[#666] font-mono shrink-0 ml-2">
-                        {new Date(Number(gr.lastMessageTime)).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                      </span>
-                    )}
-                  </div>
-                  <p className="text-xs text-[#888] truncate font-light">
-                    {gr.lastMessage || `${gr.memberCount || 0} members`}
-                  </p>
-                </div>
+                <h3 className="text-white font-bold text-base mb-1">Groups</h3>
+                <p className="text-[#666] text-xs text-center">Coming soon</p>
               </div>
-            ))}
+            )}
 
             {/* Empty State */}
             {currentView === 'chats' && filteredChats.length === 0 && (
@@ -353,30 +307,14 @@ const Sidebar: React.FC<SidebarProps> = ({
                 <p className="text-[#666] text-xs">No conversations yet</p>
               </div>
             )}
-            {currentView === 'channels' && channels.length === 0 && (
-              <div className="text-center py-8">
-                <Radio size={24} className="text-[#333] mx-auto mb-2" />
-                <p className="text-[#666] text-xs">No channels yet</p>
-              </div>
-            )}
-            {currentView === 'groups' && groups.length === 0 && (
-              <div className="text-center py-8">
-                <Lock size={24} className="text-[#333] mx-auto mb-2" />
-                <p className="text-[#666] text-xs">No groups yet</p>
-              </div>
-            )}
           </div>
 
-          {/* FAB Create Button - floating at bottom-right of list panel */}
-          {onFabClick && (
+          {/* FAB Create Button - only for chats */}
+          {onFabClick && currentView === 'chats' && (
             <button
               onClick={onFabClick}
               className="absolute bottom-5 right-5 w-12 h-12 bg-[#FF8C00] rounded-full flex items-center justify-center text-black shadow-lg shadow-[#FF8C00]/30 hover:shadow-[#FF8C00]/50 hover:scale-110 active:scale-95 transition-all duration-200 z-10"
-              title={
-                currentView === 'chats' ? 'New Message' :
-                currentView === 'channels' ? 'Create Channel' :
-                currentView === 'groups' ? 'Create Group' : ''
-              }
+              title="New Message"
             >
               <Plus size={22} />
             </button>

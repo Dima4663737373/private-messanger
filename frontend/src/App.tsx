@@ -1036,7 +1036,7 @@ const InnerApp: React.FC = () => {
     }
   };
 
-  // --- Off-chain DM Delete / Edit (+ on-chain proof) ---
+  // --- Off-chain DM Delete / Edit (+ optional on-chain proof) ---
   const handleDeleteDMMessage = async (msgId: string) => {
     const msg = activeChatId ? (histories[activeChatId] || []).find(m => m.id === msgId) : undefined;
 
@@ -1049,20 +1049,18 @@ const InnerApp: React.FC = () => {
         [activeChatId!]: (prev[activeChatId!] || []).filter(m => m.id !== msgId)
       }));
     }
+    toast.success('Message deleted');
 
-    // 2. On-chain delete (REQUIRED)
+    // 2. On-chain delete (optional, non-blocking)
     if (msg?.timestamp) {
-      try {
-        toast.loading('Deleting on-chain...', { id: 'delete-tx' });
-        await deleteMessageOnChain(msg.timestamp!);
-        toast.dismiss('delete-tx');
-        toast.success('Message deleted on-chain');
-        logger.debug('On-chain delete succeeded for timestamp:', msg.timestamp);
-      } catch (e: any) {
-        toast.dismiss('delete-tx');
-        logger.error('On-chain delete failed:', e?.message);
-        toast.error('On-chain delete failed: ' + (e?.message || 'Unknown error'));
-      }
+      (async () => {
+        try {
+          await deleteMessageOnChain(msg.timestamp!);
+          logger.debug('On-chain delete succeeded for timestamp:', msg.timestamp);
+        } catch (e: any) {
+          logger.warn('On-chain delete skipped:', e?.message);
+        }
+      })();
     }
   };
 
@@ -1079,20 +1077,18 @@ const InnerApp: React.FC = () => {
       ...prev,
       [activeChatId!]: (prev[activeChatId!] || []).map(m => m.id === msgId ? { ...m, text: newText, edited: true } : m)
     }));
+    toast.success('Message edited');
 
-    // 2. On-chain edit (REQUIRED)
+    // 2. On-chain edit (optional, non-blocking)
     if (msg?.timestamp && contact.address) {
-      try {
-        toast.loading('Updating on-chain...', { id: 'edit-tx' });
-        await editMessageOnChain(msg.timestamp!, newText, contact.address!);
-        toast.dismiss('edit-tx');
-        toast.success('Message updated on-chain');
-        logger.debug('On-chain edit succeeded for timestamp:', msg.timestamp);
-      } catch (e: any) {
-        toast.dismiss('edit-tx');
-        logger.error('On-chain edit failed:', e?.message);
-        toast.error('On-chain edit failed: ' + (e?.message || 'Unknown error'));
-      }
+      (async () => {
+        try {
+          await editMessageOnChain(msg.timestamp!, newText, contact.address!);
+          logger.debug('On-chain edit succeeded for timestamp:', msg.timestamp);
+        } catch (e: any) {
+          logger.warn('On-chain edit skipped:', e?.message);
+        }
+      })();
     }
   };
 

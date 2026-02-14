@@ -532,24 +532,25 @@ const preferencesLimiter = rateLimit({
 
 // GET /preferences/:address — get user preferences
 app.get('/preferences/:address', preferencesLimiter, async (req, res) => {
+  const address = req.params.address as string;
+  const defaults = {
+    address,
+    pinned_chats: [],
+    muted_chats: [],
+    deleted_chats: [],
+    disappear_timers: {},
+    encrypted_keys: null,
+    key_nonce: null
+  };
+
   try {
-    const address = req.params.address as string;
     if (!isValidAddress(address)) {
       return res.status(400).json({ error: 'Invalid address' });
     }
 
     const prefs = await UserPreferences.findByPk(address);
     if (!prefs) {
-      // Return defaults if no preferences stored
-      return res.json({
-        address,
-        pinned_chats: [],
-        muted_chats: [],
-        deleted_chats: [],
-        disappear_timers: {},
-        encrypted_keys: null,
-        key_nonce: null
-      });
+      return res.json(defaults);
     }
 
     res.json({
@@ -561,8 +562,12 @@ app.get('/preferences/:address', preferencesLimiter, async (req, res) => {
       encrypted_keys: prefs.encrypted_keys ? JSON.parse(prefs.encrypted_keys) : null,
       key_nonce: prefs.key_nonce
     });
-  } catch (e) {
+  } catch (e: any) {
     console.error('GET /preferences error:', e);
+    // If table doesn't exist yet, return defaults instead of 500
+    if (e.message?.includes('no such table') || e.name === 'SequelizeDatabaseError') {
+      return res.json(defaults);
+    }
     res.status(500).json({ error: 'Failed to fetch preferences' });
   }
 });
@@ -1144,9 +1149,19 @@ app.delete('/pins', async (req, res) => {
 
 const PORT = Number(process.env.PORT) || 3002;
 
+// Health check endpoint (useful for Railway/uptime monitoring)
+app.get('/health', (_req, res) => {
+  res.json({ status: 'ok', uptime: process.uptime(), timestamp: Date.now() });
+});
+
 initDB().then(() => {
   indexer.start();
   server.listen(PORT, () => {
     console.log(`Ghost backend running on port ${PORT}`);
+    console.log(`Allowed CORS origins: ${ALLOWED_ORIGINS.join(', ')}`);
+    console.log(`NODE_ENV: ${process.env.NODE_ENV || 'development'}`);
   });
+}).catch((err) => {
+  console.error('Failed to initialize database:', err);
+  process.exit(1);
 });

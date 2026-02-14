@@ -220,20 +220,6 @@ export function useContract() {
   };
 
   /**
-   * Deletes a chat (local only — hides from UI via localStorage).
-   * No on-chain transition exists for this; we track it client-side.
-   */
-  const deleteChat = async (contactAddress: string) => {
-      if (!publicKey) throw new Error("Wallet not connected");
-      const key = `ghost_deleted_chats_${publicKey}`;
-      const deleted: string[] = JSON.parse(localStorage.getItem(key) || '[]');
-      if (!deleted.includes(contactAddress)) {
-          deleted.push(contactAddress);
-          localStorage.setItem(key, JSON.stringify(deleted));
-      }
-  };
-
-  /**
    * Sends a message on-chain using pre-encrypted payload from off-chain flow.
    * This avoids double-encryption — reuses the payload already encrypted in sendDMMessage.
    */
@@ -282,7 +268,6 @@ export function useContract() {
     registerProfile,
     deleteMessage,
     editMessage,
-    deleteChat,
     findRecordByTimestamp,
     executeTransaction,
   };

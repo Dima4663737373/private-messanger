@@ -364,10 +364,10 @@ const SettingsView: React.FC<SettingsViewProps> = ({
                 <h3 className="font-bold text-[#0A0A0A]">Message Keys</h3>
               </div>
               <p className="text-sm text-[#666] mb-3">
-                Your encryption keys are stored locally in your browser. They never leave your device.
+                Your encryption keys are generated per session and stored securely on the backend.
               </p>
               <p className="text-xs text-[#666] font-mono">
-                Key Storage: localStorage (browser-based)
+                Key Storage: Backend (server-side, encrypted)
               </p>
             </div>
           </div>
