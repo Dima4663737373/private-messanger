@@ -406,7 +406,16 @@ wss.on('connection', (ws: any) => {
         // Resolve recipient address from hash
         let resolvedRecipient = 'unknown';
         const recipientProfile = await Profile.findOne({ where: { address_hash: recipientHash } });
-        if (recipientProfile) resolvedRecipient = recipientProfile.address;
+        if (recipientProfile) {
+          resolvedRecipient = recipientProfile.address;
+        } else {
+          // Fallback: check connected WS clients for matching hash
+          wss.clients.forEach((client: any) => {
+            if (client.subscribedHash === recipientHash && client.authenticatedAddress) {
+              resolvedRecipient = client.authenticatedAddress;
+            }
+          });
+        }
 
         // Use findOrCreate to prevent duplicate messages (unique index: sender_hash + recipient_hash + timestamp)
         const [msg, created] = await Message.findOrCreate({
@@ -678,7 +687,7 @@ app.get('/history/:address', requireFullAuth, async (req: any, res) => {
 app.post('/profiles', requireAuth, profileWriteLimiter, async (req: any, res) => {
   try {
     const address = req.authenticatedAddress; // Use authenticated address, not client-provided
-    const { name, bio, txId, encryptionPublicKey } = req.body;
+    const { name, bio, txId, encryptionPublicKey, addressHash } = req.body;
 
     // Build update data — only include non-empty fields to avoid overwriting
     const data: any = { address };
@@ -694,6 +703,9 @@ app.post('/profiles', requireAuth, profileWriteLimiter, async (req: any, res) =>
     }
     if (typeof encryptionPublicKey === 'string' && encryptionPublicKey.length > 0) {
       data.encryption_public_key = encryptionPublicKey.slice(0, 500);
+    }
+    if (typeof addressHash === 'string' && addressHash.length > 0) {
+      data.address_hash = addressHash.slice(0, 500);
     }
 
     await Profile.upsert(data);

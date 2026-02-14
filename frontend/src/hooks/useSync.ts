@@ -726,7 +726,9 @@ export function useSync(
   const notifyProfileUpdate = async (name: string, bio: string, txId: string) => {
     if (!address) return;
     const keys = getCachedKeys(address);
-    
+    let addressHash = '';
+    try { addressHash = hashAddress(address); } catch { /* ignore */ }
+
     await safeBackendFetch('profiles', {
       method: 'POST',
       body: {
@@ -734,7 +736,8 @@ export function useSync(
           name,
           bio,
           txId,
-          encryptionPublicKey: keys?.publicKey || ''
+          encryptionPublicKey: keys?.publicKey || '',
+          addressHash
       }
     });
   };

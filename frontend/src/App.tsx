@@ -25,6 +25,7 @@ import { migrateLegacyPreferences } from './utils/migrate-localStorage';
 import { setCachedKeys, clearKeyCache, getCachedKeys } from './utils/key-derivation';
 import { generateKeyPair } from './utils/crypto';
 import { fetchPreferences, updatePreferences } from './utils/preferences-api';
+import { safeBackendFetch } from './utils/api-client';
 import { playNotificationSound } from './utils/notification-sound';
 // lucide icons removed - FAB is now in Sidebar
 import ProfileView from './components/ProfileView';
@@ -515,10 +516,17 @@ const InnerApp: React.FC = () => {
           let finalAddress = counterpartyAddress;
           let displayName = `User ${counterpartyAddress.slice(0, 6)}...`;
 
-          if (counterpartyAddress === 'unknown' && isMine) {
-            // Skip unknown recipients (can't send on-chain messages to them)
-            logger.warn('Skipping dialog with unknown recipient:', dialogMsg.recipient_hash);
-            continue;
+          // If recipient is 'unknown', try to resolve from recipientHash
+          if (counterpartyAddress === 'unknown' && isMine && dialogMsg.recipient_hash) {
+            const { data: hashProfile } = await safeBackendFetch<any>(`profiles/hash/${dialogMsg.recipient_hash}`);
+            if (hashProfile?.exists && hashProfile.profile?.address) {
+              finalAddress = hashProfile.profile.address;
+              displayName = hashProfile.profile.username || `User ${finalAddress.slice(0, 6)}...`;
+            } else {
+              // Use dialog hash as fallback ID so chat is visible
+              finalAddress = dialogMsg.dialog_hash || `hash:${dialogMsg.recipient_hash}`;
+              displayName = `User ${dialogMsg.recipient_hash.slice(0, 8)}...`;
+            }
           }
 
           // Use decrypted text from fetchDialogs
