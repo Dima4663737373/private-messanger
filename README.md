@@ -1,8 +1,9 @@
 # 👻 Ghost Messenger — Private Messaging on Aleo
 
-Decentralized end-to-end encrypted messenger with hybrid architecture: **instant off-chain delivery** + **optional on-chain blockchain proof**.
+Decentralized end-to-end encrypted messenger with **mandatory on-chain blockchain proof** for all message and profile operations.
 
-**Live Demo:** [Coming soon]
+**Live Demo:** [Coming soon on Netlify]
+**Backend:** [Railway](https://ghost-production-839c.up.railway.app)
 **Contract:** `ghost_msg_015.aleo` ([View on Explorer](https://testnetbeta.aleoscan.io/program?id=ghost_msg_015.aleo))
 
 ---
@@ -10,9 +11,9 @@ Decentralized end-to-end encrypted messenger with hybrid architecture: **instant
 ## 🚀 Quick Start (Local Development)
 
 ### Prerequisites
-- Node.js 18+
-- npm or yarn
-- Aleo wallet (Leo Wallet extension)
+- Node.js 20+
+- npm (with `--legacy-peer-deps` flag)
+- Aleo wallet ([Leo Wallet](https://leo.app), Puzzle, or Fox Wallet)
 
 ### Run Locally
 
@@ -25,37 +26,36 @@ npm run dev
 
 # 2. Frontend (Terminal 2)
 cd frontend
-npm install
+npm install --legacy-peer-deps
 npm run dev
-# → Open http://localhost:3000
+# → Open http://localhost:5173
 ```
 
-**Connect your Aleo wallet** → Create profile → Start messaging!
+**Connect your Aleo wallet** → Sign transactions → Create profile → Start messaging!
 
 ---
 
 ## 📦 Deployment (Production)
 
-See **[DEPLOYMENT.md](DEPLOYMENT.md)** for full Railway + Vercel deployment guide.
+See **[NETLIFY_DEPLOY.md](NETLIFY_DEPLOY.md)** for full Railway + Netlify deployment guide.
 
 **Quick summary:**
-1. **Backend** → Railway (free tier, WebSocket support)
-2. **Frontend** → Vercel (free tier, auto-deploy)
-3. **Smart Contract** → Already deployed: `ghost_msg_015.aleo`
+1. **Backend** → Railway: `https://ghost-production-839c.up.railway.app`
+2. **Frontend** → Netlify (configured in `netlify.toml`)
+3. **Smart Contract** → Deployed: `ghost_msg_015.aleo`
 
 ---
 
 ## 🏗️ Architecture
 
-### Hybrid Messaging Model
+### On-Chain First Messaging
 
 | Layer | Purpose | Speed | Cost |
 |-------|---------|-------|------|
-| **Off-chain** (WebSocket) | Instant message delivery | < 100ms | Free |
-| **On-chain** (Aleo) | Blockchain proof (optional) | ~10-30s | 0.01-0.1 ALEO |
+| **Off-chain** (WebSocket) | Instant message delivery + sync | < 100ms | Free |
+| **On-chain** (Aleo) | All operations (send, edit, delete, profile) | ~10-30s | ~0.05 ALEO |
 
-**Default:** Blockchain Proof is **OFF** → all messages are instant & free via WebSocket.
-**Toggle ON** in Settings → Privacy to record messages on Aleo blockchain.
+**All message and profile operations require on-chain transactions** with wallet signature approval. Off-chain WebSocket provides instant delivery and synchronization between clients.
 
 ### Tech Stack
 
@@ -144,28 +144,29 @@ ghost/
 **Backend** (Railway):
 ```env
 PORT=3002
-CORS_ORIGINS=https://your-frontend.vercel.app
+CORS_ORIGINS=https://your-frontend.netlify.app
 ALEO_ENDPOINT=https://api.explorer.provable.com/v1
 ```
 
-**Frontend** (Vercel):
+**Frontend** (Netlify):
 ```env
-VITE_BACKEND_URL=https://your-backend.up.railway.app
-VITE_WS_URL=wss://your-backend.up.railway.app
+VITE_BACKEND_URL=https://ghost-production-839c.up.railway.app
+VITE_WS_URL=wss://ghost-production-839c.up.railway.app
+VITE_ALEO_EXPLORER_API_BASE=https://api.explorer.provable.com/v1
 ```
 
 ---
 
 ## 🎯 Features
 
+✅ **On-Chain Transactions** — All operations require wallet signature
 ✅ **Instant Messaging** — WebSocket real-time delivery
-✅ **E2E Encryption** — NaCl cryptography
-✅ **Blockchain Proof** — Optional Aleo on-chain records
-✅ **Profiles & Contacts** — User management
-✅ **Channels & Groups** — Multi-user chats (coming soon)
-✅ **Message Editing** — Edit sent messages
-✅ **Message Deletion** — Delete locally or on-chain
-✅ **Modern UI** — Tailwind CSS, dark mode ready
+✅ **E2E Encryption** — NaCl cryptography (Curve25519)
+✅ **Blockchain Proof** — Mandatory Aleo on-chain records
+✅ **Profiles & Contacts** — On-chain profile registration
+✅ **Message Editing** — Edit sent messages (on-chain)
+✅ **Message Deletion** — Delete messages (on-chain)
+✅ **Modern UI** — Tailwind CSS with Tipzo-inspired design
 
 ---
 
