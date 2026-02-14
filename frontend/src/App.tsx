@@ -19,6 +19,11 @@ import { mapErrorToUserMessage } from './utils/errors';
 import { TransactionProgress } from './components/ui/TransactionProgress';
 import { useSync } from './hooks/useSync';
 import { useContract } from './hooks/useContract';
+import { usePreferences } from './hooks/usePreferences';
+import { migrateLegacyPreferences } from './utils/migrate-localStorage';
+import { setCachedKeys, clearKeyCache, getCachedKeys } from './utils/key-derivation';
+import { generateKeyPair } from './utils/crypto';
+import { fetchPreferences, updatePreferences } from './utils/preferences-api';
 // lucide icons removed - FAB is now in Sidebar
 import ProfileView from './components/ProfileView';
 
@@ -27,7 +32,7 @@ const mapContactToChat = (contact: Contact, isActive: boolean): Chat => ({
   name: contact.name,
   avatar: `https://ui-avatars.com/api/?name=${encodeURIComponent(contact.name)}&background=random&color=fff`,
   status: 'offline',
-  lastMessage: contact.lastMessage || 'Encrypted connection established',
+  lastMessage: contact.lastMessage || 'No messages yet',
   time: contact.lastMessageTime ? new Date(contact.lastMessageTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '',
   unreadCount: contact.unreadCount || 0,
   type: 'private',
@@ -38,10 +43,25 @@ const InnerApp: React.FC = () => {
   const { publicKey, wallet, requestTransaction, disconnect, select, wallets } = useWallet();
   const { executeTransaction, sendMessageOnChain, registerProfile: registerProfileOnChain, deleteMessage: deleteMessageOnChain, editMessage: editMessageOnChain, loading: contractLoading } = useContract();
 
+  // User Preferences (replaces localStorage)
+  const {
+    pinnedChats: pinnedChatIds,
+    mutedChats: mutedChatIds,
+    deletedChats,
+    disappearTimers,
+    setDisappearTimers,
+    togglePin,
+    toggleMute,
+    markChatDeleted,
+    setDisappearTimer: setDisappearTimerApi,
+    isLoaded: preferencesLoaded
+  } = usePreferences(publicKey);
+
   // Contacts State - In-Memory Only (Declared first to avoid ReferenceError)
   const [contacts, setContacts] = useState<Contact[]>([]);
-  
-  const decryptionCache = useRef<Record<string, string>>({});
+
+  // Track processed message IDs for deduplication
+  const processedMsgIds = useRef<Set<string>>(new Set());
 
   const [activeChatId, setActiveChatId] = useState<string | null>(null);
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
@@ -77,10 +97,6 @@ const InnerApp: React.FC = () => {
   const [newMsgAddress, setNewMsgAddress] = useState('');
   const [newMsgName, setNewMsgName] = useState('');
 
-  // Sidebar context-menu state: pinned & muted chat/channel/group IDs (localStorage)
-  const [pinnedChatIds, setPinnedChatIds] = useState<string[]>([]);
-  const [mutedChatIds, setMutedChatIds] = useState<string[]>([]);
-
   // Pins State (contextId -> pinned message objects)
   const [pinnedMessages, setPinnedMessages] = useState<Record<string, any[]>>({});
   
@@ -95,23 +111,26 @@ const InnerApp: React.FC = () => {
          return;
     }
 
-    if (!counterpartyAddress) return; 
+    if (!counterpartyAddress) return;
 
-    // Check cache to avoid re-toast for same message ID if we processed it
-    if (decryptionCache.current[msg.id]) return; 
-    decryptionCache.current[msg.id] = msg.text;
+    const isDuplicate = processedMsgIds.current.has(msg.id);
+    processedMsgIds.current.add(msg.id);
 
-    toast(`New message ${msg.isMine ? 'sent' : 'received'}`, { icon: '📨' });
+    // Toast & notification only for new messages (not duplicates)
+    if (!isDuplicate) {
+      toast(`New message ${msg.isMine ? 'sent' : 'received'}`, { icon: '📨' });
 
-    // Browser Notification when tab is not focused
-    if (!msg.isMine && document.hidden && Notification.permission === 'granted') {
-      new Notification('Ghost Messenger', {
-        body: msg.text.length > 60 ? msg.text.slice(0, 60) + '...' : msg.text,
-        icon: '/ghost-icon.png',
-        tag: msg.id // Prevents duplicate notifications
-      });
+      // Browser Notification when tab is not focused
+      if (!msg.isMine && document.hidden && Notification.permission === 'granted') {
+        new Notification('Ghost Messenger', {
+          body: msg.text.length > 60 ? msg.text.slice(0, 60) + '...' : msg.text,
+          icon: '/ghost-icon.png',
+          tag: msg.id // Prevents duplicate notifications
+        });
+      }
     }
-    
+
+    // Always update contact sidebar preview (even for duplicates — ensures lastMessage is set)
     setContacts(prevContacts => {
       // Try to find by address OR dialogHash
       const existingIndex = prevContacts.findIndex(c => 
@@ -233,6 +252,12 @@ const InnerApp: React.FC = () => {
       if (current.some(m => m.id === msg.id)) return prev;
       return { ...prev, [roomId]: [...current, msg] };
     });
+    // Update sidebar preview for channels/groups
+    const updateRoom = (prev: Room[]) => prev.map(r =>
+      r.id === roomId ? { ...r, lastMessage: msg.text, lastMessageTime: String(Date.now()) } : r
+    );
+    setChannels(updateRoom);
+    setGroups(updateRoom);
   }, []);
 
   const handleRoomCreated = React.useCallback((room: Room) => {
@@ -301,10 +326,8 @@ const InnerApp: React.FC = () => {
         const idx = msgs.findIndex(m => m.id === tempId);
         if (idx !== -1) {
           next[chatId] = msgs.map(m => m.id === tempId ? { ...m, id: realId, status: 'sent' as const } : m);
-          // Cache the text so handleNewMessage deduplicates
-          if (decryptionCache.current) {
-            decryptionCache.current[realId] = msgs[idx].text;
-          }
+          // Mark realId as processed so handleNewMessage deduplicates
+          processedMsgIds.current.add(realId);
           break;
         }
       }
@@ -312,40 +335,11 @@ const InnerApp: React.FC = () => {
     });
   }, []);
 
-  const { isConnected: isSyncConnected, typingUsers, notifyProfileUpdate, searchProfiles, fetchMessages, fetchDialogs, fetchDialogMessages, syncProfile, cacheDecryptedMessage, sendTyping, addReaction, removeReaction, fetchRooms, createRoom, deleteRoom: deleteRoomApi, renameRoom: renameRoomApi, joinRoom, leaveRoom, fetchRoomInfo, fetchRoomMessages, sendRoomMessage, subscribeRoom, sendRoomTyping, clearDMHistory, deleteRoomMessage, editRoomMessage, sendDMMessage, deleteDMMessage, editDMMessage, fetchPins, pinMessage, unpinMessage } = useSync(publicKey, handleNewMessage, handleMessageDeleted, handleMessageUpdated, handleReactionUpdate, handleRoomMessage, handleRoomCreated, handleRoomDeleted, handleDMCleared, handlePinUpdate, handleRoomMessageDeleted, handleRoomMessageEdited, handleDMSent);
+  const { isConnected: isSyncConnected, typingUsers, notifyProfileUpdate, searchProfiles, fetchMessages, fetchDialogs, fetchDialogMessages, syncProfile, cacheDecryptedMessage, sendTyping, addReaction, removeReaction, fetchRooms, createRoom, deleteRoom: deleteRoomApi, renameRoom: renameRoomApi, joinRoom, leaveRoom, fetchRoomInfo, fetchRoomMessages, sendRoomMessage, subscribeRoom, sendRoomTyping, clearDMHistory, deleteRoomMessage, editRoomMessage, prepareDMMessage, commitDMMessage, sendDMMessage, deleteDMMessage, editDMMessage, fetchPins, pinMessage, unpinMessage } = useSync(publicKey, handleNewMessage, handleMessageDeleted, handleMessageUpdated, handleReactionUpdate, handleRoomMessage, handleRoomCreated, handleRoomDeleted, handleDMCleared, handlePinUpdate, handleRoomMessageDeleted, handleRoomMessageEdited, handleDMSent);
 
-  // Load pinned/muted IDs + blockchain proof toggle from localStorage
-  useEffect(() => {
-    if (publicKey) {
-      try {
-        const p = localStorage.getItem(`ghost_pinned_${publicKey}`);
-        if (p) setPinnedChatIds(JSON.parse(p));
-        const m = localStorage.getItem(`ghost_muted_${publicKey}`);
-        if (m) setMutedChatIds(JSON.parse(m));
-      } catch { /* ignore */ }
-    }
-  }, [publicKey]);
-
-  // Disappearing Messages — per-chat timer stored in localStorage
-  const [disappearTimers, setDisappearTimers] = useState<Record<string, DisappearTimer>>({});
-
-  useEffect(() => {
-    if (publicKey) {
-      try {
-        const stored = localStorage.getItem(`ghost_disappear_${publicKey}`);
-        if (stored) setDisappearTimers(JSON.parse(stored));
-      } catch { /* ignore */ }
-    }
-  }, [publicKey]);
-
+  // Disappearing Messages — per-chat timer wrapper with toast notification
   const setDisappearTimer = (chatId: string, timer: DisappearTimer) => {
-    setDisappearTimers(prev => {
-      const updated = { ...prev, [chatId]: timer };
-      if (publicKey) {
-        try { localStorage.setItem(`ghost_disappear_${publicKey}`, JSON.stringify(updated)); } catch { /* ignore */ }
-      }
-      return updated;
-    });
+    setDisappearTimerApi(chatId, timer);
     toast.success(timer === 'off' ? 'Disappearing messages disabled' : `Messages will disappear after ${timer}`);
   };
 
@@ -380,15 +374,58 @@ const InnerApp: React.FC = () => {
   useEffect(() => {
     if (!isSyncConnected || !publicKey) return;
 
-    // 1. Sync My Profile
-    syncProfile(publicKey).then(profile => {
-      if (profile) {
-        logger.debug("Synced profile:", profile);
-        setMyProfile({ username: profile.username, bio: profile.bio });
+    const initSession = async () => {
+      // 0. Migrate legacy localStorage data (one-time, must complete before key load)
+      try {
+        await migrateLegacyPreferences(publicKey);
+      } catch (err) {
+        logger.error('Migration failed:', err);
       }
-    });
 
-    // 2. Sync Dialogs (Conversations)
+      // 0.5. Initialize encryption keys — load from backend or generate once
+      if (!getCachedKeys(publicKey)) {
+        try {
+          const prefs = await fetchPreferences(publicKey);
+          if (prefs.encrypted_keys && prefs.encrypted_keys.publicKey && prefs.encrypted_keys.secretKey) {
+            setCachedKeys(publicKey, {
+              publicKey: prefs.encrypted_keys.publicKey,
+              secretKey: prefs.encrypted_keys.secretKey
+            });
+            logger.debug('Loaded encryption keys from backend');
+          } else {
+            // First time — generate keys and store on backend
+            const keys = generateKeyPair();
+            setCachedKeys(publicKey, keys);
+            await updatePreferences(publicKey, {
+              encryptedKeys: { publicKey: keys.publicKey, secretKey: keys.secretKey }
+            });
+            logger.debug('Generated and saved new encryption keys');
+          }
+        } catch (err) {
+          logger.error('Key init error, using session keys:', err);
+          const keys = generateKeyPair();
+          setCachedKeys(publicKey, keys);
+        }
+      }
+
+      // 1. Register encryption public key in profile (required for key exchange)
+      // notifyProfileUpdate auto-includes encryptionPublicKey from cached keys
+      if (getCachedKeys(publicKey)) {
+        notifyProfileUpdate('', '', '').catch(() => {});
+      }
+
+      // 2. Sync My Profile
+      syncProfile(publicKey).then(profile => {
+        if (profile) {
+          logger.debug("Synced profile:", profile);
+          setMyProfile({ username: profile.username, bio: profile.bio });
+        }
+      });
+
+      // 2. Sync Dialogs (keys are now guaranteed to be cached)
+      await loadDialogs();
+    };
+
     const loadDialogs = async () => {
       try {
         const addressHash = hashAddress(publicKey);
@@ -413,9 +450,6 @@ const InnerApp: React.FC = () => {
 
           // Use decrypted text from fetchDialogs
           let previewText = dialogMsg.text || "Encrypted Message";
-          if (decryptionCache.current[dialogMsg.id]) {
-            previewText = decryptionCache.current[dialogMsg.id];
-          }
 
           newContacts.push({
             id: finalAddress,
@@ -444,12 +478,23 @@ const InnerApp: React.FC = () => {
           }
         }
 
-        // Add new contacts (check duplicates via functional update to avoid stale closure)
+        // Merge contacts: add new ones, update existing with latest lastMessage
         if (newContacts.length > 0) {
           setContacts(prev => {
             const combined = [...prev];
             newContacts.forEach(nc => {
-              if (!combined.some(c => c.id === nc.id)) combined.push(nc);
+              const existingIdx = combined.findIndex(c => c.id === nc.id);
+              if (existingIdx !== -1) {
+                // Update existing contact's preview text and time
+                combined[existingIdx] = {
+                  ...combined[existingIdx],
+                  lastMessage: nc.lastMessage || combined[existingIdx].lastMessage,
+                  lastMessageTime: nc.lastMessageTime || combined[existingIdx].lastMessageTime,
+                  dialogHash: nc.dialogHash || combined[existingIdx].dialogHash
+                };
+              } else {
+                combined.push(nc);
+              }
             });
             return combined;
           });
@@ -459,7 +504,7 @@ const InnerApp: React.FC = () => {
       }
     };
 
-    loadDialogs();
+    initSession();
     // eslint-disable-next-line react-hooks/exhaustive-deps
     // syncProfile, fetchDialogs, hashAddress are from useSync — stable by behavior but not by reference
   }, [isSyncConnected, publicKey]);
@@ -573,6 +618,13 @@ const InnerApp: React.FC = () => {
     }
   };
 
+  const handleDisconnect = () => {
+    // Clear encryption keys from session cache
+    if (publicKey) clearKeyCache(publicKey);
+    // Disconnect wallet
+    if (disconnect) disconnect();
+  };
+
   const handleSendMessage = async (text: string, file?: File, replyTo?: { id: string; text: string; sender: string }) => {
     if (!activeChatId || !publicKey) return;
 
@@ -596,17 +648,33 @@ const InnerApp: React.FC = () => {
         toast.success("Attachment uploaded", { id: "ipfs-upload" });
       }
 
-      // 1. Off-chain via backend WebSocket (instant delivery)
-      const result = await sendDMMessage(contact.address, text, attachmentCID);
+      // 1. Prepare encrypted payload (NO WebSocket send yet)
+      const prepared = await prepareDMMessage(contact.address, text, attachmentCID);
 
-      if (!result) {
+      if (!prepared) {
         toast.error('Not connected to server. Please wait and try again.');
         return;
       }
 
-      const { tempId, encryptedPayload, timestamp } = result;
+      const { tempId, encryptedPayload, timestamp } = prepared;
 
-      // 2. Optimistic UI with tempId
+      // 2. Request wallet approval FIRST (on-chain transaction)
+      let txId: string | undefined;
+      toast.loading('Waiting for wallet approval...', { id: 'tx-approval' });
+      try {
+        txId = await sendMessageOnChain(contact.address!, encryptedPayload, timestamp, attachmentCID);
+        toast.dismiss('tx-approval');
+      } catch (e: any) {
+        toast.dismiss('tx-approval');
+        logger.error('On-chain transaction failed:', e?.message);
+        toast.error('Transaction failed: ' + (e?.message || 'Unknown error'));
+        return; // Don't show message if wallet rejected/failed
+      }
+
+      // 3. Wallet approved → send off-chain via WebSocket
+      commitDMMessage(prepared, attachmentCID);
+
+      // 4. Show message in UI
       const newMessage: Message = {
         id: tempId,
         text,
@@ -614,7 +682,8 @@ const InnerApp: React.FC = () => {
         timestamp,
         senderId: 'me',
         isMine: true,
-        status: 'pending',
+        status: txId ? 'confirmed' : 'pending',
+        txId,
         replyToId: replyTo?.id,
         replyToText: replyTo?.text,
         replyToSender: replyTo?.sender,
@@ -632,35 +701,17 @@ const InnerApp: React.FC = () => {
         [activeChatId]: [...(prev[activeChatId] || []), newMessage]
       }));
 
+      // Update sidebar preview with sent message text
+      setContacts(prev => prev.map(c =>
+        c.id === activeChatId ? { ...c, lastMessage: text, lastMessageTime: new Date() } : c
+      ));
+
       // Cache the plaintext so deduplication works when dm_sent / message_detected arrives
       cacheDecryptedMessage(tempId, text);
 
-      // 3. On-chain transaction (REQUIRED - wallet popup)
-      try {
-        toast.loading('Waiting for transaction approval...', { id: 'tx-approval' });
-        const txId = await sendMessageOnChain(contact.address!, encryptedPayload, timestamp, attachmentCID);
-        toast.dismiss('tx-approval');
-
-        if (txId) {
-          logger.debug('On-chain message txId:', txId);
-          toast.success('Message sent on-chain');
-          // Update message with txId
-          setHistories(prev => {
-            const msgs = prev[activeChatId!];
-            if (!msgs) return prev;
-            return { ...prev, [activeChatId!]: msgs.map(m => m.id === tempId || m.timestamp === timestamp ? { ...m, txId, status: 'confirmed' } : m) };
-          });
-        }
-      } catch (e: any) {
-        toast.dismiss('tx-approval');
-        logger.error('On-chain transaction failed:', e?.message);
-        toast.error('Transaction failed: ' + (e?.message || 'Unknown error'));
-        // Remove optimistic message on failure
-        setHistories(prev => ({
-          ...prev,
-          [activeChatId]: (prev[activeChatId] || []).filter(m => m.id !== tempId)
-        }));
-        throw e; // Re-throw to trigger outer catch
+      if (txId) {
+        logger.debug('On-chain message txId:', txId);
+        toast.success('Message sent');
       }
     } catch (error) {
       logger.error("Failed to send message", error);
@@ -694,27 +745,20 @@ const InnerApp: React.FC = () => {
 
     const updatedContacts = [...contacts, newContact];
     setContacts(updatedContacts);
-    localStorage.setItem(`ghost_contacts_${publicKey}`, JSON.stringify(updatedContacts));
     toast.success(`Contact ${name} added`);
   };
 
   const handleEditContact = (id: string, newName: string) => {
     if (!publicKey) return;
-    setContacts(prev => {
-      const updated = prev.map(c => c.id === id ? { ...c, name: newName, initials: newName.slice(0, 2).toUpperCase() } : c);
-      localStorage.setItem(`ghost_contacts_${publicKey}`, JSON.stringify(updated));
-      return updated;
-    });
+    setContacts(prev =>
+      prev.map(c => c.id === id ? { ...c, name: newName, initials: newName.slice(0, 2).toUpperCase() } : c)
+    );
     toast.success('Contact renamed');
   };
 
   const handleDeleteContact = (id: string) => {
     if (!publicKey) return;
-    setContacts(prev => {
-      const updated = prev.filter(c => c.id !== id);
-      localStorage.setItem(`ghost_contacts_${publicKey}`, JSON.stringify(updated));
-      return updated;
-    });
+    setContacts(prev => prev.filter(c => c.id !== id));
     if (activeChatId === id) setActiveChatId(null);
     toast.success('Contact deleted');
   };
@@ -928,18 +972,9 @@ const InnerApp: React.FC = () => {
     });
     // Close chat if it was active
     if (activeChatId === chatId) setActiveChatId(null);
-    // Persist in localStorage
-    if (publicKey) {
-      const key = `ghost_deleted_chats_${publicKey}`;
-      const deleted: string[] = JSON.parse(localStorage.getItem(key) || '[]');
-      if (!deleted.includes(chatId)) {
-        deleted.push(chatId);
-        localStorage.setItem(key, JSON.stringify(deleted));
-      }
-      // Also update saved contacts
-      const remaining = contacts.filter(c => c.id !== chatId);
-      localStorage.setItem(`ghost_contacts_${publicKey}`, JSON.stringify(remaining));
-    }
+    // Mark as deleted in backend preferences
+    markChatDeleted(chatId);
+    // Contacts are in-memory only — markChatDeleted above persists to backend
     toast.success('Chat deleted');
   };
 
@@ -965,20 +1000,13 @@ const InnerApp: React.FC = () => {
         break;
       }
       case 'pin': {
-        setPinnedChatIds(prev => {
-          const next = prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id];
-          if (publicKey) localStorage.setItem(`ghost_pinned_${publicKey}`, JSON.stringify(next));
-          return next;
-        });
+        togglePin(id);
         break;
       }
       case 'mute': {
-        setMutedChatIds(prev => {
-          const next = prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id];
-          if (publicKey) localStorage.setItem(`ghost_muted_${publicKey}`, JSON.stringify(next));
-          return next;
-        });
-        toast.success(mutedChatIds.includes(id) ? 'Unmuted' : 'Muted');
+        const wasMuted = mutedChatIds.includes(id);
+        toggleMute(id);
+        toast.success(wasMuted ? 'Unmuted' : 'Muted');
         break;
       }
       case 'mark_unread': {
@@ -1235,7 +1263,7 @@ const InnerApp: React.FC = () => {
         onSetView={setCurrentView}
         isWalletConnected={!!publicKey}
         onConnectWallet={handleConnectWallet}
-        onDisconnect={() => disconnect && disconnect()}
+        onDisconnect={handleDisconnect}
         chats={chats}
         isConnecting={isConnecting}
         publicKey={publicKey}
@@ -1325,7 +1353,7 @@ const InnerApp: React.FC = () => {
             isWalletConnected={!!publicKey}
             publicKey={publicKey}
             balance={balance}
-            onDisconnect={() => disconnect && disconnect()}
+            onDisconnect={handleDisconnect}
           />
         )}
       </main>

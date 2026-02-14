@@ -1,6 +1,10 @@
 import nacl from 'tweetnacl';
-import { encodeBase64, decodeBase64, encodeUTF8, decodeUTF8 } from 'tweetnacl-util';
+import { encodeBase64, decodeBase64 } from 'tweetnacl-util';
 import { logger } from './logger';
+
+// Use standard TextEncoder/TextDecoder for reliable UTF-8 conversion
+const textEncoder = new TextEncoder();
+const textDecoder = new TextDecoder();
 
 export interface KeyPair {
   publicKey: string;
@@ -36,8 +40,7 @@ export const encryptMessage = (
   let messageUint8: Uint8Array;
   
   if (typeof message === 'string') {
-    // @ts-ignore - tweetnacl-util type definitions are incorrect
-    messageUint8 = encodeUTF8(message) as unknown as Uint8Array;
+    messageUint8 = textEncoder.encode(message);
   } else if (message instanceof Uint8Array) {
     messageUint8 = message;
   } else {
@@ -91,7 +94,7 @@ export const decryptMessage = (
     );
 
     if (!decrypted) return null;
-    return decodeUTF8(decrypted as unknown as string) as unknown as string;
+    return textDecoder.decode(decrypted);
   } catch (e) {
     logger.error("Decryption failed:", e);
     return null;
@@ -124,40 +127,28 @@ export const decryptMessageAsSender = (
     );
 
     if (!decrypted) return null;
-    return decodeUTF8(decrypted as unknown as string) as unknown as string;
+    return textDecoder.decode(decrypted);
   } catch (e) {
     logger.error("Sender Decryption failed:", e);
     return null;
   }
 };
 
-// Helper to ensure we have keys in local storage (with safe fallback)
-export const getOrCreateMessagingKeys = (walletAddress: string): KeyPair => {
-  const STORAGE_KEY = `ghost_msg_keys_${walletAddress}`;
-
-  try {
-    const stored = localStorage.getItem(STORAGE_KEY);
-    if (stored) {
-      const parsed = JSON.parse(stored);
-      // Validate stored keys are valid base64 and correct length
-      if (parsed.publicKey && parsed.secretKey) {
-        const pk = decodeBase64(parsed.publicKey);
-        const sk = decodeBase64(parsed.secretKey);
-        if (pk.length === nacl.box.publicKeyLength && sk.length === nacl.box.secretKeyLength) {
-          return parsed;
-        }
-      }
-    }
-  } catch {
-    // localStorage unavailable or corrupted data — regenerate
-  }
-
-  const newKeys = generateKeyPair();
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(newKeys));
-  } catch {
-    // Storage full or unavailable — keys live in memory only this session
-    logger.warn('Could not persist messaging keys to localStorage');
-  }
-  return newKeys;
-};
+/**
+ * SECURITY UPDATE (2026-02-14):
+ *
+ * The getOrCreateMessagingKeys() function has been REMOVED to eliminate
+ * localStorage-based key storage vulnerability.
+ *
+ * Encryption keys are now derived from wallet transaction signatures using
+ * the key-derivation.ts module. This provides:
+ * - Zero localStorage usage (eliminates XSS theft risk)
+ * - Deterministic key generation from wallet signature
+ * - True ownership proof (wallet required for key access)
+ *
+ * To get encryption keys, use:
+ *   import { getOrDeriveKeys } from './key-derivation';
+ *   const keys = await getOrDeriveKeys(wallet, publicKey);
+ *
+ * See: frontend/src/utils/key-derivation.ts
+ */

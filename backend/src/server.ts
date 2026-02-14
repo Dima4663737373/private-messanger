@@ -4,7 +4,7 @@ import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
 import { createServer } from 'http';
 import { WebSocketServer, WebSocket } from 'ws';
-import { initDB, Message, Profile, SyncStatus, Reaction, Room, RoomMember, RoomMessage, PinnedMessage, sequelize } from './database';
+import { initDB, Message, Profile, SyncStatus, Reaction, Room, RoomMember, RoomMessage, PinnedMessage, UserPreferences, sequelize } from './database';
 import { v4 as uuidv4 } from 'uuid';
 import { IndexerService } from './services/indexer';
 import { Op } from 'sequelize';
@@ -22,18 +22,27 @@ app.use(helmet({
 }));
 
 // CORS — restrict to known origins (localhost dev + configurable production)
-const ALLOWED_ORIGINS = (process.env.CORS_ORIGINS || 'http://localhost:3000,http://localhost:5173').split(',').map(s => s.trim());
+const ALLOWED_ORIGINS = (process.env.CORS_ORIGINS || 'http://localhost:3000,http://localhost:3001,http://localhost:5173').split(',').map(s => s.trim());
+const IS_PRODUCTION = process.env.NODE_ENV === 'production';
+
 app.use(cors({
   origin: (origin, callback) => {
-    // Allow requests with no origin (mobile apps, curl, etc) in dev
+    // In production, REQUIRE origin header (no-origin requests blocked)
+    if (!origin && IS_PRODUCTION) {
+      callback(new Error('Origin header required'));
+      return;
+    }
+
+    // Allow requests with no origin in dev only (curl, mobile apps, etc)
     if (!origin || ALLOWED_ORIGINS.includes(origin)) {
       callback(null, true);
     } else {
       callback(new Error('Not allowed by CORS'));
     }
   },
-  methods: ['GET', 'POST', 'DELETE'],
-  allowedHeaders: ['Content-Type']
+  methods: ['GET', 'POST', 'DELETE', 'PATCH'],
+  allowedHeaders: ['Content-Type'],
+  credentials: true
 }));
 
 // Global rate limiter: 200 requests per 15 minutes per IP
@@ -105,6 +114,7 @@ function broadcastToRoom(roomId: string, msg: object, exclude?: WebSocket) {
 wss.on('connection', (ws: any) => {
   ws._msgTimestamps = [] as number[];
   ws.subscribedRooms = new Set<string>();
+  ws.authenticated = false; // Require authentication before subscribing
 
   ws.on('message', async (message: any) => {
     try {
@@ -118,6 +128,28 @@ wss.on('connection', (ws: any) => {
       ws._msgTimestamps.push(now);
 
       const data = JSON.parse(message.toString());
+
+      // AUTH message — authenticate the connection
+      if (data.type === 'AUTH') {
+        const { address } = data;
+        if (!address || !isValidAddress(address)) {
+          ws.send(JSON.stringify({ type: 'AUTH_FAILED', message: 'Invalid address' }));
+          return;
+        }
+
+        // Authenticate (in production, verify signature here)
+        ws.authenticated = true;
+        ws.authenticatedAddress = address;
+        ws.send(JSON.stringify({ type: 'AUTH_SUCCESS', address }));
+        return;
+      }
+
+      // Require authentication for all other operations
+      if (!ws.authenticated) {
+        ws.send(JSON.stringify({ type: 'error', message: 'Authentication required. Send AUTH message first.' }));
+        return;
+      }
+
       if (data.type === 'SUBSCRIBE') {
         if (data.addressHash && typeof data.addressHash === 'string' && isValidHash(data.addressHash)) {
           ws.subscribedAddress = data.address;
@@ -412,9 +444,9 @@ app.get('/profiles/:address', async (req, res) => {
     });
 
     if (profile) {
-      res.json(profile);
+      res.json({ exists: true, profile });
     } else {
-      res.status(404).json({ error: 'Profile not found' });
+      res.status(404).json({ exists: false, profile: null });
     }
   } catch (e) {
     console.error('GET /profiles/:address error:', e);
@@ -459,21 +491,127 @@ app.post('/profiles', profileWriteLimiter, async (req, res) => {
       return res.status(400).json({ error: 'address is required' });
     }
 
-    // Validate name/bio length
-    const safeName = typeof name === 'string' ? name.slice(0, 100) : undefined;
-    const safeBio = typeof bio === 'string' ? bio.slice(0, 500) : undefined;
+    // Build update data — only include non-empty fields to avoid overwriting
+    const data: any = { address };
 
-    await Profile.upsert({
-      address,
-      username: safeName,
-      bio: safeBio,
-      tx_id: typeof txId === 'string' ? txId.slice(0, 200) : undefined,
-      encryption_public_key: typeof encryptionPublicKey === 'string' ? encryptionPublicKey.slice(0, 500) : undefined
-    });
+    if (typeof name === 'string' && name.length > 0) {
+      data.username = name.slice(0, 100);
+    }
+    if (typeof bio === 'string' && bio.length > 0) {
+      data.bio = bio.slice(0, 500);
+    }
+    if (typeof txId === 'string' && txId.length > 0) {
+      data.tx_id = txId.slice(0, 200);
+    }
+    if (typeof encryptionPublicKey === 'string' && encryptionPublicKey.length > 0) {
+      data.encryption_public_key = encryptionPublicKey.slice(0, 500);
+    }
+
+    await Profile.upsert(data);
     res.json({ success: true });
   } catch (e) {
     console.error('POST /profiles error:', e);
     res.status(500).json({ error: 'Profile update failed' });
+  }
+});
+
+// --- User Preferences ---
+
+// Rate limiter for preferences
+const preferencesLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 20,
+  message: { error: 'Preferences rate limit exceeded' }
+});
+
+// GET /preferences/:address — get user preferences
+app.get('/preferences/:address', preferencesLimiter, async (req, res) => {
+  try {
+    const address = req.params.address as string;
+    if (!isValidAddress(address)) {
+      return res.status(400).json({ error: 'Invalid address' });
+    }
+
+    const prefs = await UserPreferences.findByPk(address);
+    if (!prefs) {
+      // Return defaults if no preferences stored
+      return res.json({
+        address,
+        pinned_chats: [],
+        muted_chats: [],
+        deleted_chats: [],
+        disappear_timers: {},
+        encrypted_keys: null,
+        key_nonce: null
+      });
+    }
+
+    res.json({
+      address: prefs.address,
+      pinned_chats: JSON.parse(prefs.pinned_chats || '[]'),
+      muted_chats: JSON.parse(prefs.muted_chats || '[]'),
+      deleted_chats: JSON.parse(prefs.deleted_chats || '[]'),
+      disappear_timers: JSON.parse(prefs.disappear_timers || '{}'),
+      encrypted_keys: prefs.encrypted_keys ? JSON.parse(prefs.encrypted_keys) : null,
+      key_nonce: prefs.key_nonce
+    });
+  } catch (e) {
+    console.error('GET /preferences error:', e);
+    res.status(500).json({ error: 'Failed to fetch preferences' });
+  }
+});
+
+// POST /preferences/:address — update user preferences
+app.post('/preferences/:address', preferencesLimiter, async (req, res) => {
+  try {
+    const address = req.params.address as string;
+    if (!isValidAddress(address)) {
+      return res.status(400).json({ error: 'Invalid address' });
+    }
+
+    const { pinnedChats, mutedChats, deletedChats, disappearTimers, encryptedKeys, keyNonce } = req.body;
+
+    // Validate and stringify JSON fields
+    const data: any = { address };
+
+    if (pinnedChats !== undefined) {
+      if (!Array.isArray(pinnedChats)) return res.status(400).json({ error: 'pinnedChats must be array' });
+      data.pinned_chats = JSON.stringify(pinnedChats.slice(0, 100));
+    }
+
+    if (mutedChats !== undefined) {
+      if (!Array.isArray(mutedChats)) return res.status(400).json({ error: 'mutedChats must be array' });
+      data.muted_chats = JSON.stringify(mutedChats.slice(0, 100));
+    }
+
+    if (deletedChats !== undefined) {
+      if (!Array.isArray(deletedChats)) return res.status(400).json({ error: 'deletedChats must be array' });
+      data.deleted_chats = JSON.stringify(deletedChats.slice(0, 100));
+    }
+
+    if (disappearTimers !== undefined) {
+      if (typeof disappearTimers !== 'object' || disappearTimers === null) {
+        return res.status(400).json({ error: 'disappearTimers must be object' });
+      }
+      data.disappear_timers = JSON.stringify(disappearTimers);
+    }
+
+    if (encryptedKeys !== undefined) {
+      data.encrypted_keys = typeof encryptedKeys === 'string'
+        ? encryptedKeys.slice(0, 5000)
+        : JSON.stringify(encryptedKeys).slice(0, 5000);
+    }
+
+    if (keyNonce !== undefined) {
+      data.key_nonce = typeof keyNonce === 'string' ? keyNonce.slice(0, 200) : null;
+    }
+
+    await UserPreferences.upsert(data);
+
+    res.json({ success: true });
+  } catch (e) {
+    console.error('POST /preferences error:', e);
+    res.status(500).json({ error: 'Failed to update preferences' });
   }
 });
 
@@ -667,7 +805,18 @@ app.post('/messages/:id/edit', async (req, res) => {
 async function withMemberCount(rooms: any[]): Promise<any[]> {
   return Promise.all(rooms.map(async (r: any) => {
     const count = await RoomMember.count({ where: { room_id: r.id } });
-    return { ...r.toJSON(), memberCount: count };
+    // Fetch last message for sidebar preview
+    const lastMsg = await RoomMessage.findOne({
+      where: { room_id: r.id },
+      order: [['timestamp', 'DESC']],
+      limit: 1
+    });
+    return {
+      ...r.toJSON(),
+      memberCount: count,
+      lastMessage: lastMsg ? lastMsg.text : null,
+      lastMessageTime: lastMsg ? lastMsg.timestamp : null
+    };
   }));
 }
 

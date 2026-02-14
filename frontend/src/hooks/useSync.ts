@@ -2,7 +2,8 @@ import { hashAddress } from '../utils/aleo-utils';
 import { useEffect, useRef, useState } from 'react';
 import { Message, Room } from '../types';
 import { fieldToString, fieldsToString } from '../utils/messageUtils';
-import { getOrCreateMessagingKeys, encryptMessage } from '../utils/crypto';
+import { encryptMessage, KeyPair } from '../utils/crypto';
+import { getCachedKeys } from '../utils/key-derivation';
 import { toast } from 'react-hot-toast';
 import { API_CONFIG } from '../config';
 import { safeBackendFetch } from '../utils/api-client';
@@ -75,7 +76,8 @@ export function useSync(
       if (!address) return fieldToString(payload);
 
       try {
-        const myKeys = getOrCreateMessagingKeys(address);
+        const myKeys = getCachedKeys(address);
+        if (!myKeys) return fieldToString(payload); // Keys not yet derived
         const isMine = sender === address;
         const otherParty = isMine ? recipient : sender;
         
@@ -141,18 +143,13 @@ export function useSync(
         ws.current = socket;
 
         socket.onopen = () => {
-          logger.debug('WS Connected');
-          setIsConnected(true);
+          logger.debug('WS Connected - Authenticating...');
           reconnectDelay = 1000; // Reset backoff on successful connect
+
+          // Step 1: Authenticate with server before subscribing
           if (socket.readyState === WebSocket.OPEN) {
-             try {
-                 const addressHash = hashAddress(address);
-                 socket.send(JSON.stringify({ type: 'SUBSCRIBE', address, addressHash }));
-             } catch (e) {
-                 logger.error("Failed to hash address for WS subscription:", e);
-                 // Try sending without hash (server might reject or just default to address-only logic)
-                 socket.send(JSON.stringify({ type: 'SUBSCRIBE', address }));
-             }
+             socket.send(JSON.stringify({ type: 'AUTH', address }));
+             // Note: setIsConnected(true) will be called after AUTH_SUCCESS
           }
         };
 
@@ -160,6 +157,29 @@ export function useSync(
           try {
             const data = JSON.parse(event.data);
             const { onNewMessage, onMessageDeleted, onMessageUpdated } = callbacksRef.current;
+
+            // WebSocket Authentication Response
+            if (data.type === 'AUTH_SUCCESS') {
+              logger.debug('WS Authenticated successfully');
+              setIsConnected(true);
+              // Step 2: Subscribe to channels after successful auth
+              try {
+                const addressHash = hashAddress(address);
+                socket.send(JSON.stringify({ type: 'SUBSCRIBE', address, addressHash }));
+              } catch (e) {
+                logger.error("Failed to hash address for WS subscription:", e);
+                socket.send(JSON.stringify({ type: 'SUBSCRIBE', address }));
+              }
+              return;
+            }
+
+            if (data.type === 'AUTH_FAILED') {
+              logger.error('WS Authentication failed:', data.message);
+              toast.error('WebSocket authentication failed');
+              setIsConnected(false);
+              socket.close();
+              return;
+            }
 
             // Reaction update — broadcast from backend
             if (data.type === 'REACTION_UPDATE') {
@@ -553,16 +573,16 @@ export function useSync(
   
   const notifyProfileUpdate = async (name: string, bio: string, txId: string) => {
     if (!address) return;
-    const keys = getOrCreateMessagingKeys(address);
+    const keys = getCachedKeys(address);
     
     await safeBackendFetch('profiles', {
       method: 'POST',
-      body: { 
-          address, 
-          name, 
-          bio, 
+      body: {
+          address,
+          name,
+          bio,
           txId,
-          encryptionPublicKey: keys.publicKey 
+          encryptionPublicKey: keys?.publicKey || ''
       }
     });
   };
@@ -611,7 +631,9 @@ export function useSync(
     if (!data || !Array.isArray(data)) return [];
     return data.map((r: any) => ({
       id: r.id, name: r.name, createdBy: r.created_by,
-      isPrivate: r.is_private, type: r.type, memberCount: r.memberCount || 0
+      isPrivate: r.is_private, type: r.type, memberCount: r.memberCount || 0,
+      lastMessage: r.lastMessage || undefined,
+      lastMessageTime: r.lastMessageTime ? String(r.lastMessageTime) : undefined
     }));
   };
 
@@ -722,24 +744,25 @@ export function useSync(
 
   // --- Off-chain DM API ---
 
-  const sendDMMessage = async (recipientAddress: string, text: string, attachmentCID?: string): Promise<{ tempId: string; encryptedPayload: string; timestamp: number } | null> => {
+  // Prepare encrypted payload without sending (for wallet-first flow)
+  const prepareDMMessage = async (recipientAddress: string, text: string, attachmentCID?: string): Promise<{ tempId: string; encryptedPayload: string; encryptedPayloadSelf: string; timestamp: number; senderHash: string; recipientHash: string; dialogHash: string } | null> => {
     if (!ws.current || ws.current.readyState !== WebSocket.OPEN || !address) return null;
 
-    const myKeys = getOrCreateMessagingKeys(address);
+    const myKeys = getCachedKeys(address);
+    if (!myKeys) { logger.error('Encryption keys not available'); return null; }
     const senderHash = hashAddress(address);
     const recipientHash = hashAddress(recipientAddress);
 
-    // Canonical dialog hash (sorted)
     const dialogHash = senderHash < recipientHash
       ? `${senderHash}_${recipientHash}`
       : `${recipientHash}_${senderHash}`;
 
-    // Fetch recipient's encryption public key
+    // Fetch recipient's encryption public key from profile
     let recipientPubKey = '';
     try {
       const { data } = await safeBackendFetch<any>(`profiles/${recipientAddress}`);
-      if (data && data.encryption_public_key) {
-        recipientPubKey = data.encryption_public_key;
+      if (data && data.exists && data.profile && data.profile.encryption_public_key) {
+        recipientPubKey = data.profile.encryption_public_key;
       }
     } catch { /* ignore */ }
 
@@ -748,28 +771,42 @@ export function useSync(
 
     if (recipientPubKey) {
       encryptedPayload = encryptMessage(text, recipientPubKey, myKeys.secretKey);
-      // Encrypt for self (so sender can read their own sent messages)
       encryptedPayloadSelf = encryptMessage(text, myKeys.publicKey, myKeys.secretKey);
+    } else {
+      logger.warn('No encryption key for recipient — sending plaintext via WS');
     }
 
     const tempId = `temp_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
     const timestamp = Date.now();
 
+    return { tempId, encryptedPayload, encryptedPayloadSelf, timestamp, senderHash, recipientHash, dialogHash };
+  };
+
+  // Actually send the prepared message via WebSocket
+  const commitDMMessage = (prepared: NonNullable<Awaited<ReturnType<typeof prepareDMMessage>>>, attachmentCID?: string) => {
+    if (!ws.current || ws.current.readyState !== WebSocket.OPEN || !address) return;
+
     ws.current.send(JSON.stringify({
       type: 'DM_MESSAGE',
       sender: address,
-      senderHash,
-      recipientHash,
-      dialogHash,
-      encryptedPayload,
-      encryptedPayloadSelf,
-      timestamp,
+      senderHash: prepared.senderHash,
+      recipientHash: prepared.recipientHash,
+      dialogHash: prepared.dialogHash,
+      encryptedPayload: prepared.encryptedPayload,
+      encryptedPayloadSelf: prepared.encryptedPayloadSelf,
+      timestamp: prepared.timestamp,
       attachmentPart1: attachmentCID || '',
       attachmentPart2: '',
-      tempId
+      tempId: prepared.tempId
     }));
+  };
 
-    return { tempId, encryptedPayload, timestamp };
+  // Legacy combined function (prepare + send in one call)
+  const sendDMMessage = async (recipientAddress: string, text: string, attachmentCID?: string): Promise<{ tempId: string; encryptedPayload: string; timestamp: number } | null> => {
+    const prepared = await prepareDMMessage(recipientAddress, text, attachmentCID);
+    if (!prepared) return null;
+    commitDMMessage(prepared, attachmentCID);
+    return { tempId: prepared.tempId, encryptedPayload: prepared.encryptedPayload, timestamp: prepared.timestamp };
   };
 
   const deleteDMMessage = async (msgId: string) => {
@@ -782,14 +819,15 @@ export function useSync(
   const editDMMessage = async (msgId: string, newText: string, recipientAddress: string) => {
     if (!address) return;
 
-    const myKeys = getOrCreateMessagingKeys(address);
+    const myKeys = getCachedKeys(address);
+    if (!myKeys) { logger.error('Encryption keys not available for edit'); return; }
 
-    // Fetch recipient's encryption public key
+    // Fetch recipient's encryption public key from profile
     let recipientPubKey = '';
     try {
       const { data } = await safeBackendFetch<any>(`profiles/${recipientAddress}`);
-      if (data && data.encryption_public_key) {
-        recipientPubKey = data.encryption_public_key;
+      if (data && data.exists && data.profile && data.profile.encryption_public_key) {
+        recipientPubKey = data.profile.encryption_public_key;
       }
     } catch { /* ignore */ }
 
@@ -869,6 +907,8 @@ export function useSync(
     deleteRoomMessage,
     editRoomMessage,
     // Off-chain DM
+    prepareDMMessage,
+    commitDMMessage,
     sendDMMessage,
     deleteDMMessage,
     editDMMessage,

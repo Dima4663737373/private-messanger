@@ -271,6 +271,53 @@ PinnedMessage.init({
   ],
 });
 
+// ── User Preferences ──────────────────────
+
+export class UserPreferences extends Model {
+  declare address: string;
+  declare pinned_chats: string; // JSON array
+  declare muted_chats: string; // JSON array
+  declare deleted_chats: string; // JSON array
+  declare disappear_timers: string; // JSON object
+  declare encrypted_keys: string | null; // JSON object with publicKey/secretKey
+  declare key_nonce: string | null;
+}
+
+UserPreferences.init({
+  address: {
+    type: DataTypes.STRING,
+    primaryKey: true,
+  },
+  pinned_chats: {
+    type: DataTypes.TEXT,
+    defaultValue: '[]',
+  },
+  muted_chats: {
+    type: DataTypes.TEXT,
+    defaultValue: '[]',
+  },
+  deleted_chats: {
+    type: DataTypes.TEXT,
+    defaultValue: '[]',
+  },
+  disappear_timers: {
+    type: DataTypes.TEXT,
+    defaultValue: '{}',
+  },
+  encrypted_keys: {
+    type: DataTypes.TEXT,
+    allowNull: true,
+  },
+  key_nonce: {
+    type: DataTypes.STRING,
+    allowNull: true,
+  },
+}, {
+  sequelize,
+  modelName: 'UserPreferences',
+  timestamps: true,
+});
+
 export const initDB = async () => {
   await sequelize.sync({ alter: true });
   const status = await SyncStatus.findOne();

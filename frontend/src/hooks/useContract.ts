@@ -9,7 +9,8 @@ import { requestTransactionWithRetry } from '../utils/walletUtils';
 import { logger } from '../utils/logger';
 import { stringToFields } from '../utils/messageUtils';
 import { hashAddress } from '../utils/aleo-utils';
-import { getOrCreateMessagingKeys, encryptMessage } from '../utils/crypto';
+import { encryptMessage } from '../utils/crypto';
+import { getCachedKeys } from '../utils/key-derivation';
 import { API_CONFIG } from '../config';
 
 const BACKEND_URL = API_CONFIG.BACKEND_BASE;
@@ -86,8 +87,9 @@ export function useContract() {
   ) => {
     if (!publicKey) throw new Error("Wallet not connected");
     
-    // Ensure we have keys
-    const keys = getOrCreateMessagingKeys(publicKey);
+    // Get encryption keys from session cache (derived from wallet signature)
+    const keys = getCachedKeys(publicKey);
+    if (!keys) throw new Error("Encryption keys not available. Please reconnect wallet.");
     
     // Split public key (base64) into two fields
     const keyFields = stringToFields(keys.publicKey, 2);
@@ -183,7 +185,8 @@ export function useContract() {
 
       // Encrypt new text for Recipient
       // We need recipient's public key
-      const senderKeys = getOrCreateMessagingKeys(publicKey);
+      const senderKeys = getCachedKeys(publicKey);
+      if (!senderKeys) throw new Error("Encryption keys not available.");
       let recipientPubKey = '';
       try {
         const res = await fetch(`${BACKEND_URL}/profiles/${recipientAddress}`);

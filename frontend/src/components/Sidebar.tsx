@@ -294,11 +294,20 @@ const Sidebar: React.FC<SidebarProps> = ({
                   <Hash size={16} className="text-[#FF8C00]" />
                 </div>
                 <div className="flex-1 min-w-0">
-                  <h3 className="text-sm font-bold text-[#E5E5E5] truncate">
-                    {pinnedIds.includes(ch.id) && <Pin size={10} className="inline mr-1 text-[#FF8C00]" />}
-                    {ch.name}
-                  </h3>
-                  <p className="text-[10px] text-[#666]">{ch.memberCount || 0} members</p>
+                  <div className="flex items-center justify-between mb-0.5">
+                    <h3 className="text-sm font-bold text-[#E5E5E5] truncate">
+                      {pinnedIds.includes(ch.id) && <Pin size={10} className="inline mr-1 text-[#FF8C00]" />}
+                      {ch.name}
+                    </h3>
+                    {ch.lastMessageTime && (
+                      <span className="text-[10px] text-[#666] font-mono shrink-0 ml-2">
+                        {new Date(Number(ch.lastMessageTime)).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                      </span>
+                    )}
+                  </div>
+                  <p className="text-xs text-[#888] truncate font-light">
+                    {ch.lastMessage || `${ch.memberCount || 0} members`}
+                  </p>
                 </div>
               </div>
             ))}
@@ -319,11 +328,20 @@ const Sidebar: React.FC<SidebarProps> = ({
                   <Lock size={16} className="text-[#FF8C00]" />
                 </div>
                 <div className="flex-1 min-w-0">
-                  <h3 className="text-sm font-bold text-[#E5E5E5] truncate">
-                    {pinnedIds.includes(gr.id) && <Pin size={10} className="inline mr-1 text-[#FF8C00]" />}
-                    {gr.name}
-                  </h3>
-                  <p className="text-[10px] text-[#666]">{gr.memberCount || 0} members</p>
+                  <div className="flex items-center justify-between mb-0.5">
+                    <h3 className="text-sm font-bold text-[#E5E5E5] truncate">
+                      {pinnedIds.includes(gr.id) && <Pin size={10} className="inline mr-1 text-[#FF8C00]" />}
+                      {gr.name}
+                    </h3>
+                    {gr.lastMessageTime && (
+                      <span className="text-[10px] text-[#666] font-mono shrink-0 ml-2">
+                        {new Date(Number(gr.lastMessageTime)).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                      </span>
+                    )}
+                  </div>
+                  <p className="text-xs text-[#888] truncate font-light">
+                    {gr.lastMessage || `${gr.memberCount || 0} members`}
+                  </p>
                 </div>
               </div>
             ))}
