@@ -1,5 +1,6 @@
 import { API_CONFIG } from '../config';
 import { logger } from './logger';
+import { getSessionToken } from './auth-store';
 
 interface SafeFetchOptions {
   method?: string;
@@ -41,10 +42,12 @@ export async function safeBackendFetch<T>(
       const controller = new AbortController();
       const id = setTimeout(() => controller.abort(), timeout);
 
+      const token = getSessionToken();
       const res = await fetch(url, {
         method,
         headers: {
           'Content-Type': 'application/json',
+          ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
           ...headers
         },
         body: body ? JSON.stringify(body) : undefined,

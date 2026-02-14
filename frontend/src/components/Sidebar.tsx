@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect, useRef } from 'react';
-import { Search, Settings, Wallet, Users, MessageSquare, Plus, Ghost, ShieldCheck, LogOut, Radio, Hash, Lock, User, ExternalLink, Eye, Pin, BellOff, Archive, Trash2, Edit2 } from 'lucide-react';
+import { Search, Settings, Wallet, Users, MessageSquare, Plus, Ghost, ShieldCheck, LogOut, Radio, Hash, Lock, User, ExternalLink, Eye, Pin, BellOff, Bell, Archive, Trash2, Edit2 } from 'lucide-react';
 import { Spinner } from './ui/Spinner';
 import { Chat, AppView, Room, RoomType, ChatContextAction } from '../types';
 import Avatar from './Avatar';
@@ -28,6 +28,10 @@ interface SidebarProps {
   onContextAction?: (action: ChatContextAction, id: string, type: 'chat' | 'channel' | 'group', newName?: string) => void;
   pinnedIds?: string[];
   mutedIds?: string[];
+  avatarColor?: string;
+  username?: string;
+  unreadNotifications?: number;
+  showOnlineStatus?: boolean;
 }
 
 const Sidebar: React.FC<SidebarProps> = ({
@@ -52,7 +56,11 @@ const Sidebar: React.FC<SidebarProps> = ({
   onFabClick,
   onContextAction,
   pinnedIds = [],
-  mutedIds = []
+  mutedIds = [],
+  avatarColor,
+  username,
+  unreadNotifications = 0,
+  showOnlineStatus = true
 }) => {
   const [searchQuery, setSearchQuery] = useState('');
   const [navHovered, setNavHovered] = useState(false);
@@ -131,10 +139,10 @@ const Sidebar: React.FC<SidebarProps> = ({
 
   const showListPanel = currentView === 'chats' || currentView === 'channels' || currentView === 'groups';
 
-  const NavItem = ({ icon, view, label }: { icon: React.ReactNode, view: AppView, label: string }) => (
+  const NavItem = ({ icon, view, label, badge }: { icon: React.ReactNode, view: AppView, label: string, badge?: number }) => (
     <button
       onClick={() => onSetView(view)}
-      className={`flex items-center rounded-xl transition-all whitespace-nowrap ${
+      className={`relative flex items-center rounded-xl transition-all whitespace-nowrap ${
         navHovered ? 'w-full gap-3 px-3 py-2.5' : 'w-10 h-10 justify-center mx-auto'
       } ${
         currentView === view
@@ -145,6 +153,11 @@ const Sidebar: React.FC<SidebarProps> = ({
     >
       <span className="shrink-0 flex items-center justify-center">{icon}</span>
       <span className={`text-sm font-medium truncate transition-[opacity,max-width] duration-300 ${navHovered ? 'opacity-100 max-w-[120px]' : 'opacity-0 max-w-0'} overflow-hidden`}>{label}</span>
+      {badge && badge > 0 && (
+        <span className={`absolute ${navHovered ? 'right-2' : '-top-0.5 -right-0.5'} min-w-[18px] h-[18px] bg-red-500 text-white text-[10px] font-bold rounded-full flex items-center justify-center px-1`}>
+          {badge > 99 ? '99+' : badge}
+        </span>
+      )}
     </button>
   );
 
@@ -154,12 +167,13 @@ const Sidebar: React.FC<SidebarProps> = ({
     <div
       className={`fixed lg:relative z-50 h-screen flex transition-transform duration-300 ease-in-out ${isOpen ? 'translate-x-0 pointer-events-auto' : '-translate-x-full lg:translate-x-0 pointer-events-none lg:pointer-events-auto'}`}
     >
-      {/* Column 1: Navigation Bar — icons only, expands on hover */}
-      <div
-        onMouseEnter={() => setNavHovered(true)}
-        onMouseLeave={() => setNavHovered(false)}
-        className={`${navHovered ? 'w-[200px]' : 'w-[60px]'} transition-[width] duration-300 ease-in-out bg-[#0A0A0A] border-r border-[#1A1A1A] flex flex-col py-4 ${navHovered ? 'px-3' : 'px-2'} shrink-0 overflow-hidden`}
-      >
+      {/* Column 1: Navigation Bar — fixed 60px base, expands as overlay on hover */}
+      <div className="w-[60px] shrink-0 relative z-20">
+        <div
+          onMouseEnter={() => setNavHovered(true)}
+          onMouseLeave={() => setNavHovered(false)}
+          className={`absolute top-0 left-0 h-full ${navHovered ? 'w-[200px]' : 'w-[60px]'} transition-[width] duration-300 ease-in-out bg-[#0A0A0A] border-r border-[#1A1A1A] flex flex-col py-4 ${navHovered ? 'px-3' : 'px-2'} overflow-hidden`}
+        >
         {/* Ghost Logo */}
         <div className={`flex items-center mb-6 whitespace-nowrap ${navHovered ? 'gap-3 px-1' : 'justify-center'}`}>
           <div className="w-10 h-10 bg-[#FF8C00] rounded-xl flex items-center justify-center shadow-[0_0_20px_rgba(255,140,0,0.3)] shrink-0">
@@ -174,6 +188,7 @@ const Sidebar: React.FC<SidebarProps> = ({
           <NavItem icon={<Radio size={18} />} view="channels" label="Channels" />
           <NavItem icon={<Users size={18} />} view="groups" label="Groups" />
           <NavItem icon={<User size={18} />} view="contacts" label="Contacts" />
+          <NavItem icon={<Bell size={18} />} view="notifications" label="Notifications" badge={unreadNotifications} />
           <NavItem icon={<Settings size={18} />} view="settings" label="Settings" />
         </div>
 
@@ -182,11 +197,20 @@ const Sidebar: React.FC<SidebarProps> = ({
         {/* Wallet Section */}
         {isWalletConnected ? (
           <div className={`border-t border-[#1A1A1A] pt-3 mt-3 overflow-hidden whitespace-nowrap ${navHovered ? '' : 'flex flex-col items-center'}`}>
-            <div className={`flex items-center ${navHovered ? 'gap-3 px-1 mb-2' : 'w-10 h-10 justify-center rounded-xl bg-[#1A1A1A] mb-2'}`}>
-              <div className="w-2 h-2 bg-[#10B981] rounded-full animate-pulse shrink-0" />
-              <span className={`text-[#666] font-mono text-xs truncate transition-[opacity,max-width] duration-300 ${navHovered ? 'opacity-100 max-w-[140px]' : 'opacity-0 max-w-0'} overflow-hidden`}>
-                {publicKey ? `${publicKey.slice(0, 8)}...${publicKey.slice(-4)}` : ''}
-              </span>
+            <div className={`flex items-center ${navHovered ? 'gap-3 px-1 mb-2' : 'justify-center mb-2'}`}>
+              <div
+                className="w-10 h-10 rounded-xl flex items-center justify-center text-white text-sm font-bold shrink-0 relative"
+                style={{ backgroundColor: avatarColor || '#FF8C00' }}
+              >
+                {username ? username.slice(0, 2).toUpperCase() : publicKey ? publicKey.slice(0, 2).toUpperCase() : '?'}
+                {showOnlineStatus && <div className="absolute -bottom-0.5 -right-0.5 w-3 h-3 bg-[#10B981] rounded-full border-2 border-[#0A0A0A]" />}
+              </div>
+              <div className={`flex flex-col transition-[opacity,max-width] duration-300 ${navHovered ? 'opacity-100 max-w-[140px]' : 'opacity-0 max-w-0'} overflow-hidden`}>
+                {username && <span className="text-white text-sm font-bold truncate">{username}</span>}
+                <span className="text-[#666] font-mono text-xs truncate">
+                  {publicKey ? `${publicKey.slice(0, 8)}...${publicKey.slice(-4)}` : ''}
+                </span>
+              </div>
             </div>
             <div className={`flex items-center ${navHovered ? 'justify-between px-1' : 'justify-center'}`}>
               <span className={`text-[#FF8C00] font-mono text-xs font-bold transition-[opacity,max-width] duration-300 ${navHovered ? 'opacity-100 max-w-[100px]' : 'opacity-0 max-w-0'} overflow-hidden`}>
@@ -218,11 +242,14 @@ const Sidebar: React.FC<SidebarProps> = ({
             )}
           </button>
         )}
+        </div>
       </div>
 
-      {/* Column 2: List Panel (only for chats/channels/groups) */}
-      {showListPanel && (
-        <div className="w-[280px] bg-[#0A0A0A] border-r border-[#1A1A1A] flex flex-col h-screen relative">
+      {/* Column 2: List Panel — outer clips, inner stays 280px (no reflow) */}
+      <div className={`shrink-0 h-screen overflow-hidden transition-[width,opacity] duration-300 ease-in-out ${
+        showListPanel ? 'w-[280px] opacity-100' : 'w-0 opacity-0 pointer-events-none'
+      }`}>
+        <div className="w-[280px] min-w-[280px] h-full bg-[#0A0A0A] border-r border-[#1A1A1A] flex flex-col relative">
           {/* Panel Header */}
           <div className="p-4 pb-2">
             <div className="flex items-center justify-between mb-3">
@@ -320,7 +347,7 @@ const Sidebar: React.FC<SidebarProps> = ({
             </button>
           )}
         </div>
-      )}
+      </div>
 
       {/* Rename Modal */}
       {renameTarget && (

@@ -12,6 +12,7 @@ import { hashAddress } from '../utils/aleo-utils';
 import { encryptMessage } from '../utils/crypto';
 import { getCachedKeys } from '../utils/key-derivation';
 import { API_CONFIG } from '../config';
+import { safeBackendFetch } from '../utils/api-client';
 
 const BACKEND_URL = API_CONFIG.BACKEND_BASE;
 
@@ -102,15 +103,14 @@ export function useContract() {
 
     // Push profile + Public Key to backend (for easier discovery by address)
     // Note: On-chain we only have hash->key. Backend helps map address->hash->key.
+    // Uses safeBackendFetch for automatic auth token injection
     try {
-        await fetch(`${BACKEND_URL}/profiles`, {
+        await safeBackendFetch('/profiles', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                address: publicKey,
+            body: {
                 encryptionPublicKey: keys.publicKey,
                 txId
-            })
+            }
         });
     } catch (e) {
         logger.error("Failed to push profile metadata", e);
@@ -189,10 +189,9 @@ export function useContract() {
       if (!senderKeys) throw new Error("Encryption keys not available.");
       let recipientPubKey = '';
       try {
-        const res = await fetch(`${BACKEND_URL}/profiles/${recipientAddress}`);
-        if (res.ok) {
-           const profile = await res.json();
-           recipientPubKey = profile.encryption_public_key;
+        const { data } = await safeBackendFetch<any>(`/profiles/${recipientAddress}`);
+        if (data?.profile?.encryption_public_key) {
+           recipientPubKey = data.profile.encryption_public_key;
         }
       } catch (e) {
         logger.warn("Could not fetch recipient profile for encryption key");
@@ -261,6 +260,22 @@ export function useContract() {
     return await executeTransaction('send_message', inputs, options);
   };
 
+  /**
+   * Wallet proof-of-authorization — uses register_profile as an on-chain
+   * proof that the wallet owner consciously approved a destructive action
+   * (clear history, delete chat, etc.). The contract is @noupgrade, so
+   * we reuse an existing idempotent transition.
+   */
+  const requestWalletProof = async (options?: ExecuteTransactionOptions) => {
+    if (!publicKey) throw new Error("Wallet not connected");
+
+    const keys = getCachedKeys(publicKey);
+    if (!keys) throw new Error("Encryption keys not available. Please reconnect wallet.");
+
+    const keyFields = stringToFields(keys.publicKey, 2);
+    return await executeTransaction('register_profile', [keyFields[0], keyFields[1]], options);
+  };
+
   return {
     loading,
     error,
@@ -270,5 +285,6 @@ export function useContract() {
     editMessage,
     findRecordByTimestamp,
     executeTransaction,
+    requestWalletProof,
   };
 }

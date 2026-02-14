@@ -5,18 +5,15 @@
  * This is a one-time migration for users who have data stored in the old
  * localStorage-based system.
  *
- * Migration includes:
- * - Pinned chats
- * - Muted chats
- * - Deleted chats
- * - Disappear timers
+ * Migration status is tracked on the backend (preferences.migrated field),
+ * NOT in localStorage — ensuring zero local storage usage.
  *
  * Security Note:
  * Encryption keys (ghost_msg_keys_*) are NOT migrated - they will be
  * regenerated from wallet signature using the new key-derivation system.
  */
 
-import { updatePreferences } from './preferences-api';
+import { fetchPreferences, updatePreferences } from './preferences-api';
 import { logger } from './logger';
 
 export interface LegacyData {
@@ -28,18 +25,25 @@ export interface LegacyData {
 }
 
 /**
- * Check if migration is needed for this wallet
+ * Check if migration is needed for this wallet (via backend flag)
  */
-export function needsMigration(publicKey: string): boolean {
-  const migrationKey = `ghost_migrated_${publicKey}`;
-  return !localStorage.getItem(migrationKey);
+async function checkMigrationNeeded(publicKey: string): Promise<boolean> {
+  try {
+    const prefs = await fetchPreferences(publicKey);
+    return !prefs.migrated;
+  } catch {
+    return true; // If fetch fails, assume migration needed
+  }
 }
 
 /**
- * Extract all legacy localStorage data for a wallet
+ * Extract all legacy localStorage data for a wallet (if any exists)
  */
-export function extractLegacyData(publicKey: string): LegacyData | null {
+function extractLegacyData(publicKey: string): LegacyData | null {
   try {
+    // If localStorage is not available (SSR, etc.), skip
+    if (typeof localStorage === 'undefined') return null;
+
     const pinnedChats = JSON.parse(localStorage.getItem(`ghost_pinned_${publicKey}`) || '[]');
     const mutedChats = JSON.parse(localStorage.getItem(`ghost_muted_${publicKey}`) || '[]');
     const deletedChats = JSON.parse(localStorage.getItem(`ghost_deleted_chats_${publicKey}`) || '[]');
@@ -85,7 +89,7 @@ export function extractLegacyData(publicKey: string): LegacyData | null {
 /**
  * Upload legacy data to backend
  */
-export async function uploadLegacyData(publicKey: string, data: LegacyData): Promise<boolean> {
+async function uploadLegacyData(publicKey: string, data: LegacyData): Promise<boolean> {
   try {
     const updates: Parameters<typeof updatePreferences>[1] = {
       pinnedChats: data.pinnedChats,
@@ -94,10 +98,8 @@ export async function uploadLegacyData(publicKey: string, data: LegacyData): Pro
       disappearTimers: data.disappearTimers
     };
 
-    // Also migrate encryption keys to backend
-    if (data.encryptionKeys) {
-      updates.encryptedKeys = data.encryptionKeys;
-    }
+    // Note: encryption keys are no longer migrated to backend — they are now
+    // derived from wallet signature per session for security
 
     const success = await updatePreferences(publicKey, updates);
 
@@ -105,7 +107,7 @@ export async function uploadLegacyData(publicKey: string, data: LegacyData): Pro
       throw new Error('Backend update failed');
     }
 
-    logger.debug('Successfully uploaded legacy data to backend:', data);
+    logger.debug('Successfully uploaded legacy data to backend');
     return true;
   } catch (error) {
     logger.error('Failed to upload legacy data:', error);
@@ -114,15 +116,18 @@ export async function uploadLegacyData(publicKey: string, data: LegacyData): Pro
 }
 
 /**
- * Clean up old localStorage keys after successful migration
+ * Clean up ALL localStorage keys for this wallet
  */
-export function cleanupLegacyStorage(publicKey: string) {
+function cleanupAllLocalStorage(publicKey: string) {
+  if (typeof localStorage === 'undefined') return;
+
   const keysToRemove = [
     `ghost_pinned_${publicKey}`,
     `ghost_muted_${publicKey}`,
     `ghost_deleted_chats_${publicKey}`,
     `ghost_disappear_${publicKey}`,
-    `ghost_msg_keys_${publicKey}`, // CRITICAL: Remove old encryption keys
+    `ghost_msg_keys_${publicKey}`,
+    `ghost_migrated_${publicKey}`, // Old migration flag itself
   ];
 
   for (const key of keysToRemove) {
@@ -133,24 +138,13 @@ export function cleanupLegacyStorage(publicKey: string) {
     }
   }
 
-  logger.debug('Cleaned up legacy localStorage keys');
-}
-
-/**
- * Mark migration as complete for this wallet
- */
-export function markMigrationComplete(publicKey: string) {
-  const migrationKey = `ghost_migrated_${publicKey}`;
-  try {
-    localStorage.setItem(migrationKey, new Date().toISOString());
-    logger.debug('Migration marked as complete');
-  } catch (error) {
-    logger.warn('Failed to mark migration complete:', error);
-  }
+  logger.debug('Cleaned up all legacy localStorage keys');
 }
 
 /**
  * Main migration function - call this on wallet connect
+ *
+ * Migration status is tracked on the backend, not in localStorage.
  *
  * @param publicKey - User's Aleo address
  * @returns Promise<boolean> - true if migration was performed (or not needed)
@@ -161,19 +155,21 @@ export async function migrateLegacyPreferences(publicKey: string): Promise<boole
     return false;
   }
 
-  // Check if already migrated
-  if (!needsMigration(publicKey)) {
-    logger.debug('Migration not needed - already completed');
+  // Check migration status on backend
+  const needsMigration = await checkMigrationNeeded(publicKey);
+  if (!needsMigration) {
+    // Already migrated — still clean up any leftover localStorage keys
+    cleanupAllLocalStorage(publicKey);
     return true;
   }
 
-  // Extract legacy data
+  // Extract legacy data from localStorage
   const legacyData = extractLegacyData(publicKey);
 
   if (!legacyData) {
-    // No data to migrate, but mark as migrated to avoid future checks
-    logger.debug('No legacy data found - marking as migrated');
-    markMigrationComplete(publicKey);
+    // No data to migrate — mark as migrated on backend and clean up
+    await updatePreferences(publicKey, { migrated: true });
+    cleanupAllLocalStorage(publicKey);
     return true;
   }
 
@@ -185,20 +181,12 @@ export async function migrateLegacyPreferences(publicKey: string): Promise<boole
     return false;
   }
 
-  // Clean up old storage
-  cleanupLegacyStorage(publicKey);
+  // Mark as migrated on backend
+  await updatePreferences(publicKey, { migrated: true });
 
-  // Mark as complete
-  markMigrationComplete(publicKey);
+  // Clean up all localStorage
+  cleanupAllLocalStorage(publicKey);
 
-  logger.info('✅ Successfully migrated preferences to backend');
+  logger.info('Successfully migrated preferences to backend');
   return true;
-}
-
-/**
- * Force re-migration (useful for debugging or if migration failed)
- */
-export function resetMigrationStatus(publicKey: string) {
-  localStorage.removeItem(`ghost_migrated_${publicKey}`);
-  logger.info('Migration status reset - will re-migrate on next connect');
 }

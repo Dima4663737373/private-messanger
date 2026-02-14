@@ -1,10 +1,25 @@
 import { Sequelize, DataTypes, Model } from 'sequelize';
 import path from 'path';
 
+// SQLCipher encryption: set DB_ENCRYPTION_KEY env var to enable
+// If not set, falls back to unencrypted sqlite3
+const DB_ENCRYPTION_KEY = process.env.DB_ENCRYPTION_KEY;
+
+let dialectModule: any;
+if (DB_ENCRYPTION_KEY) {
+  try {
+    dialectModule = require('@journeyapps/sqlcipher');
+    console.log('[DB] SQLCipher module loaded — encryption will be enabled');
+  } catch {
+    console.warn('[DB] DB_ENCRYPTION_KEY set but @journeyapps/sqlcipher not installed — running unencrypted');
+  }
+}
+
 const sequelize = new Sequelize({
   dialect: 'sqlite',
   storage: path.join(__dirname, '../database.sqlite'),
   logging: false,
+  ...(dialectModule ? { dialectModule } : {}),
 });
 
 export class SyncStatus extends Model {
@@ -143,12 +158,13 @@ Message.init({
     allowNull: true,
   },
 }, { 
-  sequelize, 
+  sequelize,
   modelName: 'Message',
   indexes: [
     { fields: ['dialog_hash'] },
     { fields: ['sender_hash'] },
-    { fields: ['recipient_hash'] }
+    { fields: ['recipient_hash'] },
+    { unique: true, fields: ['sender_hash', 'recipient_hash', 'timestamp'], name: 'msg_dedup_idx' }
   ]
 });
 
@@ -246,6 +262,33 @@ RoomMessage.init({
   indexes: [{ fields: ['room_id'] }],
 });
 
+// ── Room Encryption Keys ──────────────────────
+
+export class RoomKey extends Model {
+  declare id: number;
+  declare room_id: string;
+  declare user_address: string;
+  declare encrypted_room_key: string; // NaCl box encrypted symmetric key
+  declare nonce: string;
+  declare sender_public_key: string; // Public key of the user who encrypted this entry
+}
+
+RoomKey.init({
+  id: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
+  room_id: { type: DataTypes.STRING, allowNull: false },
+  user_address: { type: DataTypes.STRING, allowNull: false },
+  encrypted_room_key: { type: DataTypes.TEXT, allowNull: false },
+  nonce: { type: DataTypes.STRING, allowNull: false },
+  sender_public_key: { type: DataTypes.STRING, allowNull: false },
+}, {
+  sequelize,
+  modelName: 'RoomKey',
+  indexes: [
+    { unique: true, fields: ['room_id', 'user_address'] },
+    { fields: ['room_id'] }
+  ],
+});
+
 // ── Pinned Messages ──────────────────────
 
 export class PinnedMessage extends Model {
@@ -281,6 +324,8 @@ export class UserPreferences extends Model {
   declare disappear_timers: string; // JSON object
   declare encrypted_keys: string | null; // JSON object with publicKey/secretKey
   declare key_nonce: string | null;
+  declare settings: string; // JSON object — toggleable user settings
+  declare migrated: boolean; // Whether localStorage migration is complete
 }
 
 UserPreferences.init({
@@ -312,6 +357,14 @@ UserPreferences.init({
     type: DataTypes.STRING,
     allowNull: true,
   },
+  settings: {
+    type: DataTypes.TEXT,
+    defaultValue: '{}',
+  },
+  migrated: {
+    type: DataTypes.BOOLEAN,
+    defaultValue: false,
+  },
 }, {
   sequelize,
   modelName: 'UserPreferences',
@@ -319,6 +372,12 @@ UserPreferences.init({
 });
 
 export const initDB = async () => {
+  // Apply SQLCipher encryption key before any other DB operations
+  if (DB_ENCRYPTION_KEY && dialectModule) {
+    await sequelize.query(`PRAGMA key = '${DB_ENCRYPTION_KEY.replace(/'/g, "''")}'`);
+    console.log('[DB] SQLCipher PRAGMA key applied');
+  }
+
   await sequelize.sync({ alter: true });
   const status = await SyncStatus.findOne();
   if (!status) {

@@ -1,200 +1,206 @@
 /**
- * Key Derivation from Wallet Transaction Signatures
+ * Encryption Key Derivation & Management
  *
- * This module provides secure encryption key generation by deriving keys from
- * Aleo wallet transaction signatures instead of storing them in localStorage.
+ * Strategy (ordered by preference):
+ * 1. Try wallet.signMessage() — deterministic, same wallet = same keys (future Leo Wallet support)
+ * 2. Try to restore from encrypted backup on backend (passphrase-protected)
+ * 3. Generate fresh random keypair (session-only unless backed up)
  *
- * Security Benefits:
- * - Keys are deterministically derived from wallet signature
- * - No storage of private keys (eliminates XSS theft risk)
- * - Same wallet always generates same encryption keys
- * - Requires wallet connection every session (trade-off for security)
+ * Security:
+ * - Secret keys never stored in plaintext (no localStorage, no unencrypted backend)
+ * - Passphrase-encrypted backup enables cross-device recovery (opt-in)
+ * - Session cache only (Map in memory)
  */
 
 import nacl from 'tweetnacl';
-import { encodeBase64, decodeUTF8 } from 'tweetnacl-util';
+import { encodeBase64, decodeBase64, decodeUTF8 } from 'tweetnacl-util';
+import { generateKeyPair } from './crypto';
 
 export interface EncryptionKeyPair {
   publicKey: string;  // Base64-encoded
   secretKey: string;  // Base64-encoded
 }
 
-/**
- * Derive encryption keypair from wallet transaction signature
- *
- * Process:
- * 1. Request a dummy transaction signature from the wallet
- * 2. Extract signature bytes
- * 3. Derive 32-byte seed using SHA-256(signature + publicKey)
- * 4. Generate NaCl box keypair from seed
- *
- * @param wallet - Leo Wallet instance (window.leoWallet)
- * @param publicKey - User's Aleo address
- * @returns Promise<EncryptionKeyPair> - Deterministic encryption keys
- */
-export async function deriveKeysFromWalletSignature(
-  wallet: any,
-  publicKey: string
-): Promise<EncryptionKeyPair> {
-  if (!wallet || !publicKey) {
-    throw new Error('Wallet and publicKey are required');
-  }
+// --- Session Cache with TTL ---
 
-  try {
-    // Request a deterministic transaction for signature generation
-    // Using a fixed "derivation transaction" that doesn't need to be broadcast
-    const derivationPayload = {
-      address: publicKey,
-      chainId: 'testnetbeta',
-      program: 'credits.aleo', // Standard program, no actual transaction will be sent
-      functionName: 'transfer_public', // Standard function
-      inputs: [
-        publicKey, // Send to self
-        '0u64'     // 0 amount (dummy)
-      ],
-      fee: 0, // No fee for derivation-only transaction
-      wait: false // Don't wait for confirmation
-    };
+const KEY_CACHE_TTL = 4 * 60 * 60 * 1000; // 4 hours
 
-    // Request transaction to get signature
-    // Note: This will trigger wallet popup asking user to sign
-    let txResponse;
-    try {
-      txResponse = await wallet.requestTransaction(derivationPayload);
-    } catch (e: any) {
-      // User might cancel - this is expected behavior
-      if (e?.message?.includes('cancel') || e?.message?.includes('denied')) {
-        throw new Error('User cancelled key derivation. Wallet signature is required to generate encryption keys.');
-      }
-      throw e;
-    }
-
-    // Extract signature from transaction response
-    // Leo Wallet returns transaction ID or signature in different formats
-    let signatureSource = '';
-
-    if (typeof txResponse === 'string') {
-      // If it's a transaction ID string, use it
-      signatureSource = txResponse;
-    } else if (txResponse?.signature) {
-      signatureSource = txResponse.signature;
-    } else if (txResponse?.transactionId) {
-      signatureSource = txResponse.transactionId;
-    } else {
-      // Fallback: stringify the entire response
-      signatureSource = JSON.stringify(txResponse);
-    }
-
-    // Create deterministic seed from signature + publicKey
-    // This ensures the same wallet always generates the same keys
-    const seedInput = signatureSource + publicKey;
-    const seedBytes = decodeUTF8(seedInput);
-
-    // Derive 32-byte seed using SHA-256
-    const seedHash = await crypto.subtle.digest('SHA-256', seedBytes);
-    const seed = new Uint8Array(seedHash);
-
-    // Generate NaCl box keypair from the derived seed
-    // nacl.box.keyPair.fromSecretKey requires exactly 32 bytes
-    const keypair = nacl.box.keyPair.fromSecretKey(seed);
-
-    return {
-      publicKey: encodeBase64(keypair.publicKey),
-      secretKey: encodeBase64(keypair.secretKey)
-    };
-  } catch (error: any) {
-    console.error('Key derivation failed:', error);
-    throw new Error(`Failed to derive encryption keys: ${error.message || 'Unknown error'}`);
-  }
+interface CachedEntry {
+  keys: EncryptionKeyPair;
+  expiresAt: number;
 }
 
-/**
- * Alternative: Derive keys from a signed message (if wallet supports signMessage)
- *
- * Note: As of 2026-02, Leo Wallet Adapter doesn't expose signMessage(),
- * so this is a future-proofing fallback for when it becomes available.
- */
-export async function deriveKeysFromSignedMessage(
-  wallet: any,
-  publicKey: string
-): Promise<EncryptionKeyPair> {
-  if (!wallet.signMessage) {
-    throw new Error('Wallet does not support signMessage. Use deriveKeysFromWalletSignature instead.');
-  }
+const sessionKeyCache = new Map<string, CachedEntry>();
 
-  const message = `Ghost Messenger - Derive encryption keys for ${publicKey}`;
-
-  try {
-    const signature = await wallet.signMessage(message);
-
-    // Derive seed from signature
-    const seedBytes = decodeUTF8(signature + publicKey);
-    const seedHash = await crypto.subtle.digest('SHA-256', seedBytes);
-    const seed = new Uint8Array(seedHash);
-
-    const keypair = nacl.box.keyPair.fromSecretKey(seed);
-
-    return {
-      publicKey: encodeBase64(keypair.publicKey),
-      secretKey: encodeBase64(keypair.secretKey)
-    };
-  } catch (error: any) {
-    console.error('Message signing failed:', error);
-    throw new Error(`Failed to sign message: ${error.message || 'Unknown error'}`);
-  }
-}
-
-/**
- * Cache derived keys in memory for the session (optional)
- *
- * This prevents requiring wallet signature on every encryption operation
- * within the same session. Keys are NOT persisted to localStorage.
- */
-const sessionKeyCache = new Map<string, EncryptionKeyPair>();
-
-export async function getOrDeriveKeys(
-  wallet: any,
-  publicKey: string,
-  useCache: boolean = true
-): Promise<EncryptionKeyPair> {
-  if (useCache && sessionKeyCache.has(publicKey)) {
-    return sessionKeyCache.get(publicKey)!;
-  }
-
-  const keys = await deriveKeysFromWalletSignature(wallet, publicKey);
-
-  if (useCache) {
-    sessionKeyCache.set(publicKey, keys);
-  }
-
-  return keys;
-}
-
-/**
- * Synchronous getter for cached keys (used by useSync and other hooks)
- *
- * Returns cached keys if available, or null if keys haven't been derived yet.
- * This allows synchronous access to keys that were previously derived async.
- */
 export function getCachedKeys(publicKey: string): EncryptionKeyPair | null {
-  return sessionKeyCache.get(publicKey) || null;
+  const entry = sessionKeyCache.get(publicKey);
+  if (!entry) return null;
+  if (Date.now() > entry.expiresAt) {
+    sessionKeyCache.delete(publicKey);
+    return null;
+  }
+  return entry.keys;
 }
 
-/**
- * Store keys directly in the session cache
- * (Useful when keys are derived externally and need to be shared)
- */
 export function setCachedKeys(publicKey: string, keys: EncryptionKeyPair): void {
-  sessionKeyCache.set(publicKey, keys);
+  sessionKeyCache.set(publicKey, { keys, expiresAt: Date.now() + KEY_CACHE_TTL });
 }
 
-/**
- * Clear session cache (e.g., on logout)
- */
 export function clearKeyCache(publicKey?: string) {
   if (publicKey) {
     sessionKeyCache.delete(publicKey);
   } else {
     sessionKeyCache.clear();
+  }
+}
+
+// Periodic cleanup of expired cache entries (every 30 min)
+setInterval(() => {
+  const now = Date.now();
+  for (const [key, entry] of sessionKeyCache) {
+    if (now > entry.expiresAt) sessionKeyCache.delete(key);
+  }
+}, 30 * 60 * 1000);
+
+// --- Key Derivation ---
+
+/**
+ * Derive a NaCl keypair from arbitrary seed bytes using SHA-256
+ */
+async function seedToKeypair(seedInput: string): Promise<EncryptionKeyPair> {
+  const seedBytes = decodeUTF8(seedInput);
+  const seedHash = await crypto.subtle.digest('SHA-256', seedBytes);
+  const seed = new Uint8Array(seedHash);
+  const keypair = nacl.box.keyPair.fromSecretKey(seed);
+  return {
+    publicKey: encodeBase64(keypair.publicKey),
+    secretKey: encodeBase64(keypair.secretKey)
+  };
+}
+
+/**
+ * Try to derive keys from wallet signMessage (deterministic).
+ * Only works if wallet adapter exposes signMessage().
+ *
+ * @returns EncryptionKeyPair or null if signMessage not supported
+ */
+async function trySignMessageDerivation(
+  wallet: any,
+  publicKey: string
+): Promise<EncryptionKeyPair | null> {
+  // Check if adapter supports signMessage
+  const adapter = wallet?.adapter || wallet;
+  if (!adapter?.signMessage) return null;
+
+  try {
+    const message = new TextEncoder().encode(
+      `Ghost Messenger - Derive encryption keys for ${publicKey}`
+    );
+    const signature: Uint8Array = await adapter.signMessage(message);
+    const signatureB64 = encodeBase64(signature);
+    return await seedToKeypair(signatureB64 + publicKey);
+  } catch (e: any) {
+    // User cancelled or signMessage not actually implemented
+    if (e?.message?.includes('cancel') || e?.message?.includes('denied')) {
+      throw e; // Re-throw user cancellation
+    }
+    console.warn('signMessage derivation failed:', e?.message);
+    return null;
+  }
+}
+
+/**
+ * Main entry point: get or derive encryption keys.
+ *
+ * Priority:
+ * 1. Return from cache if available
+ * 2. Try signMessage-based derivation (deterministic)
+ * 3. Generate random keypair (session-only)
+ *
+ * @param wallet - Leo Wallet adapter instance
+ * @param publicKey - User's Aleo address
+ */
+export async function getOrDeriveKeys(
+  wallet: any,
+  publicKey: string,
+  useCache: boolean = true
+): Promise<EncryptionKeyPair> {
+  if (useCache) {
+    const cached = getCachedKeys(publicKey);
+    if (cached) return cached;
+  }
+
+  // 1. Try signMessage derivation (deterministic, future-proof)
+  try {
+    const derived = await trySignMessageDerivation(wallet, publicKey);
+    if (derived) {
+      if (useCache) setCachedKeys(publicKey, derived);
+      return derived;
+    }
+  } catch (e: any) {
+    // User cancelled — don't fall through, propagate
+    if (e?.message?.includes('cancel') || e?.message?.includes('denied')) {
+      throw e;
+    }
+  }
+
+  // 2. signMessage not available — generate random keys
+  const keys = generateKeyPair();
+  if (useCache) setCachedKeys(publicKey, keys);
+  return keys;
+}
+
+// --- Passphrase-based Key Backup & Recovery ---
+
+/**
+ * Encrypt keypair with a user passphrase for backend storage.
+ * Uses NaCl secretbox with SHA-256(passphrase + address) as key.
+ */
+export async function encryptKeysWithPassphrase(
+  keys: EncryptionKeyPair,
+  passphrase: string,
+  address: string
+): Promise<{ encrypted: string; nonce: string }> {
+  const keyMaterial = await crypto.subtle.digest(
+    'SHA-256',
+    decodeUTF8(passphrase + address)
+  );
+  const secretKey = new Uint8Array(keyMaterial);
+  const nonce = nacl.randomBytes(nacl.secretbox.nonceLength);
+  const plaintext = decodeUTF8(JSON.stringify(keys));
+  const encrypted = nacl.secretbox(plaintext, nonce, secretKey);
+  return {
+    encrypted: encodeBase64(encrypted),
+    nonce: encodeBase64(nonce)
+  };
+}
+
+/**
+ * Decrypt keypair from backend backup using passphrase.
+ */
+export async function decryptKeysWithPassphrase(
+  encryptedB64: string,
+  nonceB64: string,
+  passphrase: string,
+  address: string
+): Promise<EncryptionKeyPair | null> {
+  try {
+    const keyMaterial = await crypto.subtle.digest(
+      'SHA-256',
+      decodeUTF8(passphrase + address)
+    );
+    const secretKey = new Uint8Array(keyMaterial);
+    const nonce = decodeBase64(nonceB64);
+    const encrypted = decodeBase64(encryptedB64);
+    const decrypted = nacl.secretbox.open(encrypted, nonce, secretKey);
+    if (!decrypted) return null;
+    const json = new TextDecoder().decode(decrypted);
+    const parsed = JSON.parse(json);
+    if (parsed.publicKey && parsed.secretKey) {
+      return { publicKey: parsed.publicKey, secretKey: parsed.secretKey };
+    }
+    return null;
+  } catch {
+    return null;
   }
 }

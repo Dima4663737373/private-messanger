@@ -7,13 +7,14 @@ import Sidebar from './components/Sidebar';
 import ChatArea from './components/ChatArea';
 import LandingPage from './components/LandingPage';
 import Preloader from './components/Preloader';
-import { AppView, Chat, Message, Contact, DisappearTimer, DISAPPEAR_TIMERS, Room, RoomType, ChatContextAction } from './types';
+import { AppView, Chat, Message, Contact, DisappearTimer, DISAPPEAR_TIMERS, Room, RoomType, ChatContextAction, AppNotification } from './types';
 import { uploadFileToIPFS } from './utils/ipfs';
 import { hashAddress } from './utils/aleo-utils';
 import { getAccountBalance } from './utils/aleo-rpc';
 import { logger } from './utils/logger';
 import ContactsView from './components/ContactsView';
 import SettingsView from './components/SettingsView';
+import NotificationsView from './components/NotificationsView';
 import { Toaster, toast } from 'react-hot-toast';
 import { mapErrorToUserMessage } from './utils/errors';
 import { TransactionProgress } from './components/ui/TransactionProgress';
@@ -24,6 +25,7 @@ import { migrateLegacyPreferences } from './utils/migrate-localStorage';
 import { setCachedKeys, clearKeyCache, getCachedKeys } from './utils/key-derivation';
 import { generateKeyPair } from './utils/crypto';
 import { fetchPreferences, updatePreferences } from './utils/preferences-api';
+import { playNotificationSound } from './utils/notification-sound';
 // lucide icons removed - FAB is now in Sidebar
 import ProfileView from './components/ProfileView';
 
@@ -41,7 +43,7 @@ const mapContactToChat = (contact: Contact, isActive: boolean): Chat => ({
 
 const InnerApp: React.FC = () => {
   const { publicKey, wallet, requestTransaction, disconnect, select, wallets } = useWallet();
-  const { executeTransaction, sendMessageOnChain, registerProfile: registerProfileOnChain, deleteMessage: deleteMessageOnChain, editMessage: editMessageOnChain, loading: contractLoading } = useContract();
+  const { executeTransaction, sendMessageOnChain, registerProfile: registerProfileOnChain, deleteMessage: deleteMessageOnChain, editMessage: editMessageOnChain, requestWalletProof, loading: contractLoading } = useContract();
 
   // User Preferences (replaces localStorage)
   const {
@@ -54,7 +56,9 @@ const InnerApp: React.FC = () => {
     toggleMute,
     markChatDeleted,
     setDisappearTimer: setDisappearTimerApi,
-    isLoaded: preferencesLoaded
+    isLoaded: preferencesLoaded,
+    settings: userSettings,
+    updateSetting
   } = usePreferences(publicKey);
 
   // Contacts State - In-Memory Only (Declared first to avoid ReferenceError)
@@ -62,6 +66,14 @@ const InnerApp: React.FC = () => {
 
   // Track processed message IDs for deduplication
   const processedMsgIds = useRef<Set<string>>(new Set());
+
+  // Ref to access current settings inside memoized callbacks
+  const settingsRef = useRef(userSettings);
+  settingsRef.current = userSettings;
+
+  // Ref to access activeChatId and sendReadReceipt inside memoized handleNewMessage
+  const activeChatIdRef = useRef<string | null>(null);
+  const sendReadReceiptRef = useRef<(dialogHash: string, messageIds: string[]) => void>(() => {});
 
   const [activeChatId, setActiveChatId] = useState<string | null>(null);
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
@@ -99,7 +111,23 @@ const InnerApp: React.FC = () => {
 
   // Pins State (contextId -> pinned message objects)
   const [pinnedMessages, setPinnedMessages] = useState<Record<string, any[]>>({});
-  
+
+  // Notifications inbox
+  const [notifications, setNotifications] = useState<AppNotification[]>([]);
+
+  const pushNotification = React.useCallback((type: AppNotification['type'], title: string, body: string, chatId?: string) => {
+    const notif: AppNotification = {
+      id: `notif_${Date.now()}_${Array.from(crypto.getRandomValues(new Uint8Array(4)), b => b.toString(36)).join('').slice(0, 6)}`,
+      type,
+      title,
+      body,
+      timestamp: Date.now(),
+      read: false,
+      chatId,
+    };
+    setNotifications(prev => [notif, ...prev].slice(0, 200)); // Keep max 200
+  }, []);
+
   // SYNC
   const handleNewMessage = React.useCallback((msg: Message & { recipient?: string, recipientHash?: string, dialogHash?: string }) => {
     // Determine counterparty
@@ -117,15 +145,31 @@ const InnerApp: React.FC = () => {
     processedMsgIds.current.add(msg.id);
 
     // Toast & notification only for new messages (not duplicates)
-    if (!isDuplicate) {
+    if (!isDuplicate && settingsRef.current.notifEnabled) {
       toast(`New message ${msg.isMine ? 'sent' : 'received'}`, { icon: '📨' });
+
+      // Play notification sound if enabled
+      if (!msg.isMine && settingsRef.current.notifSound) {
+        playNotificationSound();
+      }
+
+      // Push to notification center for incoming messages
+      if (!msg.isMine) {
+        const preview = settingsRef.current.notifPreview
+          ? (msg.text.length > 80 ? msg.text.slice(0, 80) + '...' : msg.text)
+          : 'New encrypted message';
+        pushNotification('message', 'New message', preview, counterpartyAddress);
+      }
 
       // Browser Notification when tab is not focused
       if (!msg.isMine && document.hidden && Notification.permission === 'granted') {
+        const body = settingsRef.current.notifPreview
+          ? (msg.text.length > 60 ? msg.text.slice(0, 60) + '...' : msg.text)
+          : 'New encrypted message';
         new Notification('Ghost Messenger', {
-          body: msg.text.length > 60 ? msg.text.slice(0, 60) + '...' : msg.text,
+          body,
           icon: '/ghost-icon.png',
-          tag: msg.id // Prevents duplicate notifications
+          tag: msg.id
         });
       }
     }
@@ -191,14 +235,19 @@ const InnerApp: React.FC = () => {
            return { ...prev, [contactId]: updatedList };
        }
 
+       // Send read receipt if this chat is currently active and message is from counterparty
+       if (!msg.isMine && contactId === activeChatIdRef.current && settingsRef.current.readReceipts && msg.dialogHash) {
+         sendReadReceiptRef.current(msg.dialogHash, [msg.id]);
+       }
+
        return {
          ...prev,
          [contactId]: [...current, msg]
        };
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    // Uses functional updates for state (no stale closures). syncProfile is stable by behavior.
-  }, []);
+    // Uses functional updates for state (no stale closures). syncProfile and pushNotification are stable.
+  }, [pushNotification]);
 
   const handleMessageDeleted = React.useCallback((msgId: string) => {
       setHistories(prev => {
@@ -335,7 +384,31 @@ const InnerApp: React.FC = () => {
     });
   }, []);
 
-  const { isConnected: isSyncConnected, typingUsers, notifyProfileUpdate, searchProfiles, fetchMessages, fetchDialogs, fetchDialogMessages, syncProfile, cacheDecryptedMessage, sendTyping, addReaction, removeReaction, fetchRooms, createRoom, deleteRoom: deleteRoomApi, renameRoom: renameRoomApi, joinRoom, leaveRoom, fetchRoomInfo, fetchRoomMessages, sendRoomMessage, subscribeRoom, sendRoomTyping, clearDMHistory, deleteRoomMessage, editRoomMessage, prepareDMMessage, commitDMMessage, sendDMMessage, deleteDMMessage, editDMMessage, fetchPins, pinMessage, unpinMessage } = useSync(publicKey, handleNewMessage, handleMessageDeleted, handleMessageUpdated, handleReactionUpdate, handleRoomMessage, handleRoomCreated, handleRoomDeleted, handleDMCleared, handlePinUpdate, handleRoomMessageDeleted, handleRoomMessageEdited, handleDMSent);
+  // Read receipt — mark our sent messages as "read" when counterparty reads them
+  const handleReadReceipt = React.useCallback((dialogHash: string, messageIds: string[]) => {
+    setHistories(prev => {
+      let changed = false;
+      const next = { ...prev };
+      for (const chatId in next) {
+        const msgs = next[chatId];
+        const updated = msgs.map(m => {
+          if (messageIds.includes(m.id) && m.isMine && m.status !== 'read') {
+            changed = true;
+            return { ...m, status: 'read' as const };
+          }
+          return m;
+        });
+        if (changed) next[chatId] = updated;
+      }
+      return changed ? next : prev;
+    });
+  }, []);
+
+  const { isConnected: isSyncConnected, typingUsers, notifyProfileUpdate, searchProfiles, fetchMessages, fetchDialogs, fetchDialogMessages, syncProfile, cacheDecryptedMessage, sendTyping, sendReadReceipt, addReaction, removeReaction, fetchRooms, createRoom, deleteRoom: deleteRoomApi, renameRoom: renameRoomApi, joinRoom, leaveRoom, fetchRoomInfo, fetchRoomMessages, sendRoomMessage, subscribeRoom, sendRoomTyping, clearDMHistory, deleteRoomMessage, editRoomMessage, prepareDMMessage, commitDMMessage, sendDMMessage, deleteDMMessage, editDMMessage, fetchPins, pinMessage, unpinMessage } = useSync(publicKey, handleNewMessage, handleMessageDeleted, handleMessageUpdated, handleReactionUpdate, handleRoomMessage, handleRoomCreated, handleRoomDeleted, handleDMCleared, handlePinUpdate, handleRoomMessageDeleted, handleRoomMessageEdited, handleDMSent, handleReadReceipt);
+
+  // Keep refs in sync for use inside memoized callbacks
+  activeChatIdRef.current = activeChatId;
+  sendReadReceiptRef.current = sendReadReceipt;
 
   // Disappearing Messages — per-chat timer wrapper with toast notification
   const setDisappearTimer = (chatId: string, timer: DisappearTimer) => {
@@ -382,27 +455,29 @@ const InnerApp: React.FC = () => {
         logger.error('Migration failed:', err);
       }
 
-      // 0.5. Initialize encryption keys — load from backend or generate once
+      // 0.5. Initialize encryption keys
+      // Priority: cached > signMessage derivation > passphrase recovery > generate new
       if (!getCachedKeys(publicKey)) {
         try {
-          const prefs = await fetchPreferences(publicKey);
-          if (prefs.encrypted_keys && prefs.encrypted_keys.publicKey && prefs.encrypted_keys.secretKey) {
-            setCachedKeys(publicKey, {
-              publicKey: prefs.encrypted_keys.publicKey,
-              secretKey: prefs.encrypted_keys.secretKey
-            });
-            logger.debug('Loaded encryption keys from backend');
-          } else {
-            // First time — generate keys and store on backend
-            const keys = generateKeyPair();
-            setCachedKeys(publicKey, keys);
-            await updatePreferences(publicKey, {
-              encryptedKeys: { publicKey: keys.publicKey, secretKey: keys.secretKey }
-            });
-            logger.debug('Generated and saved new encryption keys');
-          }
+          const { getOrDeriveKeys, decryptKeysWithPassphrase } = await import('./utils/key-derivation');
+
+          // Try wallet-based derivation (signMessage if available, else random)
+          const keys = await getOrDeriveKeys(wallet, publicKey);
+          setCachedKeys(publicKey, keys);
+          logger.debug('Encryption keys initialized');
+
+          // Try to restore from passphrase backup if keys were randomly generated
+          // (signMessage not available → keys are non-deterministic)
+          try {
+            const prefs = await fetchPreferences(publicKey);
+            if (prefs && (prefs as any).encrypted_keys && (prefs as any).key_nonce) {
+              // Backend has a passphrase-encrypted backup — user can recover via Settings
+              logger.debug('Passphrase-encrypted key backup available on backend');
+            }
+          } catch { /* ignore — preferences may not be available yet */ }
         } catch (err) {
-          logger.error('Key init error, using session keys:', err);
+          // Fallback: generate session keys (user may have cancelled wallet popup)
+          logger.warn('Key derivation failed, generating session keys:', err);
           const keys = generateKeyPair();
           setCachedKeys(publicKey, keys);
         }
@@ -424,6 +499,9 @@ const InnerApp: React.FC = () => {
 
       // 2. Sync Dialogs (keys are now guaranteed to be cached)
       await loadDialogs();
+
+      // Push a system notification for session start
+      pushNotification('system', 'Connected', 'Encrypted session established. Keys loaded.');
     };
 
     const loadDialogs = async () => {
@@ -560,17 +638,25 @@ const InnerApp: React.FC = () => {
   useEffect(() => {
     if (!activeChatId || !publicKey || !activeDialogHash) return;
 
-    fetchDialogMessages(activeDialogHash, { limit: 50 }).then(msgs => {
+    fetchDialogMessages(activeDialogHash, { limit: 100 }).then(msgs => {
       if (msgs && msgs.length > 0) {
+        const sorted = msgs.sort((a, b) => a.timestamp - b.timestamp);
         setHistories(prev => ({
           ...prev,
-          [activeChatId]: msgs.sort((a, b) => a.timestamp - b.timestamp)
+          [activeChatId]: sorted
         }));
+        // Send read receipts for unread messages from counterparty (if readReceipts enabled)
+        if (settingsRef.current.readReceipts) {
+          const unreadIds = sorted.filter(m => !m.isMine && m.status !== 'read').map(m => m.id);
+          if (unreadIds.length > 0) {
+            sendReadReceipt(activeDialogHash, unreadIds);
+          }
+        }
       }
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
     // fetchDialogMessages is from useSync — stable by behavior
-  }, [activeChatId, activeDialogHash, publicKey]); 
+  }, [activeChatId, activeDialogHash, publicKey]);
 
 
   const handleConnectWallet = async () => {
@@ -712,6 +798,7 @@ const InnerApp: React.FC = () => {
       if (txId) {
         logger.debug('On-chain message txId:', txId);
         toast.success('Message sent');
+        pushNotification('transaction', 'Transaction confirmed', `Message sent on-chain (${txId.slice(0, 12)}...)`);
       }
     } catch (error) {
       logger.error("Failed to send message", error);
@@ -956,12 +1043,37 @@ const InnerApp: React.FC = () => {
     if (!activeChatId) return;
     const contact = contacts.find(c => c.id === activeChatId);
     if (!contact?.dialogHash) return;
+
+    // Require wallet transaction proof before destructive action
+    toast.loading('Waiting for wallet approval...', { id: 'clear-dm-proof' });
+    try {
+      await requestWalletProof();
+      toast.dismiss('clear-dm-proof');
+    } catch (e: any) {
+      toast.dismiss('clear-dm-proof');
+      logger.error('Clear history cancelled:', e?.message);
+      toast.error('Clear history cancelled: wallet not approved');
+      return;
+    }
+
     await clearDMHistory(contact.dialogHash);
     setHistories(prev => ({ ...prev, [activeChatId!]: [] }));
-    toast.success('Chat history cleared');
+    toast.success('Chat history cleared (on-chain proof recorded)');
   };
 
-  const handleDeleteChat = (chatId: string) => {
+  const handleDeleteChat = async (chatId: string) => {
+    // Require wallet transaction proof before destructive action
+    toast.loading('Waiting for wallet approval...', { id: 'delete-chat-proof' });
+    try {
+      await requestWalletProof();
+      toast.dismiss('delete-chat-proof');
+    } catch (e: any) {
+      toast.dismiss('delete-chat-proof');
+      logger.error('Delete chat cancelled:', e?.message);
+      toast.error('Delete chat cancelled: wallet not approved');
+      return;
+    }
+
     // Remove contact from state
     setContacts(prev => prev.filter(c => c.id !== chatId));
     // Clear history
@@ -974,8 +1086,32 @@ const InnerApp: React.FC = () => {
     if (activeChatId === chatId) setActiveChatId(null);
     // Mark as deleted in backend preferences
     markChatDeleted(chatId);
-    // Contacts are in-memory only — markChatDeleted above persists to backend
-    toast.success('Chat deleted');
+    toast.success('Chat deleted (on-chain proof recorded)');
+  };
+
+  const handleClearAllConversations = async () => {
+    // Require wallet transaction proof
+    toast.loading('Waiting for wallet approval...', { id: 'clear-all-proof' });
+    try {
+      await requestWalletProof();
+      toast.dismiss('clear-all-proof');
+    } catch (e: any) {
+      toast.dismiss('clear-all-proof');
+      logger.error('Clear all cancelled:', e?.message);
+      toast.error('Clear all cancelled: wallet not approved');
+      return;
+    }
+
+    // Clear all conversations via backend
+    for (const contact of contacts) {
+      if (contact.dialogHash) {
+        try { await clearDMHistory(contact.dialogHash); } catch {}
+      }
+    }
+    setContacts([]);
+    setHistories({});
+    setActiveChatId(null);
+    toast.success('All conversations cleared (on-chain proof recorded)');
   };
 
   // --- Sidebar Context Menu Handler ---
@@ -1279,6 +1415,10 @@ const InnerApp: React.FC = () => {
         onContextAction={handleContextAction}
         pinnedIds={pinnedChatIds}
         mutedIds={mutedChatIds}
+        avatarColor={userSettings.avatarColor}
+        username={myProfile?.username}
+        unreadNotifications={notifications.filter(n => !n.read).length}
+        showOnlineStatus={userSettings.showOnlineStatus}
       />
       
       <main className="flex-1 flex overflow-hidden relative z-0 pointer-events-auto">
@@ -1297,7 +1437,7 @@ const InnerApp: React.FC = () => {
             isTyping={activeRoomId
               ? !!(typingUsers[`room:${activeRoomId}`])
               : !!(activeDialogHash && typingUsers[activeDialogHash])}
-            onTyping={activeRoomId
+            onTyping={!userSettings.typingIndicators ? undefined : activeRoomId
               ? () => sendRoomTyping(activeRoomId!)
               : () => activeDialogHash && sendTyping(activeDialogHash)}
             onViewProfile={activeRoomId ? undefined : (chat) => {
@@ -1339,6 +1479,21 @@ const InnerApp: React.FC = () => {
           />
         )}
 
+        {currentView === 'notifications' && (
+          <NotificationsView
+            notifications={notifications}
+            onMarkRead={(id) => setNotifications(prev => prev.map(n => n.id === id ? { ...n, read: true } : n))}
+            onMarkAllRead={() => setNotifications(prev => prev.map(n => ({ ...n, read: true })))}
+            onDismiss={(id) => setNotifications(prev => prev.filter(n => n.id !== id))}
+            onClearAll={() => setNotifications([])}
+            onNavigate={(chatId) => {
+              setActiveChatId(chatId);
+              setActiveRoomId(null);
+              setCurrentView('chats');
+            }}
+          />
+        )}
+
         {currentView === 'settings' && (
           <SettingsView
             onCreateProfile={handleCreateProfile}
@@ -1350,6 +1505,10 @@ const InnerApp: React.FC = () => {
             publicKey={publicKey}
             balance={balance}
             onDisconnect={handleDisconnect}
+            onClearAllConversations={handleClearAllConversations}
+            contactCount={contacts.length}
+            settings={userSettings}
+            onUpdateSetting={updateSetting}
           />
         )}
       </main>

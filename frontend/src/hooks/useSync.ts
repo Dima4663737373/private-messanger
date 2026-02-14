@@ -2,13 +2,16 @@ import { hashAddress } from '../utils/aleo-utils';
 import { useEffect, useRef, useState } from 'react';
 import { Message, Room } from '../types';
 import { fieldToString, fieldsToString } from '../utils/messageUtils';
-import { encryptMessage, KeyPair } from '../utils/crypto';
+import { encryptMessage, KeyPair, encryptRoomMessage, decryptRoomMessage, generateRoomKey, encryptRoomKeyForMember, decryptRoomKey } from '../utils/crypto';
 import { getCachedKeys } from '../utils/key-derivation';
 import { toast } from 'react-hot-toast';
 import { API_CONFIG } from '../config';
 import { safeBackendFetch } from '../utils/api-client';
 import { useEncryptionWorker } from './useEncryptionWorker';
 import { logger } from '../utils/logger';
+import { setSessionToken } from '../utils/auth-store';
+import nacl from 'tweetnacl';
+import { decodeBase64, encodeBase64 } from 'tweetnacl-util';
 
 export function useSync(
   address: string | null,
@@ -23,7 +26,8 @@ export function useSync(
   onPinUpdate?: (contextId: string, pins: any[]) => void,
   onRoomMessageDeleted?: (roomId: string, messageId: string) => void,
   onRoomMessageEdited?: (roomId: string, messageId: string, text: string) => void,
-  onDMSent?: (tempId: string, realId: string) => void
+  onDMSent?: (tempId: string, realId: string) => void,
+  onReadReceipt?: (dialogHash: string, messageIds: string[]) => void
 ) {
   const ws = useRef<WebSocket | null>(null);
   const [isConnected, setIsConnected] = useState(false);
@@ -35,6 +39,7 @@ export function useSync(
   const MAX_KEY_CACHE_SIZE = 200;
   const decryptionCache = useRef<Map<string, string>>(new Map());
   const keyCache = useRef<Map<string, string>>(new Map());
+  const roomKeyCache = useRef<Map<string, string>>(new Map()); // roomId -> decrypted symmetric key (base64)
 
   // Bounded cache set — evicts oldest entries when full
   const cacheSet = (cache: Map<string, string>, key: string, value: string, maxSize: number) => {
@@ -126,11 +131,93 @@ export function useSync(
       }
   };
 
+  // ── Room Key Helpers ──────────────────────────────
+
+  /** Fetch and decrypt my room key from the backend */
+  const getRoomKey = async (roomId: string): Promise<string | null> => {
+    // Check cache first
+    const cached = roomKeyCache.current.get(roomId);
+    if (cached) return cached;
+
+    if (!address) return null;
+    const myKeys = getCachedKeys(address);
+    if (!myKeys) return null;
+
+    const { data } = await safeBackendFetch<any>(`rooms/${roomId}/keys`);
+    if (!data || !data.exists) return null;
+
+    const decrypted = decryptRoomKey(
+      data.encrypted_room_key,
+      data.nonce,
+      data.sender_public_key,
+      myKeys.secretKey
+    );
+    if (decrypted) {
+      roomKeyCache.current.set(roomId, decrypted);
+    }
+    return decrypted;
+  };
+
+  /** Generate a room key and distribute to all members */
+  const distributeRoomKey = async (roomId: string, roomSymKey?: string): Promise<string | null> => {
+    if (!address) return null;
+    const myKeys = getCachedKeys(address);
+    if (!myKeys) return null;
+
+    const symKey = roomSymKey || generateRoomKey();
+
+    // Fetch all members with their public keys
+    const { data: members } = await safeBackendFetch<any[]>(`rooms/${roomId}/members`);
+    if (!members || !Array.isArray(members)) return null;
+
+    const keysPayload: any[] = [];
+    for (const member of members) {
+      if (!member.encryption_public_key) continue;
+      const { encryptedRoomKey, nonce } = encryptRoomKeyForMember(
+        symKey,
+        member.encryption_public_key,
+        myKeys.secretKey
+      );
+      keysPayload.push({
+        userAddress: member.address,
+        encryptedRoomKey,
+        nonce,
+        senderPublicKey: myKeys.publicKey
+      });
+    }
+
+    if (keysPayload.length > 0) {
+      await safeBackendFetch(`rooms/${roomId}/keys`, {
+        method: 'POST',
+        body: { keys: keysPayload }
+      });
+    }
+
+    roomKeyCache.current.set(roomId, symKey);
+    return symKey;
+  };
+
+  /** Try to decrypt room message text, falling back to plaintext for legacy messages */
+  const decryptRoomText = async (roomId: string, text: string): Promise<string> => {
+    // Check if it looks like an encrypted payload (nonce.ciphertext, both base64)
+    const parts = text.split('.');
+    const isBase64 = /^[A-Za-z0-9+/=]{16,}$/;
+    if (parts.length !== 2 || !isBase64.test(parts[0]) || !isBase64.test(parts[1])) {
+      return text; // Plaintext (legacy message)
+    }
+
+    const roomSymKey = await getRoomKey(roomId);
+    if (!roomSymKey) return '[Encrypted Room Message]';
+
+    const decrypted = decryptRoomMessage(text, roomSymKey);
+    return decrypted || '[Decryption Failed]';
+  };
+
   // Callbacks Ref
-  const callbacksRef = useRef({ onNewMessage, onMessageDeleted, onMessageUpdated, onReactionUpdate, onRoomMessage, onRoomCreated, onRoomDeleted, onDMCleared, onPinUpdate, onRoomMessageDeleted, onRoomMessageEdited, onDMSent });
+  const callbacksRef = useRef({ onNewMessage, onMessageDeleted, onMessageUpdated, onReactionUpdate, onRoomMessage, onRoomCreated, onRoomDeleted, onDMCleared, onPinUpdate, onRoomMessageDeleted, onRoomMessageEdited, onDMSent, onReadReceipt });
   useEffect(() => {
-      callbacksRef.current = { onNewMessage, onMessageDeleted, onMessageUpdated, onReactionUpdate, onRoomMessage, onRoomCreated, onRoomDeleted, onDMCleared, onPinUpdate, onRoomMessageDeleted, onRoomMessageEdited, onDMSent };
-  }, [onNewMessage, onMessageDeleted, onMessageUpdated, onReactionUpdate, onRoomMessage, onRoomCreated, onRoomDeleted, onDMCleared, onPinUpdate, onRoomMessageDeleted, onRoomMessageEdited, onDMSent]);
+      callbacksRef.current = { onNewMessage, onMessageDeleted, onMessageUpdated, onReactionUpdate, onRoomMessage, onRoomCreated, onRoomDeleted, onDMCleared, onPinUpdate, onRoomMessageDeleted, onRoomMessageEdited, onDMSent, onReadReceipt };
+  }, [onNewMessage, onMessageDeleted, onMessageUpdated, onReactionUpdate, onRoomMessage, onRoomCreated, onRoomDeleted, onDMCleared, onPinUpdate, onRoomMessageDeleted, onRoomMessageEdited, onDMSent, onReadReceipt]);
 
   useEffect(() => {
     if (!address) return;
@@ -158,11 +245,47 @@ export function useSync(
             const data = JSON.parse(event.data);
             const { onNewMessage, onMessageDeleted, onMessageUpdated } = callbacksRef.current;
 
-            // WebSocket Authentication Response
+            // WebSocket Authentication — Challenge-Response Flow
+
+            // Step 2a: Server sends challenge for existing users
+            if (data.type === 'AUTH_CHALLENGE') {
+              try {
+                const myKeys = getCachedKeys(address);
+                if (!myKeys) {
+                  logger.error('Cannot respond to AUTH_CHALLENGE — keys not derived yet');
+                  // Close and reconnect after keys are ready
+                  socket.close();
+                  return;
+                }
+                const encrypted = decodeBase64(data.encryptedChallenge);
+                const nonce = decodeBase64(data.nonce);
+                const serverPubKey = decodeBase64(data.serverPublicKey);
+                const mySecretKey = decodeBase64(myKeys.secretKey);
+
+                const decrypted = nacl.box.open(encrypted, nonce, serverPubKey, mySecretKey);
+                if (!decrypted) {
+                  logger.error('Failed to decrypt AUTH_CHALLENGE');
+                  socket.close();
+                  return;
+                }
+                const decryptedChallenge = new TextDecoder().decode(decrypted);
+                socket.send(JSON.stringify({ type: 'AUTH_RESPONSE', decryptedChallenge }));
+              } catch (e) {
+                logger.error('AUTH_CHALLENGE handling failed:', e);
+                socket.close();
+              }
+              return;
+            }
+
+            // Step 2b: Authentication succeeded — store session token
             if (data.type === 'AUTH_SUCCESS') {
               logger.debug('WS Authenticated successfully');
+              // Store session token for REST API auth
+              if (data.token) {
+                setSessionToken(data.token);
+              }
               setIsConnected(true);
-              // Step 2: Subscribe to channels after successful auth
+              // Step 3: Subscribe to channels after successful auth
               try {
                 const addressHash = hashAddress(address);
                 socket.send(JSON.stringify({ type: 'SUBSCRIBE', address, addressHash }));
@@ -175,6 +298,7 @@ export function useSync(
 
             if (data.type === 'AUTH_FAILED') {
               logger.error('WS Authentication failed:', data.message);
+              setSessionToken(null);
               toast.error('WebSocket authentication failed');
               setIsConnected(false);
               socket.close();
@@ -211,9 +335,11 @@ export function useSync(
             if (data.type === 'room_message') {
               const { roomId, id, sender, senderName, text, timestamp } = data.payload;
               if (callbacksRef.current.onRoomMessage) {
+                // Decrypt room message (handles both encrypted and legacy plaintext)
+                const decryptedText = await decryptRoomText(roomId, text);
                 callbacksRef.current.onRoomMessage(roomId, {
                   id,
-                  text,
+                  text: decryptedText,
                   time: new Date(timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
                   senderId: sender === address ? 'me' : sender,
                   isMine: sender === address,
@@ -240,6 +366,21 @@ export function useSync(
               if (callbacksRef.current.onRoomDeleted) {
                 callbacksRef.current.onRoomDeleted(data.payload.roomId);
               }
+              // Clean up cached room key
+              roomKeyCache.current.delete(data.payload.roomId);
+              return;
+            }
+
+            // When a new member joins — distribute room key to them if I have it
+            if (data.type === 'room_member_joined') {
+              const { roomId, address: joinedAddress } = data.payload;
+              if (joinedAddress !== address) {
+                // I'm an existing member — share my room key with the new member
+                const cachedKey = roomKeyCache.current.get(roomId);
+                if (cachedKey) {
+                  distributeRoomKey(roomId, cachedKey).catch(() => {});
+                }
+              }
               return;
             }
 
@@ -261,7 +402,8 @@ export function useSync(
             if (data.type === 'room_message_edited') {
               const { roomId, messageId, text } = data.payload;
               if (callbacksRef.current.onRoomMessageEdited) {
-                callbacksRef.current.onRoomMessageEdited(roomId, messageId, text);
+                const decryptedText = await decryptRoomText(roomId, text);
+                callbacksRef.current.onRoomMessageEdited(roomId, messageId, decryptedText);
               }
               return;
             }
@@ -290,6 +432,15 @@ export function useSync(
               const { tempId, id } = data.payload;
               if (callbacksRef.current.onDMSent) {
                 callbacksRef.current.onDMSent(tempId, id);
+              }
+              return;
+            }
+
+            // Read receipt — other user read our messages
+            if (data.type === 'READ_RECEIPT') {
+              const { dialogHash, messageIds } = data.payload;
+              if (callbacksRef.current.onReadReceipt) {
+                callbacksRef.current.onReadReceipt(dialogHash, messageIds);
               }
               return;
             }
@@ -379,6 +530,7 @@ export function useSync(
 
         socket.onclose = () => {
             setIsConnected(false);
+            setSessionToken(null); // Clear session token on disconnect
             if (ws.current === socket) {
                 reconnectTimer = setTimeout(connect, reconnectDelay);
                 reconnectDelay = Math.min(reconnectDelay * 2, 30000); // Exponential backoff, max 30s
@@ -399,6 +551,7 @@ export function useSync(
          ws.current.close();
          ws.current = null;
       }
+      setSessionToken(null); // Clear session token on cleanup
     };
   }, [address]);
 
@@ -623,6 +776,16 @@ export function useSync(
     }
   };
 
+  // Send read receipt for messages in a dialog
+  const sendReadReceipt = (dialogHash: string, messageIds: string[]) => {
+    if (ws.current && ws.current.readyState === WebSocket.OPEN && address && messageIds.length > 0) {
+      try {
+        const senderHash = hashAddress(address);
+        ws.current.send(JSON.stringify({ type: 'READ_RECEIPT', dialogHash, senderHash, messageIds }));
+      } catch { /* ignore */ }
+    }
+  };
+
   // --- Room API ---
   const fetchRooms = async (type: 'channel' | 'group'): Promise<Room[]> => {
     const params = new URLSearchParams({ type });
@@ -643,6 +806,10 @@ export function useSync(
       method: 'POST',
       body: { name, type, creatorAddress: address }
     });
+    if (data && data.id) {
+      // Generate and distribute room encryption key
+      await distributeRoomKey(data.id);
+    }
     return data;
   };
 
@@ -668,6 +835,8 @@ export function useSync(
       method: 'POST',
       body: { address }
     });
+    // Try to fetch room key (may have been distributed by another member)
+    await getRoomKey(roomId);
   };
 
   const leaveRoom = async (roomId: string) => {
@@ -684,26 +853,36 @@ export function useSync(
     return { members: data.members || [] };
   };
 
-  const fetchRoomMessages = async (roomId: string, limit = 50, offset = 0): Promise<Message[]> => {
+  const fetchRoomMessages = async (roomId: string, limit = 100, offset = 0): Promise<Message[]> => {
     const { data } = await safeBackendFetch<any[]>(`rooms/${roomId}/messages?limit=${limit}&offset=${offset}`);
     if (!data || !Array.isArray(data)) return [];
-    return data.map((m: any) => ({
-      id: m.id,
-      text: m.text,
-      time: new Date(Number(m.timestamp)).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-      senderId: m.sender === address ? 'me' : m.sender,
-      isMine: m.sender === address,
-      status: 'sent' as const,
-      timestamp: Number(m.timestamp),
-      senderHash: m.sender_name || m.sender?.slice(0, 10)
+    // Decrypt all room messages
+    return Promise.all(data.map(async (m: any) => {
+      const decryptedText = await decryptRoomText(roomId, m.text);
+      return {
+        id: m.id,
+        text: decryptedText,
+        time: new Date(Number(m.timestamp)).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        senderId: m.sender === address ? 'me' : m.sender,
+        isMine: m.sender === address,
+        status: 'sent' as const,
+        timestamp: Number(m.timestamp),
+        senderHash: m.sender_name || m.sender?.slice(0, 10)
+      };
     }));
   };
 
-  const sendRoomMessage = (roomId: string, text: string) => {
+  const sendRoomMessage = async (roomId: string, text: string) => {
     if (ws.current && ws.current.readyState === WebSocket.OPEN && address) {
+      // Encrypt the message with the room symmetric key
+      let encryptedText = text;
+      const roomSymKey = await getRoomKey(roomId);
+      if (roomSymKey) {
+        encryptedText = encryptRoomMessage(text, roomSymKey);
+      }
       ws.current.send(JSON.stringify({
         type: 'ROOM_MESSAGE',
-        roomId, sender: address, text, timestamp: Date.now()
+        roomId, sender: address, text: encryptedText, timestamp: Date.now()
       }));
     }
   };
@@ -723,9 +902,15 @@ export function useSync(
 
   const editRoomMessage = async (roomId: string, msgId: string, text: string) => {
     if (!address) return;
+    // Encrypt the edited text with room key
+    let encryptedText = text;
+    const roomSymKey = await getRoomKey(roomId);
+    if (roomSymKey) {
+      encryptedText = encryptRoomMessage(text, roomSymKey);
+    }
     await safeBackendFetch(`rooms/${roomId}/messages/${msgId}/edit`, {
       method: 'POST',
-      body: { address, text }
+      body: { address, text: encryptedText }
     });
   };
 
@@ -776,7 +961,7 @@ export function useSync(
       logger.warn('No encryption key for recipient — sending plaintext via WS');
     }
 
-    const tempId = `temp_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    const tempId = `temp_${Date.now()}_${Array.from(crypto.getRandomValues(new Uint8Array(6)), b => b.toString(36)).join('').slice(0, 8)}`;
     const timestamp = Date.now();
 
     return { tempId, encryptedPayload, encryptedPayloadSelf, timestamp, senderHash, recipientHash, dialogHash };
@@ -888,6 +1073,7 @@ export function useSync(
     notifyProfileUpdate,
     cacheDecryptedMessage,
     sendTyping,
+    sendReadReceipt,
     addReaction,
     removeReaction,
     fetchReactions,

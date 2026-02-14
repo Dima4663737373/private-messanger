@@ -12,7 +12,7 @@
  */
 
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { fetchPreferences, updatePreferences } from '../utils/preferences-api';
+import { fetchPreferences, updatePreferences, UserSettings, DEFAULT_SETTINGS } from '../utils/preferences-api';
 import { logger } from '../utils/logger';
 
 export interface Preferences {
@@ -20,13 +20,15 @@ export interface Preferences {
   mutedChats: string[];
   deletedChats: string[];
   disappearTimers: Record<string, string>;
+  settings: UserSettings;
 }
 
 const DEFAULT_PREFERENCES: Preferences = {
   pinnedChats: [],
   mutedChats: [],
   deletedChats: [],
-  disappearTimers: {}
+  disappearTimers: {},
+  settings: { ...DEFAULT_SETTINGS }
 };
 
 export function usePreferences(publicKey: string | null) {
@@ -52,7 +54,8 @@ export function usePreferences(publicKey: string | null) {
         pinnedChats: prefs.pinned_chats || [],
         mutedChats: prefs.muted_chats || [],
         deletedChats: prefs.deleted_chats || [],
-        disappearTimers: prefs.disappear_timers || {}
+        disappearTimers: prefs.disappear_timers || {},
+        settings: { ...DEFAULT_SETTINGS, ...(prefs.settings || {}) }
       });
       setIsLoaded(true);
       logger.debug('Loaded preferences from backend:', prefs);
@@ -155,6 +158,15 @@ export function usePreferences(publicKey: string | null) {
     setDisappearTimers(prev => ({ ...prev, [chatId]: timer }));
   }, [setDisappearTimers]);
 
+  // Update a single setting (toggleable)
+  const updateSetting = useCallback(<K extends keyof UserSettings>(key: K, value: UserSettings[K]) => {
+    setPreferences(prev => {
+      const nextSettings = { ...prev.settings, [key]: value };
+      saveToBackend({ settings: nextSettings } as any);
+      return { ...prev, settings: nextSettings };
+    });
+  }, [saveToBackend]);
+
   return {
     ...preferences,
     isLoaded,
@@ -165,6 +177,7 @@ export function usePreferences(publicKey: string | null) {
     togglePin,
     toggleMute,
     markChatDeleted,
-    setDisappearTimer
+    setDisappearTimer,
+    updateSetting
   };
 }

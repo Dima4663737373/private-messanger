@@ -57,7 +57,7 @@ export function useEncryptionWorker() {
   const sendToWorker = useCallback((msg: Record<string, unknown>): Promise<string> => {
     return new Promise((resolve, reject) => {
       if (!workerRef.current) return reject(new Error("Worker not ready"));
-      const id = Math.random().toString(36).substring(7);
+      const id = Array.from(crypto.getRandomValues(new Uint8Array(8)), b => b.toString(36)).join('').slice(0, 10);
       resolversRef.current.set(id, resolve);
       rejectorsRef.current.set(id, reject);
       workerRef.current.postMessage({ ...msg, id });

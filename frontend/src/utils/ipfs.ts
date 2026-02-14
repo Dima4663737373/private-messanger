@@ -36,7 +36,7 @@ export async function uploadFileToIPFS(file: File): Promise<string> {
 
   logger.info("Mock IPFS Upload (dev):", file.name);
   await new Promise(resolve => setTimeout(resolve, 500));
-  const mockCID = "Qm" + Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
+  const mockCID = "Qm" + Array.from(crypto.getRandomValues(new Uint8Array(12)), b => b.toString(36)).join('').slice(0, 26);
   return mockCID;
 }
 

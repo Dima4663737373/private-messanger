@@ -25,6 +25,11 @@ program ghost_msg_015.aleo {
         part2: field
     }
 
+    struct DialogPair {
+        a: field,
+        b: field
+    }
+
     // ── Mappings ─────────────────────────────────────────────
 
     mapping profile_pubkey: field => EncryptionKey;
@@ -97,7 +102,10 @@ program ghost_msg_015.aleo {
     async function finalize_send_message(sender_hash: field, recipient_hash: field) {
         let min_hash: field = sender_hash < recipient_hash ? sender_hash : recipient_hash;
         let max_hash: field = sender_hash < recipient_hash ? recipient_hash : sender_hash;
-        let dialog_key: field = BHP256::hash_to_field(min_hash + max_hash);
+        // SECURITY FIX: Hash a struct instead of field addition to prevent collisions
+        // (field addition: a+b = c+d is possible for different pairs)
+        let dialog_pair: DialogPair = DialogPair { a: min_hash, b: max_hash };
+        let dialog_key: field = BHP256::hash_to_field(dialog_pair);
         let height: u32 = block.height;
         Mapping::set(dialog_last_block, dialog_key, height);
     }

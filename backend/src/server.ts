@@ -4,10 +4,12 @@ import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
 import { createServer } from 'http';
 import { WebSocketServer, WebSocket } from 'ws';
-import { initDB, Message, Profile, SyncStatus, Reaction, Room, RoomMember, RoomMessage, PinnedMessage, UserPreferences, sequelize } from './database';
+import { initDB, Message, Profile, SyncStatus, Reaction, Room, RoomMember, RoomMessage, RoomKey, PinnedMessage, UserPreferences, sequelize } from './database';
 import { v4 as uuidv4 } from 'uuid';
 import { IndexerService } from './services/indexer';
 import { Op } from 'sequelize';
+import nacl from 'tweetnacl';
+import { encodeBase64, decodeBase64 } from 'tweetnacl-util';
 
 const app = express();
 const server = createServer(app);
@@ -47,16 +49,56 @@ app.use(cors({
     }
   },
   methods: ['GET', 'POST', 'DELETE', 'PATCH', 'OPTIONS'],
-  allowedHeaders: ['Content-Type'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
   credentials: true
 }));
 
-// Global rate limiter: 200 requests per 15 minutes per IP
+app.use(express.json({ limit: '100kb' }));
+
+const indexer = new IndexerService(wss);
+
+// --- Session Management ---
+
+interface Session {
+  address: string;
+  limited: boolean; // true = new user, can only register profile
+  createdAt: number;
+}
+
+const sessions = new Map<string, Session>();
+const SESSION_TTL = 24 * 60 * 60 * 1000; // 24 hours
+const pendingChallenges = new Map<WebSocket, { challenge: string; address: string }>();
+
+// Cleanup expired sessions every hour
+setInterval(() => {
+  const now = Date.now();
+  for (const [token, session] of sessions) {
+    if (now - session.createdAt > SESSION_TTL) sessions.delete(token);
+  }
+}, 60 * 60 * 1000);
+
+// --- Rate Limiting (per-user when authenticated, per-IP fallback) ---
+
+/** Extract authenticated user address from Bearer token, fall back to IP */
+function rateLimitKeyGenerator(req: any): string {
+  const authHeader = req.headers?.authorization;
+  if (authHeader?.startsWith('Bearer ')) {
+    const token = authHeader.slice(7);
+    const session = sessions.get(token);
+    if (session && Date.now() - session.createdAt <= SESSION_TTL) {
+      return `user:${session.address}`;
+    }
+  }
+  return `ip:${req.ip}`;
+}
+
+// Global rate limiter: 200 requests per 15 minutes
 app.use(rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 200,
   standardHeaders: true,
   legacyHeaders: false,
+  keyGenerator: rateLimitKeyGenerator,
   message: { error: 'Too many requests, please try again later' }
 }));
 
@@ -64,6 +106,7 @@ app.use(rateLimit({
 const searchLimiter = rateLimit({
   windowMs: 60 * 1000,
   max: 15,
+  keyGenerator: rateLimitKeyGenerator,
   message: { error: 'Search rate limit exceeded' }
 });
 
@@ -71,12 +114,36 @@ const searchLimiter = rateLimit({
 const profileWriteLimiter = rateLimit({
   windowMs: 60 * 1000,
   max: 5,
+  keyGenerator: rateLimitKeyGenerator,
   message: { error: 'Profile update rate limit exceeded' }
 });
 
-app.use(express.json({ limit: '100kb' }));
+// --- Auth Middleware ---
 
-const indexer = new IndexerService(wss);
+function requireAuth(req: any, res: any, next: any) {
+  const authHeader = req.headers.authorization;
+  if (!authHeader?.startsWith('Bearer ')) {
+    return res.status(401).json({ error: 'Authentication required' });
+  }
+  const token = authHeader.slice(7);
+  const session = sessions.get(token);
+  if (!session || Date.now() - session.createdAt > SESSION_TTL) {
+    sessions.delete(token);
+    return res.status(401).json({ error: 'Session expired' });
+  }
+  req.authenticatedAddress = session.address;
+  req.sessionLimited = session.limited;
+  next();
+}
+
+function requireFullAuth(req: any, res: any, next: any) {
+  requireAuth(req, res, () => {
+    if (req.sessionLimited) {
+      return res.status(403).json({ error: 'Full authentication required. Register profile first.' });
+    }
+    next();
+  });
+}
 
 // --- Input Validation Helpers ---
 
@@ -124,6 +191,13 @@ wss.on('connection', (ws: any) => {
 
   ws.on('message', async (message: any) => {
     try {
+      // WS message size limit: 64KB max
+      const msgStr = message.toString();
+      if (msgStr.length > 65536) {
+        ws.send(JSON.stringify({ type: 'error', message: 'Message too large (max 64KB)' }));
+        return;
+      }
+
       // Rate limit WS messages
       const now = Date.now();
       ws._msgTimestamps = (ws._msgTimestamps || []).filter((t: number) => now - t < WS_MSG_WINDOW);
@@ -135,7 +209,7 @@ wss.on('connection', (ws: any) => {
 
       const data = JSON.parse(message.toString());
 
-      // AUTH message — authenticate the connection
+      // AUTH message — initiate challenge-response authentication
       if (data.type === 'AUTH') {
         const { address } = data;
         if (!address || !isValidAddress(address)) {
@@ -143,10 +217,69 @@ wss.on('connection', (ws: any) => {
           return;
         }
 
-        // Authenticate (in production, verify signature here)
-        ws.authenticated = true;
-        ws.authenticatedAddress = address;
-        ws.send(JSON.stringify({ type: 'AUTH_SUCCESS', address }));
+        // Look up profile to get encryption public key
+        const profile = await Profile.findByPk(address);
+
+        if (!profile || !profile.encryption_public_key) {
+          // New user — issue limited token (can only register profile)
+          const token = uuidv4();
+          sessions.set(token, { address, limited: true, createdAt: Date.now() });
+          ws.authenticated = true;
+          ws.authenticatedAddress = address;
+          ws.sessionToken = token;
+          ws.send(JSON.stringify({ type: 'AUTH_SUCCESS', address, token, requiresProfile: true }));
+          return;
+        }
+
+        // Existing user — challenge-response with NaCl
+        try {
+          const challenge = encodeBase64(nacl.randomBytes(32));
+          const clientPubKey = decodeBase64(profile.encryption_public_key);
+          const serverTempKeys = nacl.box.keyPair();
+          const nonce = nacl.randomBytes(nacl.box.nonceLength);
+          const challengeBytes = new TextEncoder().encode(challenge);
+          const encrypted = nacl.box(challengeBytes, nonce, clientPubKey, serverTempKeys.secretKey);
+
+          pendingChallenges.set(ws, { challenge, address });
+
+          ws.send(JSON.stringify({
+            type: 'AUTH_CHALLENGE',
+            encryptedChallenge: encodeBase64(encrypted),
+            nonce: encodeBase64(nonce),
+            serverPublicKey: encodeBase64(serverTempKeys.publicKey)
+          }));
+        } catch (e) {
+          console.error('AUTH challenge generation failed:', e);
+          // Fallback: issue limited token if challenge fails (e.g. malformed key)
+          const token = uuidv4();
+          sessions.set(token, { address, limited: true, createdAt: Date.now() });
+          ws.authenticated = true;
+          ws.authenticatedAddress = address;
+          ws.sessionToken = token;
+          ws.send(JSON.stringify({ type: 'AUTH_SUCCESS', address, token, requiresProfile: true }));
+        }
+        return;
+      }
+
+      // AUTH_RESPONSE — verify challenge answer
+      if (data.type === 'AUTH_RESPONSE') {
+        const pending = pendingChallenges.get(ws);
+        if (!pending) {
+          ws.send(JSON.stringify({ type: 'AUTH_FAILED', message: 'No pending challenge' }));
+          return;
+        }
+        pendingChallenges.delete(ws);
+
+        if (data.decryptedChallenge === pending.challenge) {
+          const token = uuidv4();
+          sessions.set(token, { address: pending.address, limited: false, createdAt: Date.now() });
+          ws.authenticated = true;
+          ws.authenticatedAddress = pending.address;
+          ws.sessionToken = token;
+          ws.send(JSON.stringify({ type: 'AUTH_SUCCESS', address: pending.address, token }));
+        } else {
+          ws.send(JSON.stringify({ type: 'AUTH_FAILED', message: 'Challenge verification failed' }));
+        }
         return;
       }
 
@@ -157,17 +290,22 @@ wss.on('connection', (ws: any) => {
       }
 
       if (data.type === 'SUBSCRIBE') {
+        // Verify address matches authenticated address (prevent impersonation)
+        if (data.address && data.address !== ws.authenticatedAddress) {
+          ws.send(JSON.stringify({ type: 'error', message: 'Subscribe address must match authenticated address' }));
+          return;
+        }
         if (data.addressHash && typeof data.addressHash === 'string' && isValidHash(data.addressHash)) {
-          ws.subscribedAddress = data.address;
+          ws.subscribedAddress = ws.authenticatedAddress; // Use authenticated address, not client-provided
           ws.subscribedHash = data.addressHash;
           ws.lastSeen = Date.now();
         }
         if (data.dialogHash && typeof data.dialogHash === 'string' && isValidHash(data.dialogHash)) {
           ws.subscribedDialog = data.dialogHash;
         }
-        // Auto-subscribe to user's rooms
-        if (data.address && typeof data.address === 'string') {
-          const memberships = await RoomMember.findAll({ where: { user_id: data.address } });
+        // Auto-subscribe to user's rooms using authenticated address
+        if (ws.authenticatedAddress) {
+          const memberships = await RoomMember.findAll({ where: { user_id: ws.authenticatedAddress } });
           for (const m of memberships) {
             ws.subscribedRooms.add(m.room_id);
           }
@@ -179,20 +317,21 @@ wss.on('connection', (ws: any) => {
         ws.subscribedRooms.add(data.roomId);
       }
 
-      // Room message — save and broadcast
-      if (data.type === 'ROOM_MESSAGE' && data.roomId && data.sender && data.text) {
+      // Room message — save and broadcast (enforce sender = authenticated user)
+      if (data.type === 'ROOM_MESSAGE' && data.roomId && data.text && ws.authenticatedAddress) {
+        const sender = ws.authenticatedAddress; // Use authenticated address, not client-provided
         const msgId = uuidv4();
         const timestamp = Date.now();
-        const senderName = data.senderName || data.sender.slice(0, 8) + '...';
+        const senderName = data.senderName || sender.slice(0, 8) + '...';
         await RoomMessage.create({
           id: msgId,
           room_id: data.roomId.slice(0, 100),
-          sender: data.sender.slice(0, 100),
+          sender: sender.slice(0, 100),
           sender_name: senderName.slice(0, 100),
           text: data.text.slice(0, 10000),
           timestamp,
         });
-        const msg = { type: 'room_message', payload: { id: msgId, roomId: data.roomId, sender: data.sender, senderName, text: data.text, timestamp } };
+        const msg = { type: 'room_message', payload: { id: msgId, roomId: data.roomId, sender, senderName, text: data.text, timestamp } };
         broadcastToRoom(data.roomId, msg);
         // Also send to sender if not subscribed
         if (!ws.subscribedRooms.has(data.roomId)) {
@@ -218,9 +357,23 @@ wss.on('connection', (ws: any) => {
         });
       }
 
-      // DM message — off-chain encrypted direct message
+      // Read receipt — relay to the sender of messages in a dialog
+      if (data.type === 'READ_RECEIPT' && data.dialogHash && data.senderHash && Array.isArray(data.messageIds)) {
+        const dialogParts = data.dialogHash.split('_');
+        const messageIds: string[] = data.messageIds.slice(0, 100); // limit
+        wss.clients.forEach((client: any) => {
+          if (client !== ws && client.readyState === WebSocket.OPEN && client.subscribedHash) {
+            if (dialogParts.includes(client.subscribedHash) && client.subscribedHash !== data.senderHash) {
+              client.send(JSON.stringify({ type: 'READ_RECEIPT', payload: { dialogHash: data.dialogHash, messageIds } }));
+            }
+          }
+        });
+      }
+
+      // DM message — off-chain encrypted direct message (enforce sender = authenticated user)
       if (data.type === 'DM_MESSAGE') {
-        const { sender, senderHash, recipientHash, dialogHash, encryptedPayload, encryptedPayloadSelf, timestamp, attachmentPart1, attachmentPart2, tempId } = data;
+        const { senderHash, recipientHash, dialogHash, encryptedPayload, encryptedPayloadSelf, timestamp, attachmentPart1, attachmentPart2, tempId } = data;
+        const sender = ws.authenticatedAddress; // Use authenticated address, not client-provided
         if (!sender || !senderHash || !recipientHash || !dialogHash || !encryptedPayload || !timestamp) {
           ws.send(JSON.stringify({ type: 'error', message: 'Missing required DM fields' }));
           return;
@@ -233,25 +386,31 @@ wss.on('connection', (ws: any) => {
         const recipientProfile = await Profile.findOne({ where: { address_hash: recipientHash } });
         if (recipientProfile) resolvedRecipient = recipientProfile.address;
 
-        await Message.create({
-          id: msgId,
-          sender: sender.slice(0, 100),
-          recipient: resolvedRecipient,
-          sender_hash: senderHash.slice(0, 300),
-          recipient_hash: recipientHash.slice(0, 300),
-          dialog_hash: dialogHash.slice(0, 600),
-          encrypted_payload: encryptedPayload.slice(0, 50000),
-          encrypted_payload_self: (encryptedPayloadSelf || '').slice(0, 50000),
-          nonce: '',
-          timestamp,
-          block_height: 0,
-          status: 'confirmed',
-          attachment_part1: (attachmentPart1 || '').slice(0, 500),
-          attachment_part2: (attachmentPart2 || '').slice(0, 500),
+        // Use findOrCreate to prevent duplicate messages (unique index: sender_hash + recipient_hash + timestamp)
+        const [msg, created] = await Message.findOrCreate({
+          where: { sender_hash: senderHash.slice(0, 300), recipient_hash: recipientHash.slice(0, 300), timestamp },
+          defaults: {
+            id: msgId,
+            sender: sender.slice(0, 100),
+            recipient: resolvedRecipient,
+            sender_hash: senderHash.slice(0, 300),
+            recipient_hash: recipientHash.slice(0, 300),
+            dialog_hash: dialogHash.slice(0, 600),
+            encrypted_payload: encryptedPayload.slice(0, 50000),
+            encrypted_payload_self: (encryptedPayloadSelf || '').slice(0, 50000),
+            nonce: '',
+            timestamp,
+            block_height: 0,
+            status: 'confirmed',
+            attachment_part1: (attachmentPart1 || '').slice(0, 500),
+            attachment_part2: (attachmentPart2 || '').slice(0, 500),
+          }
         });
 
+        const realId = created ? msgId : msg.id;
+
         const messagePayload = {
-          id: msgId, dialogHash, recipientHash, senderHash,
+          id: realId, dialogHash, recipientHash, senderHash,
           sender, recipient: resolvedRecipient,
           encryptedPayload, encryptedPayloadSelf,
           timestamp,
@@ -271,7 +430,7 @@ wss.on('connection', (ws: any) => {
         });
 
         // Confirm to sender with real ID
-        ws.send(JSON.stringify({ type: 'dm_sent', payload: { tempId, id: msgId, timestamp } }));
+        ws.send(JSON.stringify({ type: 'dm_sent', payload: { tempId, id: realId, timestamp } }));
       }
 
       // Heartbeat — update lastSeen
@@ -287,7 +446,9 @@ wss.on('connection', (ws: any) => {
   ws.lastSeen = Date.now();
 
   ws.on('close', () => {
-    // Client disconnected
+    pendingChallenges.delete(ws);
+    // Invalidate session token on disconnect (optional - comment out to keep sessions alive across reconnects)
+    // if (ws.sessionToken) sessions.delete(ws.sessionToken);
   });
 });
 
@@ -315,7 +476,7 @@ app.get('/messages/:dialogHash', async (req, res) => {
     const { dialogHash } = req.params;
     if (!isValidHash(dialogHash)) return res.status(400).json({ error: 'Invalid hash' });
 
-    const limit = clampInt(req.query.limit, 1, 100, 50);
+    const limit = clampInt(req.query.limit, 1, 200, 100);
     const offset = clampInt(req.query.offset, 0, 100000, 0);
 
     let whereClause: any;
@@ -346,7 +507,7 @@ app.get('/messages/dialog/:dialogHash', async (req, res) => {
     const { dialogHash } = req.params;
     if (!isValidHash(dialogHash)) return res.status(400).json({ error: 'Invalid hash' });
 
-    const limit = clampInt(req.query.limit, 1, 100, 50);
+    const limit = clampInt(req.query.limit, 1, 200, 100);
     const offset = clampInt(req.query.offset, 0, 100000, 0);
 
     const messages = await Message.findAll({
@@ -460,10 +621,13 @@ app.get('/profiles/:address', async (req, res) => {
   }
 });
 
-// GET /history/:address — transaction history
-app.get('/history/:address', async (req, res) => {
+// GET /history/:address — transaction history (requires full auth + ownership)
+app.get('/history/:address', requireFullAuth, async (req: any, res) => {
   try {
-    const { address } = req.params;
+    const address = req.authenticatedAddress; // Use authenticated address
+    if (req.params.address !== address) {
+      return res.status(403).json({ error: 'Can only access your own history' });
+    }
     const limit = clampInt(req.query.limit, 1, 100, 50);
 
     const messages = await Message.findAll({
@@ -488,14 +652,11 @@ app.get('/history/:address', async (req, res) => {
   }
 });
 
-// POST /profiles — upsert profile (encryption key exchange)
-app.post('/profiles', profileWriteLimiter, async (req, res) => {
+// POST /profiles — upsert profile (encryption key exchange) — requires auth
+app.post('/profiles', requireAuth, profileWriteLimiter, async (req: any, res) => {
   try {
-    const { address, name, bio, txId, encryptionPublicKey } = req.body;
-
-    if (!address || typeof address !== 'string') {
-      return res.status(400).json({ error: 'address is required' });
-    }
+    const address = req.authenticatedAddress; // Use authenticated address, not client-provided
+    const { name, bio, txId, encryptionPublicKey } = req.body;
 
     // Build update data — only include non-empty fields to avoid overwriting
     const data: any = { address };
@@ -514,6 +675,16 @@ app.post('/profiles', profileWriteLimiter, async (req, res) => {
     }
 
     await Profile.upsert(data);
+
+    // If this was a limited session and user just registered with an encryption key,
+    // upgrade the session to full access
+    if (req.sessionLimited && encryptionPublicKey) {
+      const token = req.headers.authorization?.slice(7);
+      if (token && sessions.has(token)) {
+        sessions.get(token)!.limited = false;
+      }
+    }
+
     res.json({ success: true });
   } catch (e) {
     console.error('POST /profiles error:', e);
@@ -527,12 +698,16 @@ app.post('/profiles', profileWriteLimiter, async (req, res) => {
 const preferencesLimiter = rateLimit({
   windowMs: 60 * 1000,
   max: 20,
+  keyGenerator: rateLimitKeyGenerator,
   message: { error: 'Preferences rate limit exceeded' }
 });
 
-// GET /preferences/:address — get user preferences
-app.get('/preferences/:address', preferencesLimiter, async (req, res) => {
+// GET /preferences/:address — get user preferences (requires full auth + ownership)
+app.get('/preferences/:address', requireFullAuth, preferencesLimiter, async (req: any, res) => {
   const address = req.params.address as string;
+  if (address !== req.authenticatedAddress) {
+    return res.status(403).json({ error: 'Can only access your own preferences' });
+  }
   const defaults = {
     address,
     pinned_chats: [],
@@ -540,7 +715,9 @@ app.get('/preferences/:address', preferencesLimiter, async (req, res) => {
     deleted_chats: [],
     disappear_timers: {},
     encrypted_keys: null,
-    key_nonce: null
+    key_nonce: null,
+    settings: {},
+    migrated: false
   };
 
   try {
@@ -559,8 +736,10 @@ app.get('/preferences/:address', preferencesLimiter, async (req, res) => {
       muted_chats: JSON.parse(prefs.muted_chats || '[]'),
       deleted_chats: JSON.parse(prefs.deleted_chats || '[]'),
       disappear_timers: JSON.parse(prefs.disappear_timers || '{}'),
-      encrypted_keys: prefs.encrypted_keys ? JSON.parse(prefs.encrypted_keys) : null,
-      key_nonce: prefs.key_nonce
+      encrypted_keys: null, // Secret keys no longer returned — derived from wallet
+      key_nonce: null,
+      settings: JSON.parse(prefs.settings || '{}'),
+      migrated: prefs.migrated || false
     });
   } catch (e: any) {
     console.error('GET /preferences error:', e);
@@ -572,15 +751,16 @@ app.get('/preferences/:address', preferencesLimiter, async (req, res) => {
   }
 });
 
-// POST /preferences/:address — update user preferences
-app.post('/preferences/:address', preferencesLimiter, async (req, res) => {
+// POST /preferences/:address — update user preferences (requires full auth + ownership)
+app.post('/preferences/:address', requireFullAuth, preferencesLimiter, async (req: any, res) => {
   try {
     const address = req.params.address as string;
-    if (!isValidAddress(address)) {
-      return res.status(400).json({ error: 'Invalid address' });
+    if (address !== req.authenticatedAddress) {
+      return res.status(403).json({ error: 'Can only update your own preferences' });
     }
 
-    const { pinnedChats, mutedChats, deletedChats, disappearTimers, encryptedKeys, keyNonce } = req.body;
+    const { pinnedChats, mutedChats, deletedChats, disappearTimers, settings, migrated } = req.body;
+    // Note: encryptedKeys and keyNonce are no longer accepted — keys derived from wallet
 
     // Validate and stringify JSON fields
     const data: any = { address };
@@ -607,14 +787,15 @@ app.post('/preferences/:address', preferencesLimiter, async (req, res) => {
       data.disappear_timers = JSON.stringify(disappearTimers);
     }
 
-    if (encryptedKeys !== undefined) {
-      data.encrypted_keys = typeof encryptedKeys === 'string'
-        ? encryptedKeys.slice(0, 5000)
-        : JSON.stringify(encryptedKeys).slice(0, 5000);
+    if (settings !== undefined) {
+      if (typeof settings !== 'object' || settings === null) {
+        return res.status(400).json({ error: 'settings must be object' });
+      }
+      data.settings = JSON.stringify(settings);
     }
 
-    if (keyNonce !== undefined) {
-      data.key_nonce = typeof keyNonce === 'string' ? keyNonce.slice(0, 200) : null;
+    if (migrated !== undefined) {
+      data.migrated = !!migrated;
     }
 
     await UserPreferences.upsert(data);
@@ -632,6 +813,7 @@ app.post('/preferences/:address', preferencesLimiter, async (req, res) => {
 const reactionLimiter = rateLimit({
   windowMs: 60 * 1000,
   max: 30,
+  keyGenerator: rateLimitKeyGenerator,
   message: { error: 'Reaction rate limit exceeded' }
 });
 
@@ -661,12 +843,12 @@ app.get('/reactions/:messageId', async (req, res) => {
   }
 });
 
-// POST /reactions — add a reaction
-app.post('/reactions', reactionLimiter, async (req, res) => {
+// POST /reactions — add a reaction (requires full auth)
+app.post('/reactions', requireFullAuth, reactionLimiter, async (req: any, res) => {
   try {
-    const { messageId, userAddress, emoji } = req.body;
+    const userAddress = req.authenticatedAddress; // Use authenticated address
+    const { messageId, emoji } = req.body;
     if (!messageId || typeof messageId !== 'string') return res.status(400).json({ error: 'messageId required' });
-    if (!userAddress || typeof userAddress !== 'string') return res.status(400).json({ error: 'userAddress required' });
     if (!isValidEmoji(emoji)) return res.status(400).json({ error: 'Invalid emoji' });
 
     await Reaction.findOrCreate({
@@ -695,11 +877,12 @@ app.post('/reactions', reactionLimiter, async (req, res) => {
   }
 });
 
-// DELETE /reactions — remove a reaction
-app.delete('/reactions', reactionLimiter, async (req, res) => {
+// DELETE /reactions — remove a reaction (requires full auth)
+app.delete('/reactions', requireFullAuth, reactionLimiter, async (req: any, res) => {
   try {
-    const { messageId, userAddress, emoji } = req.body;
-    if (!messageId || !userAddress || !emoji) return res.status(400).json({ error: 'Missing fields' });
+    const userAddress = req.authenticatedAddress; // Use authenticated address
+    const { messageId, emoji } = req.body;
+    if (!messageId || !emoji) return res.status(400).json({ error: 'Missing fields' });
 
     await Reaction.destroy({
       where: { message_id: messageId.slice(0, 300), user_address: userAddress.slice(0, 100), emoji: emoji.slice(0, 8) }
@@ -739,12 +922,11 @@ app.get('/status', async (_req, res) => {
 
 // --- DM Message Delete / Edit ---
 
-// DELETE /messages/:id — delete a DM message off-chain
-app.delete('/messages/:id', async (req, res) => {
+// DELETE /messages/:id — delete a DM message off-chain (requires full auth)
+app.delete('/messages/:id', requireFullAuth, async (req: any, res) => {
   try {
     const { id } = req.params;
-    const address = req.query.address as string;
-    if (!address) return res.status(400).json({ error: 'address required' });
+    const address = req.authenticatedAddress; // Use authenticated address
 
     const msg = await Message.findByPk(id);
     if (!msg) return res.status(404).json({ error: 'Message not found' });
@@ -770,12 +952,13 @@ app.delete('/messages/:id', async (req, res) => {
   }
 });
 
-// POST /messages/:id/edit — edit a DM message off-chain
-app.post('/messages/:id/edit', async (req, res) => {
+// POST /messages/:id/edit — edit a DM message off-chain (requires full auth)
+app.post('/messages/:id/edit', requireFullAuth, async (req: any, res) => {
   try {
     const { id } = req.params;
-    const { address, encryptedPayload, encryptedPayloadSelf } = req.body;
-    if (!address || !encryptedPayload) return res.status(400).json({ error: 'address and encryptedPayload required' });
+    const address = req.authenticatedAddress; // Use authenticated address
+    const { encryptedPayload, encryptedPayloadSelf } = req.body;
+    if (!encryptedPayload) return res.status(400).json({ error: 'encryptedPayload required' });
 
     const msg = await Message.findByPk(id);
     if (!msg) return res.status(404).json({ error: 'Message not found' });
@@ -872,13 +1055,13 @@ app.get('/rooms/:id', async (req, res) => {
   }
 });
 
-// POST /rooms — create a room
-app.post('/rooms', async (req, res) => {
+// POST /rooms — create a room (requires full auth)
+app.post('/rooms', requireFullAuth, async (req: any, res) => {
   try {
-    const { name, type, creatorAddress } = req.body;
+    const creatorAddress = req.authenticatedAddress; // Use authenticated address
+    const { name, type } = req.body;
     if (!name || typeof name !== 'string' || name.trim().length === 0) return res.status(400).json({ error: 'name required' });
     if (name.trim().length > 100) return res.status(400).json({ error: 'name too long (max 100)' });
-    if (!creatorAddress || typeof creatorAddress !== 'string') return res.status(400).json({ error: 'creatorAddress required' });
 
     const roomType = type === 'group' ? 'group' : 'channel';
     const isPrivate = roomType === 'group';
@@ -906,11 +1089,12 @@ app.post('/rooms', async (req, res) => {
   }
 });
 
-// PATCH /rooms/:id — rename room
-app.patch('/rooms/:id', async (req, res) => {
+// PATCH /rooms/:id — rename room (requires full auth)
+app.patch('/rooms/:id', requireFullAuth, async (req: any, res) => {
   try {
-    const { name, address } = req.body;
-    if (!name || !address) return res.status(400).json({ error: 'name and address required' });
+    const address = req.authenticatedAddress; // Use authenticated address
+    const { name } = req.body;
+    if (!name) return res.status(400).json({ error: 'name required' });
 
     const room = await Room.findByPk(req.params.id);
     if (!room) return res.status(404).json({ error: 'Room not found' });
@@ -928,13 +1112,13 @@ app.patch('/rooms/:id', async (req, res) => {
   }
 });
 
-// DELETE /rooms/:id — delete room (creator only)
-app.delete('/rooms/:id', async (req, res) => {
+// DELETE /rooms/:id — delete room (creator only, requires full auth)
+app.delete('/rooms/:id', requireFullAuth, async (req: any, res) => {
   try {
     const room = await Room.findByPk(req.params.id);
     if (!room) return res.status(404).json({ error: 'Room not found' });
 
-    const address = req.query.address as string;
+    const address = req.authenticatedAddress; // Use authenticated address
     if (room.created_by !== address) return res.status(403).json({ error: 'Only creator can delete' });
 
     const roomId = room.id;
@@ -950,6 +1134,7 @@ app.delete('/rooms/:id', async (req, res) => {
     // Cascade delete
     await RoomMessage.destroy({ where: { room_id: roomId } });
     await RoomMember.destroy({ where: { room_id: roomId } });
+    await RoomKey.destroy({ where: { room_id: roomId } });
     await room.destroy();
 
     res.json({ success: true });
@@ -959,11 +1144,10 @@ app.delete('/rooms/:id', async (req, res) => {
   }
 });
 
-// POST /rooms/:id/join — join a room
-app.post('/rooms/:id/join', async (req, res) => {
+// POST /rooms/:id/join — join a room (requires full auth)
+app.post('/rooms/:id/join', requireFullAuth, async (req: any, res) => {
   try {
-    const { address } = req.body;
-    if (!address) return res.status(400).json({ error: 'address required' });
+    const address = req.authenticatedAddress; // Use authenticated address
 
     const room = await Room.findByPk(req.params.id);
     if (!room) return res.status(404).json({ error: 'Room not found' });
@@ -979,11 +1163,10 @@ app.post('/rooms/:id/join', async (req, res) => {
   }
 });
 
-// POST /rooms/:id/leave — leave a room
-app.post('/rooms/:id/leave', async (req, res) => {
+// POST /rooms/:id/leave — leave a room (requires full auth)
+app.post('/rooms/:id/leave', requireFullAuth, async (req: any, res) => {
   try {
-    const { address } = req.body;
-    if (!address) return res.status(400).json({ error: 'address required' });
+    const address = req.authenticatedAddress; // Use authenticated address
 
     await RoomMember.destroy({ where: { room_id: req.params.id, user_id: address } });
     broadcastToRoom(req.params.id, { type: 'room_member_left', payload: { roomId: req.params.id, address } });
@@ -997,7 +1180,7 @@ app.post('/rooms/:id/leave', async (req, res) => {
 // GET /rooms/:id/messages — room messages
 app.get('/rooms/:id/messages', async (req, res) => {
   try {
-    const limit = clampInt(req.query.limit, 1, 100, 50);
+    const limit = clampInt(req.query.limit, 1, 200, 100);
     const offset = clampInt(req.query.offset, 0, 100000, 0);
     const messages = await RoomMessage.findAll({
       where: { room_id: req.params.id },
@@ -1011,12 +1194,11 @@ app.get('/rooms/:id/messages', async (req, res) => {
   }
 });
 
-// DELETE /rooms/:roomId/messages/:msgId — delete a room message
-app.delete('/rooms/:roomId/messages/:msgId', async (req, res) => {
+// DELETE /rooms/:roomId/messages/:msgId — delete a room message (requires full auth)
+app.delete('/rooms/:roomId/messages/:msgId', requireFullAuth, async (req: any, res) => {
   try {
     const { roomId, msgId } = req.params;
-    const address = req.query.address as string;
-    if (!address) return res.status(400).json({ error: 'address required' });
+    const address = req.authenticatedAddress; // Use authenticated address
 
     const msg = await RoomMessage.findByPk(msgId);
     if (!msg) return res.status(404).json({ error: 'Message not found' });
@@ -1037,12 +1219,13 @@ app.delete('/rooms/:roomId/messages/:msgId', async (req, res) => {
   }
 });
 
-// PATCH /rooms/:roomId/messages/:msgId — edit a room message
-app.post('/rooms/:roomId/messages/:msgId/edit', async (req, res) => {
+// PATCH /rooms/:roomId/messages/:msgId — edit a room message (requires full auth)
+app.post('/rooms/:roomId/messages/:msgId/edit', requireFullAuth, async (req: any, res) => {
   try {
     const { roomId, msgId } = req.params;
-    const { address, text } = req.body;
-    if (!address || !text) return res.status(400).json({ error: 'address and text required' });
+    const address = req.authenticatedAddress; // Use authenticated address
+    const { text } = req.body;
+    if (!text) return res.status(400).json({ error: 'text required' });
 
     const msg = await RoomMessage.findByPk(msgId);
     if (!msg) return res.status(404).json({ error: 'Message not found' });
@@ -1059,8 +1242,88 @@ app.post('/rooms/:roomId/messages/:msgId/edit', async (req, res) => {
   }
 });
 
-// DELETE /rooms/dm-clear — clear DM history between two addresses
-app.delete('/rooms/dm-clear', async (req, res) => {
+// GET /rooms/:id/keys — get my encrypted room key (requires full auth)
+app.get('/rooms/:id/keys', requireFullAuth, async (req: any, res) => {
+  try {
+    const address = req.authenticatedAddress;
+    const roomKey = await RoomKey.findOne({
+      where: { room_id: req.params.id, user_address: address }
+    });
+    if (!roomKey) return res.json({ exists: false });
+    res.json({
+      exists: true,
+      encrypted_room_key: roomKey.encrypted_room_key,
+      nonce: roomKey.nonce,
+      sender_public_key: roomKey.sender_public_key
+    });
+  } catch (e) {
+    console.error('GET /rooms/:id/keys error:', e);
+    res.status(500).json({ error: 'Failed to fetch room key' });
+  }
+});
+
+// POST /rooms/:id/keys — store encrypted room keys for members (requires full auth)
+app.post('/rooms/:id/keys', requireFullAuth, async (req: any, res) => {
+  try {
+    const address = req.authenticatedAddress;
+    const { keys } = req.body; // Array of { userAddress, encryptedRoomKey, nonce, senderPublicKey }
+    if (!Array.isArray(keys) || keys.length === 0) {
+      return res.status(400).json({ error: 'keys array required' });
+    }
+    if (keys.length > 200) {
+      return res.status(400).json({ error: 'Too many keys (max 200)' });
+    }
+
+    // Verify sender is a member of the room
+    const member = await RoomMember.findOne({ where: { room_id: req.params.id, user_id: address } });
+    if (!member) return res.status(403).json({ error: 'Not a member of this room' });
+
+    for (const k of keys) {
+      if (!k.userAddress || !k.encryptedRoomKey || !k.nonce || !k.senderPublicKey) continue;
+      await RoomKey.upsert({
+        room_id: req.params.id,
+        user_address: k.userAddress.slice(0, 200),
+        encrypted_room_key: k.encryptedRoomKey.slice(0, 500),
+        nonce: k.nonce.slice(0, 100),
+        sender_public_key: k.senderPublicKey.slice(0, 100),
+      });
+    }
+
+    res.json({ success: true });
+  } catch (e) {
+    console.error('POST /rooms/:id/keys error:', e);
+    res.status(500).json({ error: 'Failed to store room keys' });
+  }
+});
+
+// GET /rooms/:id/members — list room members with their encryption public keys
+app.get('/rooms/:id/members', requireFullAuth, async (req: any, res) => {
+  try {
+    const members = await RoomMember.findAll({ where: { room_id: req.params.id } });
+    const memberAddresses = members.map(m => m.user_id);
+
+    // Fetch encryption public keys for all members
+    const profiles = await Profile.findAll({
+      where: { address: memberAddresses },
+      attributes: ['address', 'username', 'encryption_public_key']
+    });
+    const profileMap = new Map(profiles.map(p => [p.address, p]));
+
+    const result = memberAddresses.map(addr => ({
+      address: addr,
+      username: profileMap.get(addr)?.username || null,
+      encryption_public_key: profileMap.get(addr)?.encryption_public_key || null
+    }));
+
+    res.json(result);
+  } catch (e) {
+    console.error('GET /rooms/:id/members error:', e);
+    res.status(500).json({ error: 'Failed to fetch members' });
+  }
+});
+
+// DELETE /rooms/dm-clear — clear DM history between two addresses (requires full auth)
+app.delete('/rooms/dm-clear', requireFullAuth, async (req: any, res) => {
   try {
     const { dialogHash } = req.body;
     if (!dialogHash || typeof dialogHash !== 'string') return res.status(400).json({ error: 'dialogHash required' });
@@ -1095,11 +1358,12 @@ app.get('/pins/:contextId', async (req, res) => {
   }
 });
 
-// POST /pins — pin a message
-app.post('/pins', async (req, res) => {
+// POST /pins — pin a message (requires full auth)
+app.post('/pins', requireFullAuth, async (req: any, res) => {
   try {
-    const { contextId, messageId, pinnedBy, messageText } = req.body;
-    if (!contextId || !messageId || !pinnedBy) return res.status(400).json({ error: 'Missing fields' });
+    const pinnedBy = req.authenticatedAddress; // Use authenticated address
+    const { contextId, messageId, messageText } = req.body;
+    if (!contextId || !messageId) return res.status(400).json({ error: 'Missing fields' });
 
     await PinnedMessage.findOrCreate({
       where: { context_id: contextId.slice(0, 300), message_id: messageId.slice(0, 300) },
@@ -1122,8 +1386,8 @@ app.post('/pins', async (req, res) => {
   }
 });
 
-// DELETE /pins — unpin a message
-app.delete('/pins', async (req, res) => {
+// DELETE /pins — unpin a message (requires full auth)
+app.delete('/pins', requireFullAuth, async (req: any, res) => {
   try {
     const { contextId, messageId } = req.body;
     if (!contextId || !messageId) return res.status(400).json({ error: 'Missing fields' });
@@ -1145,6 +1409,62 @@ app.delete('/pins', async (req, res) => {
   }
 });
 
+// --- Disappearing Messages Cleanup ---
+
+const DISAPPEAR_TTLS: Record<string, number> = {
+  '30s': 30_000,
+  '5m': 5 * 60_000,
+  '1h': 60 * 60_000,
+  '24h': 24 * 60 * 60_000
+};
+
+/**
+ * Server-side cleanup of expired disappearing messages.
+ * Reads all user preferences with disappear timers and deletes expired messages from DB.
+ */
+async function cleanupExpiredMessages() {
+  try {
+    const allPrefs = await UserPreferences.findAll({
+      where: {
+        disappear_timers: { [Op.ne]: '{}' }
+      }
+    });
+
+    const now = Date.now();
+    let totalDeleted = 0;
+
+    for (const pref of allPrefs) {
+      const timers: Record<string, string> = JSON.parse(pref.disappear_timers || '{}');
+
+      for (const [dialogHashOrContact, timerKey] of Object.entries(timers)) {
+        if (timerKey === 'off' || !DISAPPEAR_TTLS[timerKey]) continue;
+        const ttl = DISAPPEAR_TTLS[timerKey];
+        const cutoff = now - ttl;
+
+        // Delete expired messages from this dialog
+        // dialogHashOrContact could be a contactId (address) — find all dialogs involving this address
+        const deleted = await Message.destroy({
+          where: {
+            timestamp: { [Op.lt]: cutoff },
+            [Op.or]: [
+              { dialog_hash: dialogHashOrContact },
+              { sender: dialogHashOrContact },
+              { recipient: dialogHashOrContact }
+            ]
+          }
+        });
+        totalDeleted += deleted;
+      }
+    }
+
+    if (totalDeleted > 0) {
+      console.log(`[Cleanup] Deleted ${totalDeleted} expired disappearing messages`);
+    }
+  } catch (e) {
+    console.error('[Cleanup] Failed to cleanup expired messages:', e);
+  }
+}
+
 // --- Start ---
 
 const PORT = Number(process.env.PORT) || 3002;
@@ -1156,6 +1476,10 @@ app.get('/health', (_req, res) => {
 
 initDB().then(() => {
   indexer.start();
+
+  // Run disappearing message cleanup every 60 seconds
+  setInterval(cleanupExpiredMessages, 60_000);
+
   server.listen(PORT, () => {
     console.log(`Ghost backend running on port ${PORT}`);
     console.log(`Allowed CORS origins: ${ALLOWED_ORIGINS.join(', ')}`);

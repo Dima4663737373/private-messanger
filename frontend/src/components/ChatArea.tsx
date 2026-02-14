@@ -101,6 +101,13 @@ const ChatArea: React.FC<ChatAreaProps> = ({
   // Room info panel
   const [showRoomInfo, setShowRoomInfo] = useState(false);
 
+  // Chat search state
+  const [isSearchOpen, setIsSearchOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [searchMatchIds, setSearchMatchIds] = useState<string[]>([]);
+  const [searchIndex, setSearchIndex] = useState(0);
+  const searchInputRef = useRef<HTMLInputElement>(null);
+
   // Clear edit/reply state and menu when switching chats
   useEffect(() => {
     setEditingMessageId(null);
@@ -109,7 +116,33 @@ const ChatArea: React.FC<ChatAreaProps> = ({
     setReplyingTo(null);
     setEmojiPickerMsgId(null);
     setShowRoomInfo(false);
+    setIsSearchOpen(false);
+    setSearchQuery('');
+    setSearchMatchIds([]);
   }, [chatId]);
+
+  // Update search matches when query changes
+  useEffect(() => {
+    if (!searchQuery.trim()) {
+      setSearchMatchIds([]);
+      setSearchIndex(0);
+      return;
+    }
+    const q = searchQuery.toLowerCase();
+    const matches = messages
+      .filter(m => m.text.toLowerCase().includes(q))
+      .map(m => m.id);
+    setSearchMatchIds(matches);
+    setSearchIndex(matches.length > 0 ? matches.length - 1 : 0);
+  }, [searchQuery, messages]);
+
+  // Scroll to current search match
+  useEffect(() => {
+    if (searchMatchIds.length > 0 && searchMatchIds[searchIndex]) {
+      const el = document.getElementById(`msg-${searchMatchIds[searchIndex]}`);
+      if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+  }, [searchIndex, searchMatchIds]);
 
   // Close menu when clicking outside
   useEffect(() => {
@@ -328,7 +361,13 @@ const ChatArea: React.FC<ChatAreaProps> = ({
           </div>
         </div>
         <div className="flex items-center gap-2 relative">
-          <button aria-label="Search messages" className="w-10 h-10 flex items-center justify-center border border-[#E5E5E5] rounded-xl text-[#666] hover:text-[#FF8C00] transition-colors"><Search size={18} /></button>
+          <button
+            aria-label="Search messages"
+            onClick={() => { setIsSearchOpen(!isSearchOpen); if (!isSearchOpen) setTimeout(() => searchInputRef.current?.focus(), 100); }}
+            className={`w-10 h-10 flex items-center justify-center border rounded-xl transition-colors ${isSearchOpen ? 'border-[#FF8C00] text-[#FF8C00] bg-[#FFF3E0]' : 'border-[#E5E5E5] text-[#666] hover:text-[#FF8C00]'}`}
+          >
+            <Search size={18} />
+          </button>
           <button
             aria-label="Chat menu"
             onClick={() => setIsMenuOpen(!isMenuOpen)}
@@ -424,6 +463,61 @@ const ChatArea: React.FC<ChatAreaProps> = ({
           )}
         </div>
       </header>
+
+      {/* Search Bar */}
+      {isSearchOpen && (
+        <div className="px-8 py-3 bg-white border-b border-[#E5E5E5] flex items-center gap-3 animate-fade-in">
+          <Search size={16} className="text-[#999] shrink-0" />
+          <input
+            ref={searchInputRef}
+            type="text"
+            value={searchQuery}
+            onChange={e => setSearchQuery(e.target.value)}
+            onKeyDown={e => {
+              if (e.key === 'Enter' && searchMatchIds.length > 0) {
+                setSearchIndex(prev => (prev > 0 ? prev - 1 : searchMatchIds.length - 1));
+              }
+              if (e.key === 'Escape') {
+                setIsSearchOpen(false);
+                setSearchQuery('');
+                setSearchMatchIds([]);
+              }
+            }}
+            placeholder="Search messages..."
+            className="flex-1 bg-transparent text-sm text-[#0A0A0A] placeholder-[#999] focus:outline-none"
+            autoFocus
+          />
+          {searchQuery && (
+            <span className="text-xs text-[#999] font-mono shrink-0">
+              {searchMatchIds.length > 0 ? `${searchMatchIds.length - searchIndex}/${searchMatchIds.length}` : '0 results'}
+            </span>
+          )}
+          {searchMatchIds.length > 1 && (
+            <div className="flex gap-1 shrink-0">
+              <button
+                onClick={() => setSearchIndex(prev => (prev < searchMatchIds.length - 1 ? prev + 1 : 0))}
+                className="w-7 h-7 flex items-center justify-center rounded-lg text-[#666] hover:bg-[#F5F5F5] text-xs"
+                title="Previous"
+              >
+                ↑
+              </button>
+              <button
+                onClick={() => setSearchIndex(prev => (prev > 0 ? prev - 1 : searchMatchIds.length - 1))}
+                className="w-7 h-7 flex items-center justify-center rounded-lg text-[#666] hover:bg-[#F5F5F5] text-xs"
+                title="Next"
+              >
+                ↓
+              </button>
+            </div>
+          )}
+          <button
+            onClick={() => { setIsSearchOpen(false); setSearchQuery(''); setSearchMatchIds([]); }}
+            className="p-1.5 text-[#999] hover:text-[#333] rounded-lg hover:bg-[#F5F5F5]"
+          >
+            <X size={16} />
+          </button>
+        </div>
+      )}
 
       {/* Room Info Panel */}
       {showRoomInfo && roomChat && (
@@ -577,12 +671,16 @@ const ChatArea: React.FC<ChatAreaProps> = ({
              />
           </div>
         ) : (
-          messages.map((msg) => (
+          messages.map((msg) => {
+            const isSearchMatch = searchMatchIds.includes(msg.id);
+            const isActiveMatch = isSearchMatch && searchMatchIds[searchIndex] === msg.id;
+            return (
             <motion.div
               key={msg.id}
+              id={`msg-${msg.id}`}
               initial={{ opacity: 0, y: 10 }}
               animate={{ opacity: 1, y: 0 }}
-              className={`flex items-end gap-3 max-w-[70%] ${msg.isMine ? 'self-end flex-row-reverse' : 'self-start'}`}
+              className={`flex items-end gap-3 max-w-[70%] ${msg.isMine ? 'self-end flex-row-reverse' : 'self-start'} ${isActiveMatch ? 'ring-2 ring-[#FF8C00] ring-offset-2 rounded-3xl' : isSearchMatch ? 'ring-1 ring-[#FF8C00]/30 ring-offset-1 rounded-3xl' : ''}`}
             >
               {!msg.isMine && (
                 <div className="w-8 h-8 rounded-full bg-[#E5E5E5] flex-shrink-0 overflow-hidden">
@@ -784,7 +882,7 @@ const ChatArea: React.FC<ChatAreaProps> = ({
                 )}
               </div>
             </motion.div>
-          ))
+          );})
         )}
       </div>
 

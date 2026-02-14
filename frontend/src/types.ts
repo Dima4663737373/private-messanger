@@ -1,6 +1,6 @@
 
 export type Status = 'online' | 'offline' | 'away';
-export type AppView = 'chats' | 'channels' | 'groups' | 'settings' | 'contacts';
+export type AppView = 'chats' | 'channels' | 'groups' | 'settings' | 'contacts' | 'notifications';
 
 export type RoomType = 'channel' | 'group';
 
@@ -69,6 +69,19 @@ export const DISAPPEAR_TIMERS: Record<DisappearTimer, number> = {
 };
 
 export type ChatContextAction = 'open_new_tab' | 'mark_unread' | 'pin' | 'mute' | 'archive' | 'delete' | 'rename';
+
+export type NotificationType = 'message' | 'system' | 'security' | 'transaction';
+
+export interface AppNotification {
+  id: string;
+  type: NotificationType;
+  title: string;
+  body: string;
+  timestamp: number;
+  read: boolean;
+  /** Optional chat/contact ID to navigate to */
+  chatId?: string;
+}
 
 export interface User {
   id: string;
