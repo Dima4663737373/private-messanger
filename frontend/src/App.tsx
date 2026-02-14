@@ -89,11 +89,12 @@ const InnerApp: React.FC = () => {
     // Determine counterparty
     let counterpartyAddress = msg.isMine ? msg.recipient : msg.senderId;
     
-    // Handle 'unknown' recipient for sent messages (PrivTok privacy)
-    if (msg.isMine && (counterpartyAddress === 'unknown' || !counterpartyAddress) && msg.recipientHash) {
-         counterpartyAddress = `hash:${msg.recipientHash.slice(0,10)}`;
+    // Handle 'unknown' recipient for sent messages — skip them (can't send on-chain)
+    if (msg.isMine && (counterpartyAddress === 'unknown' || !counterpartyAddress)) {
+         logger.warn('Skipping message with unknown recipient:', msg.recipientHash);
+         return;
     }
-    
+
     if (!counterpartyAddress) return; 
 
     // Check cache to avoid re-toast for same message ID if we processed it
@@ -121,7 +122,7 @@ const InnerApp: React.FC = () => {
         // Create new contact
         const newContact: Contact = {
           id: counterpartyAddress,
-          name: counterpartyAddress.startsWith('hash:') ? `Unknown (${msg.recipientHash?.slice(0,6)})` : `User ${counterpartyAddress.slice(0, 6)}...`,
+          name: `User ${counterpartyAddress.slice(0, 6)}...`,
           address: counterpartyAddress,
           dialogHash: msg.dialogHash,
           description: 'Discovered from network',
@@ -131,8 +132,8 @@ const InnerApp: React.FC = () => {
           lastMessage: msg.text,
           lastMessageTime: new Date()
         };
-        // Also trigger profile fetch for this new contact (if not hash)
-        if (!counterpartyAddress.startsWith('hash:')) {
+        // Fetch profile for this new contact
+        if (counterpartyAddress.startsWith('aleo1')) {
             syncProfile(counterpartyAddress).then(profile => {
                  if (profile && profile.username) {
                      setContacts(curr => curr.map(c => c.id === counterpartyAddress ? { ...c, name: profile.username, initials: profile.username.slice(0,2).toUpperCase() } : c));
@@ -405,9 +406,9 @@ const InnerApp: React.FC = () => {
           let displayName = `User ${counterpartyAddress.slice(0, 6)}...`;
 
           if (counterpartyAddress === 'unknown' && isMine) {
-            // Skip unknown recipients or label them by hash
-            finalAddress = `hash:${dialogMsg.recipient_hash.slice(0,10)}`;
-            displayName = `Unknown (${dialogMsg.recipient_hash.slice(0,6)})`;
+            // Skip unknown recipients (can't send on-chain messages to them)
+            logger.warn('Skipping dialog with unknown recipient:', dialogMsg.recipient_hash);
+            continue;
           }
 
           // Use decrypted text from fetchDialogs
