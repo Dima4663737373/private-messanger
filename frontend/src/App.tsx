@@ -61,6 +61,27 @@ const InnerApp: React.FC = () => {
     updateSetting
   } = usePreferences(publicKey);
 
+  // Derive encryption keys EARLY — before WS connects, so AUTH_CHALLENGE can be answered
+  const [keysReady, setKeysReady] = useState(false);
+  useEffect(() => {
+    if (!publicKey || !wallet) return;
+    if (getCachedKeys(publicKey)) { setKeysReady(true); return; }
+
+    (async () => {
+      try {
+        const { getOrDeriveKeys } = await import('./utils/key-derivation');
+        const keys = await getOrDeriveKeys(wallet, publicKey);
+        setCachedKeys(publicKey, keys);
+        logger.debug('Encryption keys derived early (before WS)');
+      } catch {
+        const keys = generateKeyPair();
+        setCachedKeys(publicKey, keys);
+        logger.warn('Key derivation failed, using session keys');
+      }
+      setKeysReady(true);
+    })();
+  }, [publicKey, wallet]);
+
   // Contacts State - In-Memory Only (Declared first to avoid ReferenceError)
   const [contacts, setContacts] = useState<Contact[]>([]);
 
@@ -455,33 +476,7 @@ const InnerApp: React.FC = () => {
         logger.error('Migration failed:', err);
       }
 
-      // 0.5. Initialize encryption keys
-      // Priority: cached > signMessage derivation > passphrase recovery > generate new
-      if (!getCachedKeys(publicKey)) {
-        try {
-          const { getOrDeriveKeys, decryptKeysWithPassphrase } = await import('./utils/key-derivation');
-
-          // Try wallet-based derivation (signMessage if available, else random)
-          const keys = await getOrDeriveKeys(wallet, publicKey);
-          setCachedKeys(publicKey, keys);
-          logger.debug('Encryption keys initialized');
-
-          // Try to restore from passphrase backup if keys were randomly generated
-          // (signMessage not available → keys are non-deterministic)
-          try {
-            const prefs = await fetchPreferences(publicKey);
-            if (prefs && (prefs as any).encrypted_keys && (prefs as any).key_nonce) {
-              // Backend has a passphrase-encrypted backup — user can recover via Settings
-              logger.debug('Passphrase-encrypted key backup available on backend');
-            }
-          } catch { /* ignore — preferences may not be available yet */ }
-        } catch (err) {
-          // Fallback: generate session keys (user may have cancelled wallet popup)
-          logger.warn('Key derivation failed, generating session keys:', err);
-          const keys = generateKeyPair();
-          setCachedKeys(publicKey, keys);
-        }
-      }
+      // Keys are already derived early (before WS connects) — see keysReady effect above
 
       // 1. Register encryption public key in profile (required for key exchange)
       // notifyProfileUpdate auto-includes encryptionPublicKey from cached keys
