@@ -13,4 +13,7 @@
 [build.environment]
   NODE_VERSION = "20"
   NPM_FLAGS = "--legacy-peer-deps"
+  VITE_BACKEND_URL = "https://ghost-production-839c.up.railway.app"
+  VITE_WS_URL = "wss://ghost-production-839c.up.railway.app"
+  VITE_ALEO_EXPLORER_API_BASE = "https://api.explorer.provable.com/v1"
 
