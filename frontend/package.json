@@ -9,12 +9,10 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "@aleohq/sdk": "^0.6.9",
     "@demox-labs/aleo-wallet-adapter-base": "^0.0.23",
     "@demox-labs/aleo-wallet-adapter-leo": "^0.0.25",
     "@demox-labs/aleo-wallet-adapter-react": "^0.0.22",
     "@provablehq/sdk": "^0.9.16",
-    "@types/uuid": "^10.0.0",
     "clsx": "^2.1.1",
     "framer-motion": "^12.34.0",
     "lucide-react": "^0.563.0",
@@ -23,8 +21,7 @@
     "react-hot-toast": "^2.6.0",
     "tailwind-merge": "^3.4.0",
     "tweetnacl": "^1.0.3",
-    "tweetnacl-util": "^0.15.1",
-    "uuid": "^13.0.0"
+    "tweetnacl-util": "^0.15.1"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4.1.18",
