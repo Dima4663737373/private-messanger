@@ -578,6 +578,13 @@ const InnerApp: React.FC = () => {
     const contact = contacts.find(c => c.id === activeChatId);
     if (!contact || !contact.address) return;
 
+    // Validate recipient address for on-chain transactions
+    if (!contact.address.startsWith('aleo1')) {
+      toast.error('Cannot send on-chain message: Invalid recipient address');
+      logger.error('Invalid recipient address:', contact.address);
+      return;
+    }
+
     setIsSendingMessage(true);
 
     try {
