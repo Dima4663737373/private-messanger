@@ -3,14 +3,12 @@
  * Run this after deploying to ensure the deployment was successful
  */
 
-const PROGRAM_ID = "priv_messenger_leotest_012.aleo";
+const PROGRAM_ID = "priv_messenger_leotest_014.aleo";
 const REQUIRED_FUNCTIONS = [
+    "register_profile",
     "send_message",
-    "create_profile",
-    "update_profile",
-    "update_contact_name",
-    "delete_chat",
-    "restore_chat"
+    "update_message",
+    "delete_message"
 ];
 
 const RPC_BASES = [
@@ -38,7 +36,6 @@ async function verifyDeployment() {
                     const contentType = res.headers.get("content-type");
                     if (contentType && contentType.includes("application/json")) {
                         const data = await res.json();
-                        // Provable API v2 returns JSON, extract program content
                         programContent = data.program || data.source || JSON.stringify(data);
                     } else {
                         programContent = await res.text();
@@ -52,7 +49,6 @@ async function verifyDeployment() {
                 }
             } catch (e) {
                 console.log(`   ❌ Error: ${e.message}`);
-                // Continue to next URL
             }
         }
         if (programFound) break;
@@ -75,11 +71,9 @@ async function verifyDeployment() {
     const foundFunctions = [];
 
     for (const funcName of REQUIRED_FUNCTIONS) {
-        // Check for transition function
         const transitionPattern = new RegExp(`transition\\s+${funcName}\\s*\\(`, 'i');
-        // Also check for async transition
         const asyncTransitionPattern = new RegExp(`async\\s+transition\\s+${funcName}\\s*\\(`, 'i');
-        
+
         if (transitionPattern.test(programContent) || asyncTransitionPattern.test(programContent)) {
             foundFunctions.push(funcName);
             console.log(`✅ ${funcName} - Found`);
@@ -94,13 +88,9 @@ async function verifyDeployment() {
         console.log("✅ All required functions are present in the deployed program!");
     } else {
         console.log(`❌ Missing ${missingFunctions.length} required function(s):`);
-        missingFunctions.forEach(func => console.log(`   - ${funcName}`));
+        missingFunctions.forEach(func => console.log(`   - ${func}`));
         console.log("\n⚠️  The deployed program is missing required functions.");
-        console.log("   This usually means:");
-        console.log("   1. An older version of the code was deployed");
-        console.log("   2. The deployment failed partially");
-        console.log("   3. The wrong program file was deployed");
-        console.log("\n   Solution: Redeploy the program with the current code:");
+        console.log("   Solution: Redeploy the program with the current code:");
         console.log("   leo deploy --network testnet");
     }
     console.log("=".repeat(50) + "\n");

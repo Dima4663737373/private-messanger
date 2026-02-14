@@ -7,6 +7,12 @@ import { PROGRAM_ID } from '../deployed_program';
 import { TRANSACTION_FEE } from '../utils/constants';
 import { requestTransactionWithRetry } from '../utils/walletUtils';
 import { logger } from '../utils/logger';
+import { stringToFields } from '../utils/messageUtils';
+import { hashAddress } from '../utils/aleo-utils';
+import { getOrCreateMessagingKeys, encryptMessage } from '../utils/crypto';
+import { API_CONFIG } from '../config';
+
+const BACKEND_URL = API_CONFIG.BACKEND_BASE;
 
 export interface ExecuteTransactionOptions {
   maxRetries?: number;
@@ -36,11 +42,11 @@ export function useContract() {
 
     try {
       // Leo Wallet expects chainId as string; use explicit value to avoid INVALID_PARAMS
-      const chainId = typeof network === 'string' ? network : 'testnetbeta';
+      const chainId = 'testnetbeta'; // Force 'testnetbeta' string
       const transaction = {
         address: typeof publicKey === 'string' ? publicKey : String(publicKey),
         chainId,
-        fee: Number(TRANSACTION_FEE),
+        fee: Number(TRANSACTION_FEE), // Ensure fee is sufficient
         feePrivate: false,
         transitions: [
           {
@@ -73,139 +79,208 @@ export function useContract() {
   };
 
   /**
-   * Sends message
+   * Registers profile (on-chain) — stores encryption key parts
    */
-  const sendMessage = async (
-    recipient: string,
-    amount: number,
-    message: string,
-    timestamp: number,
+  const registerProfile = async (
     options?: ExecuteTransactionOptions
   ) => {
-    logger.group('🚀 Sending Message Transaction');
+    if (!publicKey) throw new Error("Wallet not connected");
     
+    // Ensure we have keys
+    const keys = getOrCreateMessagingKeys(publicKey);
+    
+    // Split public key (base64) into two fields
+    const keyFields = stringToFields(keys.publicKey, 2);
+    
+    const txId = await executeTransaction(
+      'register_profile',
+      [keyFields[0], keyFields[1]],
+      options
+    );
+
+    // Push profile + Public Key to backend (for easier discovery by address)
+    // Note: On-chain we only have hash->key. Backend helps map address->hash->key.
     try {
-      // Step 1: Clean and validate parameters
-      const cleanRecipient = recipient.trim().replace(/['"]/g, '');
-      
-      // Check recipient format
-      if (!cleanRecipient.startsWith('aleo1')) {
-        throw new Error(`Invalid recipient format: ${cleanRecipient}. Must start with "aleo1"`);
-      }
-      
-      // Check timestamp (must be in seconds)
-      if (!Number.isInteger(timestamp)) {
-        throw new Error(`Invalid timestamp: ${timestamp}. Must be an integer`);
-      }
-      
-      if (timestamp > 10000000000) {
-        console.warn('⚠️ Warning: Timestamp seems to be in milliseconds, converting to seconds...');
-        timestamp = Math.floor(timestamp / 1000);
-      }
-      
-      // Check amount
-      if (!Number.isInteger(amount) || amount < 0) {
-        throw new Error(`Invalid amount: ${amount}. Must be a non-negative integer`);
-      }
-      
-      // Check message field format
-      if (!message || !message.endsWith('field')) {
-        throw new Error(`Invalid message format: ${message}. Must end with "field"`);
-      }
-      
-      // Form parameters
-      const recipientParam = cleanRecipient;
-      const amountParam = `${amount}u64`;
-      const messageParam = message; // Already formatted as field
-      const timestampParam = `${timestamp}u64`;
-      
-      const inputs = [
-        recipientParam,
-        amountParam,
-        messageParam,
-        timestampParam,
-      ];
-      
-      logger.debug('Input Parameters:', {
-        recipient: recipientParam,
-        amount: amountParam,
-        message: messageParam,
-        timestamp: timestampParam,
-        timestampDate: new Date(timestamp * 1000).toISOString(),
-      });
-      
-      logger.debug('Formatted Inputs:', inputs);
-      logger.debug('Inputs Count:', inputs.length);
-      logger.debug('Inputs Types:', [
-        `[0] address: ${recipientParam}`,
-        `[1] u64: ${amountParam}`,
-        `[2] field: ${messageParam}`,
-        `[3] u64: ${timestampParam}`,
-      ]);
-      
-      // Check for invalid values
-      if (inputs.some((inp: string) => 
-        inp.includes("NaN") || inp === "undefined" || inp === "null" || inp === "")) {
-        throw new Error(`Invalid inputs detected: ${JSON.stringify(inputs)}`);
-      }
-      
-      logger.debug('All parameters validated');
-      logger.debug('Requesting transaction from wallet...');
-      
-      // Call executeTransaction
-      const txId = await executeTransaction(
-        'send_message',
-        inputs,
-        options
-      );
-      
-      logger.debug('Transaction Created:', txId);
-      logger.groupEnd();
-      
-      return txId;
-      
-    } catch (err: any) {
-      logger.groupEnd();
-      throw err;
+        await fetch(`${BACKEND_URL}/profiles`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                address: publicKey,
+                encryptionPublicKey: keys.publicKey,
+                txId
+            })
+        });
+    } catch (e) {
+        logger.error("Failed to push profile metadata", e);
     }
+
+    return txId;
   };
 
   /**
-   * Creates profile (on-chain)
+   * Helper to find a Message record by timestamp
    */
-  const createProfile = async (
-    name: string,
-    bio: string,
-    options?: ExecuteTransactionOptions
-  ) => {
-    return executeTransaction(
-      'create_profile',
-      [name, bio],
-      options
-    );
+  const findRecordByTimestamp = async (timestamp: number): Promise<string | null> => {
+      if (!adapter || !adapter.requestRecordPlaintexts) {
+          logger.warn("Wallet adapter does not support requestRecordPlaintexts");
+          return null;
+      }
+      try {
+           const response = await adapter.requestRecordPlaintexts(PROGRAM_ID);
+           if (response && response.records) {
+               for (const rec of response.records) {
+                   // Ensure it's a Message record
+                   // The plaintext usually starts with "record Message {"
+                   const plaintext = rec.plaintext || rec; // handle variations
+                   if (typeof plaintext === 'string' && plaintext.includes("record Message")) {
+                       const match = plaintext.match(/timestamp:\s*(\d+)u64/);
+                       if (match && parseInt(match[1]) === timestamp) {
+                           return plaintext;
+                       }
+                   }
+               }
+           }
+      } catch (e) {
+          logger.error("Failed to fetch records:", e);
+      }
+      return null;
   };
 
   /**
-   * Updates profile (on-chain; same as create — overwrites mapping)
+   * Deletes a message
    */
-  const updateProfile = async (
-    name: string,
-    bio: string,
+  const deleteMessage = async (timestamp: number, options?: ExecuteTransactionOptions) => {
+      if (!publicKey) throw new Error("Wallet not connected");
+      
+      const record = await findRecordByTimestamp(timestamp);
+      if (!record) {
+          throw new Error("Message record not found in wallet. It may have already been spent or synced.");
+      }
+
+      // Contract expects only the Message record (no timestamp)
+      const inputs = [
+          record
+      ];
+
+      return await executeTransaction('delete_message', inputs, options);
+  };
+
+  /**
+   * Edits a message
+   */
+  const editMessage = async (
+      timestamp: number, 
+      newText: string, 
+      recipientAddress: string, 
+      options?: ExecuteTransactionOptions
+  ) => {
+      if (!publicKey) throw new Error("Wallet not connected");
+
+      const record = await findRecordByTimestamp(timestamp);
+      if (!record) {
+          throw new Error("Message record not found in wallet.");
+      }
+
+      // Encrypt new text for Recipient
+      // We need recipient's public key
+      const senderKeys = getOrCreateMessagingKeys(publicKey);
+      let recipientPubKey = '';
+      try {
+        const res = await fetch(`${BACKEND_URL}/profiles/${recipientAddress}`);
+        if (res.ok) {
+           const profile = await res.json();
+           recipientPubKey = profile.encryption_public_key;
+        }
+      } catch (e) {
+        logger.warn("Could not fetch recipient profile for encryption key");
+      }
+
+      if (!recipientPubKey) {
+         throw new Error("Recipient public key not found");
+      }
+
+      const encryptedPayload = encryptMessage(newText, recipientPubKey, senderKeys.secretKey);
+
+      // Convert encrypted payload to 4 fields (contract expects [field; 4])
+      const newPayloadFields = stringToFields(encryptedPayload).slice(0, 4);
+      while (newPayloadFields.length < 4) {
+          newPayloadFields.push("0field");
+      }
+      const payloadInput = `[${newPayloadFields.join(',')}]`;
+
+      const inputs = [
+          record,
+          payloadInput
+      ];
+
+      return await executeTransaction('update_message', inputs, options);
+  };
+
+  /**
+   * Deletes a chat (local only — hides from UI via localStorage).
+   * No on-chain transition exists for this; we track it client-side.
+   */
+  const deleteChat = async (contactAddress: string) => {
+      if (!publicKey) throw new Error("Wallet not connected");
+      const key = `ghost_deleted_chats_${publicKey}`;
+      const deleted: string[] = JSON.parse(localStorage.getItem(key) || '[]');
+      if (!deleted.includes(contactAddress)) {
+          deleted.push(contactAddress);
+          localStorage.setItem(key, JSON.stringify(deleted));
+      }
+  };
+
+  /**
+   * Sends a message on-chain using pre-encrypted payload from off-chain flow.
+   * This avoids double-encryption — reuses the payload already encrypted in sendDMMessage.
+   */
+  const sendMessageOnChain = async (
+    recipientAddress: string,
+    encryptedPayload: string,
+    timestamp: number,
+    attachmentCID?: string,
     options?: ExecuteTransactionOptions
   ) => {
-    return executeTransaction(
-      'update_profile',
-      [name, bio],
-      options
-    );
+    if (!publicKey) throw new Error("Wallet not connected");
+
+    const cleanRecipient = recipientAddress.trim().replace(/['"]/g, '');
+    if (!cleanRecipient.startsWith('aleo1')) {
+      throw new Error(`Invalid recipient format: ${cleanRecipient}`);
+    }
+
+    const senderHash = hashAddress(publicKey);
+    const recipientHash = hashAddress(cleanRecipient);
+
+    const messageFields = stringToFields(encryptedPayload).slice(0, 4);
+    while (messageFields.length < 4) messageFields.push("0field");
+    const payloadInput = `[${messageFields.join(',')}]`;
+
+    const attachmentFields = attachmentCID
+      ? stringToFields(attachmentCID, 2)
+      : ["0field", "0field"];
+
+    const inputs = [
+      senderHash,
+      recipientHash,
+      cleanRecipient,
+      payloadInput,
+      `${timestamp}u64`,
+      attachmentFields[0],
+      attachmentFields[1]
+    ];
+
+    return await executeTransaction('send_message', inputs, options);
   };
 
   return {
     loading,
     error,
-    sendMessage,
-    createProfile,
-    updateProfile,
+    sendMessageOnChain,
+    registerProfile,
+    deleteMessage,
+    editMessage,
+    deleteChat,
+    findRecordByTimestamp,
     executeTransaction,
   };
 }

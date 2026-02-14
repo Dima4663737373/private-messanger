@@ -35,7 +35,7 @@ export async function getRealTransactionId(
 
   // If this is not UUID, cannot check
   if (!isWalletUuid(transactionUuid)) {
-    console.warn('⚠️ Transaction ID is neither UUID nor real TX ID:', transactionUuid);
+    logger.warn('Transaction ID is neither UUID nor real TX ID:', transactionUuid);
     return null;
   }
 

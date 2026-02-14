@@ -1,0 +1,9 @@
+
+{
+  "name": "GHOST Crypto Messenger",
+  "description": "Ultra-secure, high-contrast crypto messenger with wallet integration and spectral aesthetics.",
+  "requestFramePermissions": [
+    "camera",
+    "microphone"
+  ]
+}

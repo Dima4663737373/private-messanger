@@ -1,0 +1,24 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npx tsc:*)",
+      "Bash(npx vite build:*)",
+      "Bash(npm run dev:*)",
+      "Bash(dir:*)",
+      "Bash(npx kill-port:*)",
+      "Bash(npx ts-node:*)",
+      "Bash(npx vite:*)",
+      "Bash(taskkill:*)",
+      "WebFetch(domain:api.explorer.provable.com)",
+      "Bash(timeout /t 5 /nobreak)",
+      "Bash(grep:*)",
+      "Bash(sqlite3:*)",
+      "WebFetch(domain:docs.leo-lang.org)",
+      "Bash(leo build:*)",
+      "Bash(leo deploy:*)",
+      "Bash(test:*)",
+      "Bash(git add:*)",
+      "Bash(git rm:*)"
+    ]
+  }
+}

@@ -1,0 +1,6 @@
+{
+  "program": "ghost_secret_v1.aleo",
+  "version": "0.1.0",
+  "description": "Ghost Messenger — secret message hash registry on Aleo",
+  "license": "MIT"
+}

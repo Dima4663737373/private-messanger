@@ -10,3 +10,5 @@ deploy_output/
 
 # Local Netlify folder
 .netlify
+.gitignore update
+nul

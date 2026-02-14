@@ -1,11 +1,14 @@
 // Utility functions for checking program deployment status
 
-const PROGRAM_ID = "priv_messenger_leotest_012.aleo";
+import { API_CONFIG } from '../config';
+
+export const PROGRAM_ID = API_CONFIG.PROGRAM_ID;
 
 // Provable API v2 endpoint (recommended)
 const PROVABLE_API_V2 = "https://api.explorer.provable.com/v2";
 // Fallback endpoints
 const RPC_ENDPOINTS = [
+    { base: API_CONFIG.EXPLORER_BASE, paths: [`/testnet3/program/${PROGRAM_ID}`, `/program/${PROGRAM_ID}`] },
     { base: "https://api.explorer.provable.com/v1", paths: [`/testnet3/program/${PROGRAM_ID}`, `/program/${PROGRAM_ID}`] },
     { base: "https://api.explorer.aleo.org/v1", paths: [`/testnet3/program/${PROGRAM_ID}`, `/program/${PROGRAM_ID}`] },
     { base: "https://vm.aleo.org/api", paths: [`/testnet3/program/${PROGRAM_ID}`, `/program/${PROGRAM_ID}`] }

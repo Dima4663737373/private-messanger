@@ -1,230 +1,434 @@
-import React, { useState } from 'react';
-import { useWallet } from "@demox-labs/aleo-wallet-adapter-react";
-import { DecryptPermission, WalletAdapterNetwork } from "@demox-labs/aleo-wallet-adapter-base";
-import type { WalletName } from "@demox-labs/aleo-wallet-adapter-base";
+import React from 'react';
+import { motion } from 'framer-motion';
+import { Shield, Lock, Ghost, Network, AlertTriangle, Check, X, Box, Search, ArrowRight, Zap, Globe, EyeOff, ChevronDown, Radio, Users, Menu } from 'lucide-react';
 
-const LandingPage: React.FC = () => {
-  const { publicKey, connect, connecting, select, wallets, wallet } = useWallet();
-  const [showModal, setShowModal] = useState(false);
+interface LandingPageProps {
+  onConnect: () => void;
+  isConnecting: boolean;
+}
 
-  const handleConnect = async () => {
-    if (wallets.length === 0) {
-      alert('No wallets available. Please install Leo Wallet extension.');
-      return;
+const fadeInUp = {
+  hidden: { opacity: 0, y: 50 },
+  visible: { opacity: 1, y: 0, transition: { duration: 0.8, ease: "easeOut" } }
+};
+
+const staggerContainer = {
+  hidden: { opacity: 0 },
+  visible: {
+    opacity: 1,
+    transition: {
+      staggerChildren: 0.2
     }
+  }
+};
 
-    try {
-      // Always select wallet first if not selected
-      if (!wallet && wallets.length > 0) {
-        const walletName = wallets[0].adapter.name as WalletName;
-        select(walletName);
-        // Wait longer for wallet to be selected and initialized
-        await new Promise(resolve => setTimeout(resolve, 500));
-      }
-      
-      // Now connect
-      if (wallets.length === 1) {
-        await connect(DecryptPermission.OnChainHistory, WalletAdapterNetwork.TestnetBeta);
-      } else {
-        // For multiple wallets, show selection modal
-        setShowModal(true);
-      }
-    } catch (error: any) {
-      const errorMsg = error?.message || String(error);
-      
-      // If wallet not selected, try to select it
-      if (errorMsg.includes("WalletNotSelected") || errorMsg.includes("not selected")) {
-        if (wallets.length > 0) {
-          try {
-            select(wallets[0].adapter.name as WalletName);
-            await new Promise(resolve => setTimeout(resolve, 500));
-            await connect(DecryptPermission.OnChainHistory, WalletAdapterNetwork.TestnetBeta);
-          } catch (retryError) {
-            // Silently fail - not critical
-            if (wallets.length > 1) {
-              setShowModal(true);
-            } else {
-              alert('Failed to connect wallet. Please ensure Leo Wallet is installed and unlocked.');
-            }
-          }
-        }
-      } else if (wallets.length > 1) {
-        setShowModal(true);
-      } else {
-        alert('Failed to connect wallet. Please try again.');
-      }
-    }
-  };
+const LandingPage: React.FC<LandingPageProps> = ({ onConnect, isConnecting }) => {
+  const [mobileMenuOpen, setMobileMenuOpen] = React.useState(false);
 
-  const handleSelectWallet = async (walletName: string) => {
-    try {
-      select(walletName as WalletName);
-      // Wait a bit for wallet to be selected
-      await new Promise(resolve => setTimeout(resolve, 100));
-      await connect(DecryptPermission.OnChainHistory, WalletAdapterNetwork.TestnetBeta);
-      setShowModal(false);
-    } catch (e) {
-      // Silently fail - not critical
-      alert('Failed to connect wallet. Please try again.');
+  const scrollToSection = (id: string) => {
+    setMobileMenuOpen(false);
+    const element = document.getElementById(id);
+    if (element) {
+      element.scrollIntoView({ behavior: 'smooth' });
     }
   };
 
   return (
-    <div className="min-h-screen bg-brutal-white text-brutal-black overflow-x-hidden">
+    <div className="min-h-screen bg-[#050505] text-white overflow-x-hidden font-sans selection:bg-[#FF9900] selection:text-black">
       
-      {/* Navigation */}
-      <nav className="border-b-4 border-brutal-black p-4 flex justify-between items-center sticky top-0 bg-brutal-white z-50 animate-fade-in">
-        <div className="font-black text-2xl tracking-tighter uppercase">Ghost<span className="text-brutal-yellow bg-brutal-black px-1">.Aleo</span></div>
-        <div className="hidden md:flex gap-6 font-bold uppercase text-sm">
-          <a href="#features" className="hover:underline">ZK-Proof</a>
-          <a href="#about" className="hover:underline">Manifesto</a>
-          <a href="#community" className="hover:underline">Community</a>
-        </div>
-        <button 
-          onClick={handleConnect}
-          disabled={connecting || !!publicKey}
-          className="bg-brutal-black text-brutal-yellow px-4 py-2 font-bold uppercase border-2 border-transparent hover:bg-brutal-yellow hover:text-brutal-black hover:border-brutal-black transition-all disabled:opacity-50"
-        >
-          {connecting ? 'Connecting...' : publicKey ? 'Connected' : 'Connect Wallet'}
-        </button>
-
-        {showModal && (
-          <div className="modal-backdrop fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50" onClick={() => setShowModal(false)}>
-            <div className="modal-content bg-white border-4 border-black p-6 max-w-md w-full mx-4 shadow-hard-lg" onClick={(e) => e.stopPropagation()}>
-              <h2 className="text-2xl font-black uppercase mb-4">Select Wallet</h2>
-              {wallets.length === 0 ? (
-                <div className="p-4 text-center">
-                  <p className="font-bold mb-2">No wallets found</p>
-                  <p className="text-sm text-gray-600">Please install Leo Wallet extension</p>
-                  <a 
-                    href="https://www.leo-wallet.com/" 
-                    target="_blank" 
-                    rel="noopener noreferrer"
-                    className="inline-block mt-4 px-4 py-2 bg-brutal-yellow border-2 border-black font-bold uppercase hover:bg-yellow-300"
-                  >
-                    Install Leo Wallet
-                  </a>
-                </div>
-              ) : (
-                <div className="space-y-2">
-                  {wallets.map((walletItem) => (
-                    <button
-                      key={walletItem.adapter.name}
-                      onClick={() => handleSelectWallet(walletItem.adapter.name)}
-                      className="w-full p-3 border-4 border-black bg-yellow-400 hover:bg-yellow-300 font-bold uppercase text-left transition-colors"
-                    >
-                      {walletItem.adapter.name}
-                    </button>
-                  ))}
-                </div>
-              )}
-              <button
-                onClick={() => setShowModal(false)}
-                className="mt-4 w-full p-2 border-2 border-black bg-white hover:bg-gray-100 font-bold uppercase"
-              >
-                Cancel
-              </button>
-            </div>
+      {/* NAVIGATION */}
+      <nav className="fixed top-0 left-0 right-0 z-50 px-6 py-4 bg-[#050505]/80 backdrop-blur-md border-b border-[#ffffff]/5">
+        <div className="max-w-7xl mx-auto flex items-center justify-between">
+          <div className="flex items-center gap-2 cursor-pointer" onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}>
+            <Ghost className="text-[#FF9900]" size={24} />
+            <span className="font-bold text-xl tracking-wider">GHOST</span>
           </div>
-        )}
-      </nav>
-
-      {/* Hero Section */}
-      <header className="relative p-8 md:p-20 border-b-4 border-brutal-black flex flex-col md:flex-row items-center justify-between gap-12">
-        <div className="max-w-2xl z-10 animate-slide-up">
-          <div className="inline-block bg-brutal-yellow border-2 border-brutal-black px-2 py-1 font-bold mb-4 shadow-hard-sm">
-            BETA v0.9.1 ON MAINNET
+          
+          <div className="hidden md:flex items-center gap-8">
+            <button onClick={() => scrollToSection('why')} className="text-sm font-medium text-gray-400 hover:text-white transition-colors">WHY GHOST?</button>
+            <button onClick={() => scrollToSection('how-it-works')} className="text-sm font-medium text-gray-400 hover:text-white transition-colors">HOW IT WORKS</button>
+            <button onClick={() => scrollToSection('features')} className="text-sm font-medium text-gray-400 hover:text-white transition-colors">FEATURES</button>
           </div>
-          <h1 className="text-6xl md:text-8xl font-black uppercase leading-none mb-6">
-            Private.<br/>
-            Unseen.<br/>
-            Ghost.
-          </h1>
-          <p className="text-xl md:text-2xl font-bold mb-8 max-w-lg">
-            The first decentralized messenger built on <span className="underline decoration-4 decoration-brutal-yellow">Aleo</span>. 
-            Zero-knowledge privacy meets brutalist efficiency.
-          </p>
-          <button 
-            onClick={handleConnect}
-            disabled={connecting || !!publicKey}
-            className="bg-brutal-yellow border-4 border-brutal-black px-8 py-4 text-2xl font-black uppercase shadow-hard hover:translate-x-1 hover:translate-y-1 hover:shadow-none active:translate-x-0 active:translate-y-0 transition-all duration-150 disabled:opacity-50"
+
+          <button
+            onClick={onConnect}
+            disabled={isConnecting}
+            className="hidden md:flex px-4 py-2 bg-[#FF9900] text-black text-sm font-bold rounded-lg hover:bg-[#ffaa33] transition-colors disabled:opacity-50"
           >
-            {connecting ? 'INITIALIZING...' : publicKey ? 'CONNECTED' : 'LAUNCH APP_'}
+            {isConnecting ? "CONNECTING..." : "CONNECT WALLET"}
+          </button>
+
+          {/* Mobile Menu Toggle */}
+          <button
+            onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
+            className="md:hidden p-2 text-gray-400 hover:text-white transition-colors"
+          >
+            {mobileMenuOpen ? <X size={24} /> : <Menu size={24} />}
           </button>
         </div>
 
-        {/* 3D Element Container */}
-        <div className="perspective-container relative w-64 h-64 md:mr-20 hidden md:block">
-           <div className="cube">
-            <div className="face front">ZK</div>
-            <div className="face back">P</div>
-            <div className="face right">ID</div>
-            <div className="face left">PVT</div>
-            <div className="face top">G</div>
-            <div className="face bottom">A</div>
-          </div>
-          {/* Decorative floor */}
-          <div className="absolute -bottom-12 left-1/2 transform -translate-x-1/2 w-48 h-48 bg-brutal-black rounded-full opacity-20 blur-xl scale-y-25"></div>
-        </div>
-      </header>
+        {/* Mobile Menu Dropdown */}
+        {mobileMenuOpen && (
+          <motion.div
+            initial={{ opacity: 0, y: -10 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="md:hidden mt-4 pb-4 border-t border-[#ffffff]/10 pt-4 flex flex-col gap-3"
+          >
+            <button onClick={() => scrollToSection('why')} className="text-sm font-medium text-gray-400 hover:text-white transition-colors text-left">WHY GHOST?</button>
+            <button onClick={() => scrollToSection('how-it-works')} className="text-sm font-medium text-gray-400 hover:text-white transition-colors text-left">HOW IT WORKS</button>
+            <button onClick={() => scrollToSection('features')} className="text-sm font-medium text-gray-400 hover:text-white transition-colors text-left">FEATURES</button>
+            <button
+              onClick={() => { setMobileMenuOpen(false); onConnect(); }}
+              disabled={isConnecting}
+              className="mt-2 px-4 py-2 bg-[#FF9900] text-black text-sm font-bold rounded-lg hover:bg-[#ffaa33] transition-colors disabled:opacity-50 w-full"
+            >
+              {isConnecting ? "CONNECTING..." : "CONNECT WALLET"}
+            </button>
+          </motion.div>
+        )}
+      </nav>
 
-      {/* Features Grid */}
-      <section id="features" className="grid grid-cols-1 md:grid-cols-3 border-b-4 border-brutal-black">
-        <div className="p-8 border-b-4 md:border-b-0 md:border-r-4 border-brutal-black hover:bg-brutal-yellow transition-colors group">
-          <h3 className="text-3xl font-black uppercase mb-4 group-hover:translate-x-2 transition-transform">01. Zero Knowledge</h3>
-          <p className="font-bold">Your messages are encrypted using ZK-SNARKs. Only you and the recipient hold the keys. Even the network doesn't know who you're talking to.</p>
+      {/* SECTION 1: HERO */}
+      <section className="relative h-screen flex flex-col items-center justify-center overflow-hidden pt-20">
+        {/* Background Network Animation (Abstract) */}
+        <div className="absolute inset-0 opacity-20 pointer-events-none">
+            <div className="absolute top-0 left-0 w-full h-full bg-[radial-gradient(circle_at_center,_var(--tw-gradient-stops))] from-[#FF9900]/10 via-transparent to-transparent" />
+            <motion.div 
+              className="absolute inset-0 bg-[url('https://grainy-gradients.vercel.app/noise.svg')] opacity-10"
+              animate={{ opacity: [0.1, 0.15, 0.1] }}
+              transition={{ duration: 2, repeat: Infinity }}
+            />
+            {/* Grid */}
+            <div className="absolute inset-0 bg-[linear-gradient(to_right,#1a1a1a_1px,transparent_1px),linear-gradient(to_bottom,#1a1a1a_1px,transparent_1px)] bg-[size:4rem_4rem] [mask-image:radial-gradient(ellipse_60%_50%_at_50%_0%,#000_70%,transparent_100%)]" />
         </div>
-        <div className="p-8 border-b-4 md:border-b-0 md:border-r-4 border-brutal-black hover:bg-brutal-black hover:text-brutal-white transition-colors group">
-          <h3 className="text-3xl font-black uppercase mb-4 group-hover:translate-x-2 transition-transform">02. On-Chain Identity</h3>
-          <p className="font-bold">Login with your Aleo wallet. No phone numbers, no emails, no central servers storing your metadata.</p>
-        </div>
-        <div className="p-8 hover:bg-brutal-yellow transition-colors group">
-          <h3 className="text-3xl font-black uppercase mb-4 group-hover:translate-x-2 transition-transform">03. Brutal Speed</h3>
-          <p className="font-bold">Built for speed. No bloatware. Just raw, encrypted text transmission across the decentralized web.</p>
+
+        <motion.div 
+          initial="hidden"
+          animate="visible"
+          variants={staggerContainer}
+          className="z-10 text-center px-4 max-w-5xl mx-auto"
+        >
+          <motion.div variants={fadeInUp} className="mb-6 flex justify-center">
+             <div className="p-4 bg-[#FF9900]/10 rounded-full border border-[#FF9900]/20 animate-pulse">
+                <Ghost size={48} className="text-[#FF9900]" />
+             </div>
+          </motion.div>
+          
+          <motion.h1 variants={fadeInUp} className="text-6xl md:text-8xl font-black tracking-tighter mb-6 leading-tight">
+            GHOST: <br/>
+            <span className="text-transparent bg-clip-text bg-gradient-to-r from-[#FF9900] to-orange-600">
+              THE INVISIBLE NETWORK
+            </span>
+          </motion.h1>
+          
+          <motion.p variants={fadeInUp} className="text-xl md:text-2xl text-gray-400 mb-10 max-w-2xl mx-auto">
+            Connect without metadata. Chat without a trace.
+            <br />
+            <span className="text-[#FF9900]">Zero-Knowledge Proofs</span> guarantee your privacy.
+          </motion.p>
+          
+          <motion.button
+            variants={fadeInUp}
+            whileHover={{ scale: 1.05, boxShadow: "0 0 20px rgba(255, 153, 0, 0.5)" }}
+            whileTap={{ scale: 0.95 }}
+            onClick={onConnect}
+            disabled={isConnecting}
+            className="px-8 py-4 bg-[#FF9900] text-black text-lg font-bold rounded-xl flex items-center gap-3 mx-auto disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            {isConnecting ? "CONNECTING..." : "ENTER GHOST"} {!isConnecting && <ArrowRight size={20} />}
+          </motion.button>
+        </motion.div>
+
+        {/* Floating Mockups (Abstract) */}
+        <motion.div 
+            initial={{ opacity: 0, x: 100 }}
+            animate={{ opacity: 0.5, x: 0 }}
+            transition={{ delay: 1, duration: 1.5 }}
+            className="absolute -right-20 top-1/4 w-96 h-64 bg-[#111] border border-[#333] rounded-2xl p-4 transform rotate-[-12deg] blur-sm z-0 hidden lg:block"
+        >
+             <div className="w-full h-full flex flex-col gap-4">
+                 <div className="w-3/4 h-8 bg-[#222] rounded-lg animate-pulse" />
+                 <div className="self-end w-1/2 h-8 bg-[#FF9900]/20 rounded-lg" />
+                 <div className="w-2/3 h-8 bg-[#222] rounded-lg" />
+             </div>
+        </motion.div>
+        <motion.div 
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 2, duration: 1 }}
+            className="absolute bottom-8 left-1/2 -translate-x-1/2 text-gray-500 flex flex-col items-center gap-2 cursor-pointer hover:text-white transition-colors"
+            onClick={() => scrollToSection('why')}
+        >
+            <span className="text-xs uppercase tracking-widest">Discover</span>
+            <ChevronDown className="animate-bounce" />
+        </motion.div>
+      </section>
+
+      {/* SECTION 2: THE PROBLEM */}
+      <section id="why" className="py-24 bg-[#0A0A0A] relative border-t border-[#1A1A1A]">
+        <div className="max-w-7xl mx-auto px-4">
+            <motion.div 
+              initial={{ opacity: 0, y: 20 }}
+              whileInView={{ opacity: 1, y: 0 }}
+              viewport={{ once: true }}
+              className="flex flex-col md:flex-row items-center gap-12"
+            >
+                <div className="flex-1 space-y-6">
+                    <div className="inline-flex items-center gap-2 px-3 py-1 bg-red-500/10 text-red-500 rounded-full border border-red-500/20">
+                        <AlertTriangle size={16} />
+                        <span className="text-sm font-bold uppercase">Critical Alert</span>
+                    </div>
+                    <h2 className="text-4xl md:text-5xl font-bold tracking-tight">
+                        IS YOUR METADATA <br/>
+                        <span className="text-red-500">EXPOSING YOU?</span>
+                    </h2>
+                    <p className="text-gray-400 text-lg">
+                        Standard messengers leak the "who, when, and where". Even if the content is encrypted, your social graph is public property.
+                    </p>
+                </div>
+
+                <div className="flex-1 relative">
+                    <div className="relative p-8 bg-[#111] rounded-3xl border border-red-900/30 overflow-hidden group">
+                         <div className="absolute inset-0 bg-red-500/5 group-hover:bg-red-500/10 transition-colors" />
+                         
+                         {/* Diagram */}
+                         <div className="relative z-10 flex items-center justify-between">
+                            <div className="flex flex-col items-center">
+                                <div className="w-16 h-16 bg-[#222] rounded-full flex items-center justify-center border border-[#333]">
+                                    <UserIcon />
+                                </div>
+                                <span className="mt-2 text-sm text-gray-500">You</span>
+                            </div>
+                            
+                            <div className="flex-1 h-[2px] bg-red-500/50 mx-4 relative">
+                                <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 bg-[#0A0A0A] px-2 text-xs text-red-500 uppercase font-bold">
+                                    LEAKS
+                                </div>
+                            </div>
+
+                            <div className="flex flex-col items-center">
+                                <div className="w-16 h-16 bg-[#222] rounded-full flex items-center justify-center border border-[#333]">
+                                    <Globe size={24} className="text-red-500" />
+                                </div>
+                                <span className="mt-2 text-sm text-gray-500">Public Server</span>
+                            </div>
+                         </div>
+                    </div>
+                </div>
+            </motion.div>
         </div>
       </section>
 
-      {/* Info Block */}
-      <section id="about" className="flex flex-col md:flex-row">
-        <div className="w-full md:w-1/2 bg-brutal-black text-brutal-white p-12 flex flex-col justify-center border-b-4 md:border-b-0 md:border-r-4 border-brutal-white">
-          <h2 className="text-5xl font-black uppercase mb-8 leading-none">
-            Why Ghost?
-          </h2>
-          <p className="text-lg font-bold mb-6">
-            In an era of surveillance, privacy is not a luxury, it's a necessity. Ghost leverages the power of the Aleo blockchain to ensure that your conversations remain yours.
-          </p>
-          <div className="grid grid-cols-2 gap-4 mt-8">
-            <div className="border-2 border-brutal-white p-4">
-              <div className="text-4xl font-black text-brutal-yellow">100%</div>
-              <div className="text-xs uppercase">Open Source</div>
+      {/* SECTION 3: THE SOLUTION */}
+      <section className="py-24 bg-[#050505] relative overflow-hidden">
+        <div className="max-w-7xl mx-auto px-4 relative z-10">
+            <motion.div 
+                initial={{ opacity: 0 }}
+                whileInView={{ opacity: 1 }}
+                className="text-center mb-16"
+            >
+                <h2 className="text-4xl md:text-6xl font-black text-white mb-4">
+                    THE <span className="text-[#FF9900]">ZERO-KNOWLEDGE</span> ADVANTAGE
+                </h2>
+                <p className="text-gray-400">Aleo blockchain powers the first truly private messenger.</p>
+            </motion.div>
+
+            <div className="grid md:grid-cols-2 gap-8 max-w-4xl mx-auto">
+                {/* Standard Messengers */}
+                <motion.div 
+                    initial={{ x: -50, opacity: 0 }}
+                    whileInView={{ x: 0, opacity: 1 }}
+                    className="p-8 bg-[#0A0A0A] border border-[#222] rounded-3xl opacity-50 hover:opacity-100 transition-opacity"
+                >
+                    <h3 className="text-2xl font-bold mb-6 text-gray-400">Standard Apps</h3>
+                    <ul className="space-y-4">
+                        <li className="flex items-center gap-3 text-red-400">
+                            <X size={20} /> Phone Number Required
+                        </li>
+                        <li className="flex items-center gap-3 text-red-400">
+                            <X size={20} /> Metadata Stored
+                        </li>
+                        <li className="flex items-center gap-3 text-red-400">
+                            <X size={20} /> Centralized Servers
+                        </li>
+                    </ul>
+                </motion.div>
+
+                {/* Ghost */}
+                <motion.div 
+                    initial={{ x: 50, opacity: 0 }}
+                    whileInView={{ x: 0, opacity: 1 }}
+                    className="p-8 bg-[#111] border border-[#FF9900] rounded-3xl shadow-[0_0_50px_-12px_rgba(255,153,0,0.3)] relative"
+                >
+                    <div className="absolute top-0 right-0 bg-[#FF9900] text-black text-xs font-bold px-3 py-1 rounded-bl-xl rounded-tr-2xl">
+                        RECOMMENDED
+                    </div>
+                    <h3 className="text-2xl font-bold mb-6 text-white">Ghost Protocol</h3>
+                    <ul className="space-y-4">
+                        <li className="flex items-center gap-3 text-[#FF9900]">
+                            <Check size={20} /> Wallet Authentication
+                        </li>
+                        <li className="flex items-center gap-3 text-[#FF9900]">
+                            <Check size={20} /> ZK-Shielded Transactions
+                        </li>
+                        <li className="flex items-center gap-3 text-[#FF9900]">
+                            <Check size={20} /> 100% Private Metadata
+                        </li>
+                    </ul>
+                </motion.div>
             </div>
-            <div className="border-2 border-brutal-white p-4">
-              <div className="text-4xl font-black text-brutal-yellow">0</div>
-              <div className="text-xs uppercase">Trackers</div>
-            </div>
-          </div>
-        </div>
-        <div className="w-full md:w-1/2 bg-[url('https://www.transparenttextures.com/patterns/graphy.png')] p-12 relative overflow-hidden">
-          <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 w-64 h-64 border-8 border-brutal-black rotate-45"></div>
-          <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 w-48 h-48 bg-brutal-yellow border-4 border-brutal-black -rotate-12 shadow-hard"></div>
-           <div className="relative z-10 text-center">
-             <h3 className="text-2xl font-black uppercase bg-brutal-white inline-block px-4 py-2 border-4 border-brutal-black transform -rotate-2">
-               Powered by Aleo
-             </h3>
-           </div>
         </div>
       </section>
 
-      {/* Footer */}
-      <footer className="bg-brutal-yellow border-t-4 border-brutal-black p-8 text-center">
-        <div className="font-black text-xl uppercase mb-4">Ghost Messenger © 2026</div>
-        <div className="text-xs font-bold font-mono">
-          RUNNING ON ALEO TESTNET V3 • SMART CONTRACT: 0x...GHOST
-        </div>
-      </footer>
+      {/* SECTION 4: WORKFLOW */}
+      <section id="how-it-works" className="py-24 bg-[#0A0A0A] border-y border-[#1A1A1A]">
+        <div className="max-w-7xl mx-auto px-4">
+            <h2 className="text-4xl font-bold text-center mb-16">HOW IT WORKS</h2>
+            
+            <div className="grid md:grid-cols-3 gap-12 relative">
+                {/* Connector Line */}
+                <div className="hidden md:block absolute top-12 left-0 w-full h-1 bg-[#222] -z-0">
+                    <div className="w-full h-full bg-gradient-to-r from-transparent via-[#FF9900] to-transparent opacity-20" />
+                </div>
 
+                {[
+                    { title: "Connect Identity", icon: <Zap />, desc: "Sign in with your Aleo Wallet. No email, no phone." },
+                    { title: "Add Node", icon: <Network />, desc: "Discover contacts via encrypted on-chain registry." },
+                    { title: "Ghost Signal", icon: <Shield />, desc: "Send messages verified by ZK-Proofs. Invisible to observers." }
+                ].map((step, i) => (
+                    <motion.div 
+                        key={i}
+                        initial={{ opacity: 0, y: 20 }}
+                        whileInView={{ opacity: 1, y: 0 }}
+                        transition={{ delay: i * 0.2 }}
+                        className="relative z-10 flex flex-col items-center text-center bg-[#0A0A0A] p-6"
+                    >
+                        <div className="w-24 h-24 bg-[#111] rounded-2xl border border-[#333] flex items-center justify-center mb-6 group hover:border-[#FF9900] transition-colors shadow-xl">
+                            <div className="text-gray-400 group-hover:text-[#FF9900] transition-colors scale-150">
+                                {step.icon}
+                            </div>
+                        </div>
+                        <h3 className="text-xl font-bold mb-2">{step.title}</h3>
+                        <p className="text-gray-400 text-sm">{step.desc}</p>
+                    </motion.div>
+                ))}
+            </div>
+        </div>
+      </section>
+
+      {/* SECTION 5: DEEP TECH */}
+      <section id="features" className="py-24 bg-[#050505]">
+        <div className="max-w-7xl mx-auto px-4">
+            <motion.div
+              initial={{ opacity: 0 }}
+              whileInView={{ opacity: 1 }}
+              className="text-center mb-16"
+            >
+              <h2 className="text-4xl md:text-5xl font-bold mb-4">FEATURES</h2>
+              <p className="text-gray-500">Everything you need for private, decentralized communication.</p>
+            </motion.div>
+            <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
+                {[
+                    { title: "Censorship Resistance", icon: <EyeOff />, desc: "Unstoppable communication powered by decentralized validators." },
+                    { title: "On-Chain Encryption", icon: <Lock />, desc: "Every byte is encrypted with ECIES before it touches the network." },
+                    { title: "Message Recovery", icon: <Box />, desc: "Your message history is recovered locally using your private key." },
+                    { title: "Network Search", icon: <Search />, desc: "Find users without exposing your entire social graph." },
+                    { title: "Channels", icon: <Radio />, desc: "Public broadcast channels for open discussion. Anyone can join and participate." },
+                    { title: "Private Groups", icon: <Users />, desc: "Invite-only group chats with encrypted member lists and message history." }
+                ].map((card, i) => (
+                    <motion.div
+                        key={i}
+                        initial={{ opacity: 0, y: 20 }}
+                        whileInView={{ opacity: 1, y: 0 }}
+                        transition={{ delay: i * 0.1 }}
+                        whileHover={{ y: -5 }}
+                        className="p-8 bg-[#0A0A0A] border border-[#222] hover:border-[#FF9900]/50 rounded-2xl transition-all group"
+                    >
+                        <div className="mb-4 p-3 bg-[#111] w-fit rounded-lg text-[#FF9900] group-hover:bg-[#FF9900] group-hover:text-black transition-colors">
+                            {card.icon}
+                        </div>
+                        <h3 className="text-xl font-bold mb-2">{card.title}</h3>
+                        <p className="text-gray-500">{card.desc}</p>
+                    </motion.div>
+                ))}
+            </div>
+        </div>
+      </section>
+
+      {/* SECTION 6: SECURITY ARCHITECTURE */}
+      <section className="py-24 bg-[#0A0A0A] border-y border-[#1A1A1A]">
+        <div className="max-w-5xl mx-auto px-4">
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            whileInView={{ opacity: 1, y: 0 }}
+            className="text-center mb-16"
+          >
+            <h2 className="text-4xl md:text-5xl font-bold mb-4">SECURITY ARCHITECTURE</h2>
+            <p className="text-gray-500">Multiple layers of protection for your communication.</p>
+          </motion.div>
+
+          <div className="space-y-4">
+            {[
+              { label: "Layer 1: Wallet Auth", desc: "No email, no phone. Identity = cryptographic key pair.", color: "#FF9900" },
+              { label: "Layer 2: ECIES Encryption", desc: "Messages encrypted client-side before leaving your device.", color: "#FF7700" },
+              { label: "Layer 3: ZK-Proofs", desc: "Aleo executes transitions with zero-knowledge proofs. Nobody sees your data.", color: "#FF5500" },
+              { label: "Layer 4: Shielded Records", desc: "On-chain data is encrypted records. Only the owner can decrypt.", color: "#FF3300" },
+            ].map((layer, i) => (
+              <motion.div
+                key={i}
+                initial={{ opacity: 0, x: -30 }}
+                whileInView={{ opacity: 1, x: 0 }}
+                transition={{ delay: i * 0.15 }}
+                className="flex items-center gap-6 p-6 bg-[#111] rounded-2xl border border-[#222] hover:border-[#FF9900]/30 transition-colors"
+              >
+                <div className="w-12 h-12 rounded-xl flex items-center justify-center font-black text-lg text-black flex-shrink-0" style={{ backgroundColor: layer.color }}>
+                  {i + 1}
+                </div>
+                <div>
+                  <h3 className="text-lg font-bold text-white">{layer.label}</h3>
+                  <p className="text-gray-500 text-sm">{layer.desc}</p>
+                </div>
+              </motion.div>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      {/* SECTION 6: FOOTER */}
+      <section className="py-32 bg-black text-center relative overflow-hidden">
+        <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,_var(--tw-gradient-stops))] from-[#FF9900]/20 via-transparent to-transparent opacity-50" />
+        
+        <motion.div 
+            initial={{ scale: 0.9, opacity: 0 }}
+            whileInView={{ scale: 1, opacity: 1 }}
+            className="relative z-10"
+        >
+            <Ghost size={64} className="mx-auto text-[#FF9900] mb-8 animate-bounce" />
+            <h2 className="text-4xl md:text-7xl font-black mb-8">
+                CLOSE THE GAP. <br/>
+                COMMUNICATE IN PRIVATE.
+            </h2>
+            <button 
+                onClick={onConnect}
+                disabled={isConnecting}
+                className="px-12 py-6 bg-[#FF9900] text-black text-xl font-bold rounded-full hover:scale-105 transition-transform shadow-[0_0_30px_rgba(255,153,0,0.4)] disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+                {isConnecting ? "CONNECTING..." : "LAUNCH GHOST APP"}
+            </button>
+            <p className="mt-8 text-gray-600 text-sm">
+                Built on Aleo Testnet • Privacy by Design • Open Source
+            </p>
+        </motion.div>
+      </section>
     </div>
   );
 };
+
+const UserIcon = () => (
+  <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/>
+    <circle cx="12" cy="7" r="4"/>
+  </svg>
+);
 
 export default LandingPage;

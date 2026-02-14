@@ -3,13 +3,10 @@
 
 import { PROGRAM_ID } from '../deployed_program';
 import { logger } from './logger';
+import { aleoSafeFetchMapping } from './safe-fetch';
+import { API_CONFIG } from '../config';
 
-const PUBLIC_RPC_ENDPOINTS = [
-  'https://api.explorer.aleo.org/v1',
-  'https://vm.aleo.org/api',
-  'https://api.explorer.provable.com/v1',
-  'https://api.explorer.provable.com/v2',
-];
+const API_BASE = API_CONFIG.EXPLORER_BASE;
 
 export interface ProgramInfo {
   exists: boolean;
@@ -24,15 +21,19 @@ export interface ProgramInfo {
 export async function checkProgramExists(
   programId: string = PROGRAM_ID
 ): Promise<ProgramInfo> {
-  // Try endpoints in order (aleo.org first as it's most reliable)
+  // Try configured endpoint first, then fallbacks
   const endpointsToTry = [
+    API_BASE,
     'https://api.explorer.aleo.org/v1',
     'https://vm.aleo.org/api',
     'https://api.explorer.provable.com/v1',
     'https://api.explorer.provable.com/v2',
   ];
 
-  for (const endpoint of endpointsToTry) {
+  // Deduplicate endpoints
+  const uniqueEndpoints = [...new Set(endpointsToTry)];
+
+  for (const endpoint of uniqueEndpoints) {
     try {
       // Try different path formats
       const paths = [
@@ -81,44 +82,26 @@ export async function checkProgramExists(
 }
 
 /**
- * Gets mapping value via public RPC
+ * Gets mapping value via public RPC using safe fetch
  */
 export async function getMappingValue(
   programId: string,
   mappingName: string,
   key: string
-): Promise<any> {
-  for (const endpoint of PUBLIC_RPC_ENDPOINTS) {
-    try {
-      const paths = [
-        `/testnet3/program/${programId}/mapping/${mappingName}/${key}`,
-        `/program/${programId}/mapping/${mappingName}/${key}`,
-        `/testnet/program/${programId}/mapping/${mappingName}/${key}`,
-      ];
-
-      for (const path of paths) {
-        try {
-          const url = `${endpoint}${path}`;
-          const response = await fetch(url, {
-            method: 'GET',
-            headers: { 'Content-Type': 'application/json' },
-          });
-
-          if (response.ok) {
-            const data = await response.json();
-            return data;
-          }
-        } catch (pathError) {
-          continue;
-        }
-      }
-    } catch (error) {
-      logger.debug(`RPC ${endpoint} failed:`, error);
-      continue;
+): Promise<any | null> {
+  try {
+    const result = await aleoSafeFetchMapping(programId, mappingName, key);
+    if (result.exists) {
+        return result.value;
     }
+    return null;
+  } catch (error) {
+    logger.error(`Failed to get mapping value for ${programId}/${mappingName}/${key}`, error);
+    // Even on error, we might want to return null to avoid crashing UI, 
+    // but safe-fetch should have handled retries.
+    // If it threw, it's serious.
+    return null;
   }
-
-  throw new Error(`Mapping value not found: ${mappingName}/${key}`);
 }
 
 /**
@@ -145,4 +128,35 @@ export async function waitForProgram(
   }
 
   return false;
+}
+
+/**
+ * Gets account public balance (credits.aleo)
+ */
+export async function getAccountBalance(address: string): Promise<number> {
+  try {
+    // Use safe fetch directly or via getMappingValue
+    const balanceVal = await getMappingValue('credits.aleo', 'account', address);
+    
+    if (!balanceVal) {
+        // 404 or null means zero balance/not initialized
+        logger.debug(`Mapping not initialized (404) for ${address}, returning 0`);
+        return 0;
+    }
+
+    // Balance is usually returned as u64 string e.g. "1000000u64"
+    if (typeof balanceVal === 'string') {
+        return parseInt(balanceVal.replace('u64', '')) / 1000000;
+    }
+    
+    // Handle case where it might be returned as number or other format
+    if (typeof balanceVal === 'number') {
+        return balanceVal / 1000000;
+    }
+
+    return 0;
+  } catch (e) {
+    logger.debug('Failed to get balance:', e);
+    return 0;
+  }
 }

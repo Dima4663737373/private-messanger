@@ -1,5 +1,5 @@
 {
-  "name": "frontend",
+  "name": "ghost-crypto-messenger",
   "private": true,
   "version": "0.0.0",
   "type": "module",
@@ -9,15 +9,30 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "react": "^19.2.3",
-    "react-dom": "^19.2.3",
+    "@aleohq/sdk": "^0.6.9",
     "@demox-labs/aleo-wallet-adapter-base": "^0.0.23",
     "@demox-labs/aleo-wallet-adapter-leo": "^0.0.25",
-    "@demox-labs/aleo-wallet-adapter-react": "^0.0.22"
+    "@demox-labs/aleo-wallet-adapter-react": "^0.0.22",
+    "@provablehq/sdk": "^0.9.16",
+    "@types/uuid": "^10.0.0",
+    "clsx": "^2.1.1",
+    "framer-motion": "^12.34.0",
+    "lucide-react": "^0.563.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-hot-toast": "^2.6.0",
+    "tailwind-merge": "^3.4.0",
+    "tweetnacl": "^1.0.3",
+    "tweetnacl-util": "^0.15.1",
+    "uuid": "^13.0.0"
   },
   "devDependencies": {
+    "@tailwindcss/postcss": "^4.1.18",
     "@types/node": "^22.14.0",
     "@vitejs/plugin-react": "^5.0.0",
+    "autoprefixer": "^10.4.24",
+    "postcss": "^8.5.6",
+    "tailwindcss": "^4.1.18",
     "typescript": "~5.8.2",
     "vite": "^6.2.0"
   }
