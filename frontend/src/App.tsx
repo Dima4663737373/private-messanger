@@ -723,22 +723,22 @@ const InnerApp: React.FC = () => {
     setIsProcessing(true);
 
     try {
+      // 1. Off-chain profile save
       await notifyProfileUpdate(name, bio, 'off-chain');
       setMyProfile({ username: name, bio });
-      toast.success('Profile created');
 
-      // On-chain profile registration (optional, non-blocking)
-      (async () => {
-        try {
-          await registerProfileOnChain();
-          toast.success('On-chain profile registered');
-        } catch (e: any) {
-          logger.warn('On-chain profile registration failed (non-critical):', e?.message);
-        }
-      })();
+      // 2. On-chain profile registration (REQUIRED - wallet popup)
+      toast.loading('Waiting for transaction approval...', { id: 'profile-tx' });
+      await registerProfileOnChain();
+      toast.dismiss('profile-tx');
+      toast.success('Profile created on-chain');
+      logger.debug('On-chain profile registered');
     } catch (e: any) {
+      toast.dismiss('profile-tx');
       logger.error("Failed to create profile", e);
-      toast.error('Failed to create profile');
+      toast.error('Profile creation failed: ' + (e?.message || 'Unknown error'));
+      // Rollback optimistic update
+      setMyProfile(null);
     } finally {
       setIsProcessing(false);
     }
@@ -748,27 +748,30 @@ const InnerApp: React.FC = () => {
     if (!publicKey) return;
     setIsProcessing(true);
 
+    const oldProfile = myProfile;
+
     try {
+      // 1. Off-chain profile update
       await notifyProfileUpdate(name, bio, 'off-chain');
       setMyProfile({ username: name, bio });
-      toast.success('Profile updated');
 
-      // On-chain profile update (optional, non-blocking)
-      (async () => {
-        try {
-          await registerProfileOnChain();
-          toast.success('On-chain profile updated');
-        } catch (e: any) {
-          logger.warn('On-chain profile update failed (non-critical):', e?.message);
-        }
-      })();
+      // 2. On-chain profile update (REQUIRED - wallet popup)
+      toast.loading('Waiting for transaction approval...', { id: 'profile-update-tx' });
+      await registerProfileOnChain();
+      toast.dismiss('profile-update-tx');
+      toast.success('Profile updated on-chain');
+      logger.debug('On-chain profile updated');
     } catch (e: any) {
+      toast.dismiss('profile-update-tx');
       logger.error("Failed to update profile", e);
-      toast.error('Failed to update profile');
+      toast.error('Profile update failed: ' + (e?.message || 'Unknown error'));
+      // Rollback to old profile
+      setMyProfile(oldProfile);
     } finally {
       setIsProcessing(false);
     }
   };
+
 
   const handleSendMessageFromProfile = (contact: Contact | any) => {
     // Check if contact exists
