@@ -22,7 +22,7 @@ app.use(helmet({
 }));
 
 // CORS — restrict to known origins (localhost dev + configurable production)
-const ALLOWED_ORIGINS = (process.env.CORS_ORIGINS || 'http://localhost:3000,http://localhost:3001,http://localhost:5173').split(',').map(s => s.trim());
+const ALLOWED_ORIGINS = (process.env.CORS_ORIGINS || 'http://localhost:3000,http://localhost:3001,http://localhost:5173,https://ghost-aleo.netlify.app').split(',').map(s => s.trim());
 const IS_PRODUCTION = process.env.NODE_ENV === 'production';
 
 app.use(cors({
