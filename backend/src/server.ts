@@ -22,25 +22,31 @@ app.use(helmet({
 }));
 
 // CORS — restrict to known origins (localhost dev + configurable production)
-const ALLOWED_ORIGINS = (process.env.CORS_ORIGINS || 'http://localhost:3000,http://localhost:3001,http://localhost:5173,https://ghost-aleo.netlify.app').split(',').map(s => s.trim());
+const HARDCODED_ORIGINS = [
+  'http://localhost:3000',
+  'http://localhost:3001',
+  'http://localhost:5173',
+  'https://ghost-aleo.netlify.app'
+];
+const EXTRA_ORIGINS = process.env.CORS_ORIGINS ? process.env.CORS_ORIGINS.split(',').map(s => s.trim()) : [];
+const ALLOWED_ORIGINS = [...new Set([...HARDCODED_ORIGINS, ...EXTRA_ORIGINS])];
 const IS_PRODUCTION = process.env.NODE_ENV === 'production';
 
 app.use(cors({
   origin: (origin, callback) => {
-    // In production, REQUIRE origin header (no-origin requests blocked)
-    if (!origin && IS_PRODUCTION) {
-      callback(new Error('Origin header required'));
+    // Allow requests with no origin in dev (curl, mobile apps, etc)
+    if (!origin) {
+      callback(null, !IS_PRODUCTION);
       return;
     }
-
-    // Allow requests with no origin in dev only (curl, mobile apps, etc)
-    if (!origin || ALLOWED_ORIGINS.includes(origin)) {
+    if (ALLOWED_ORIGINS.includes(origin)) {
       callback(null, true);
     } else {
+      console.warn('CORS blocked origin:', origin);
       callback(new Error('Not allowed by CORS'));
     }
   },
-  methods: ['GET', 'POST', 'DELETE', 'PATCH'],
+  methods: ['GET', 'POST', 'DELETE', 'PATCH', 'OPTIONS'],
   allowedHeaders: ['Content-Type'],
   credentials: true
 }));
