@@ -77,9 +77,6 @@ const InnerApp: React.FC = () => {
   const [newMsgAddress, setNewMsgAddress] = useState('');
   const [newMsgName, setNewMsgName] = useState('');
 
-  // Blockchain Proof toggle (off by default — no wallet popups)
-  const [blockchainProof, setBlockchainProof] = useState(false);
-
   // Sidebar context-menu state: pinned & muted chat/channel/group IDs (localStorage)
   const [pinnedChatIds, setPinnedChatIds] = useState<string[]>([]);
   const [mutedChatIds, setMutedChatIds] = useState<string[]>([]);
@@ -324,8 +321,6 @@ const InnerApp: React.FC = () => {
         if (p) setPinnedChatIds(JSON.parse(p));
         const m = localStorage.getItem(`ghost_muted_${publicKey}`);
         if (m) setMutedChatIds(JSON.parse(m));
-        const bp = localStorage.getItem(`ghost_blockchain_proof_${publicKey}`);
-        setBlockchainProof(bp === 'true');
       } catch { /* ignore */ }
     }
   }, [publicKey]);
@@ -351,15 +346,6 @@ const InnerApp: React.FC = () => {
       return updated;
     });
     toast.success(timer === 'off' ? 'Disappearing messages disabled' : `Messages will disappear after ${timer}`);
-  };
-
-  const toggleBlockchainProof = () => {
-    setBlockchainProof(prev => {
-      const next = !prev;
-      if (publicKey) localStorage.setItem(`ghost_blockchain_proof_${publicKey}`, String(next));
-      toast.success(next ? 'Blockchain proof enabled' : 'Blockchain proof disabled');
-      return next;
-    });
   };
 
   // Disappearing messages cleanup timer
@@ -641,23 +627,33 @@ const InnerApp: React.FC = () => {
       // Cache the plaintext so deduplication works when dm_sent / message_detected arrives
       cacheDecryptedMessage(tempId, text);
 
-      // 3. On-chain proof (fire-and-forget, non-blocking, only if toggle ON)
-      if (blockchainProof) (async () => {
-        try {
-          const txId = await sendMessageOnChain(contact.address!, encryptedPayload, timestamp, attachmentCID);
+      // 3. On-chain transaction (REQUIRED - wallet popup)
+      try {
+        toast.loading('Waiting for transaction approval...', { id: 'tx-approval' });
+        const txId = await sendMessageOnChain(contact.address!, encryptedPayload, timestamp, attachmentCID);
+        toast.dismiss('tx-approval');
+
+        if (txId) {
           logger.debug('On-chain message txId:', txId);
+          toast.success('Message sent on-chain');
           // Update message with txId
-          if (txId) {
-            setHistories(prev => {
-              const msgs = prev[activeChatId!];
-              if (!msgs) return prev;
-              return { ...prev, [activeChatId!]: msgs.map(m => m.id === tempId || m.timestamp === timestamp ? { ...m, txId } : m) };
-            });
-          }
-        } catch (e: any) {
-          logger.warn('On-chain message failed (non-critical):', e?.message);
+          setHistories(prev => {
+            const msgs = prev[activeChatId!];
+            if (!msgs) return prev;
+            return { ...prev, [activeChatId!]: msgs.map(m => m.id === tempId || m.timestamp === timestamp ? { ...m, txId, status: 'confirmed' } : m) };
+          });
         }
-      })();
+      } catch (e: any) {
+        toast.dismiss('tx-approval');
+        logger.error('On-chain transaction failed:', e?.message);
+        toast.error('Transaction failed: ' + (e?.message || 'Unknown error'));
+        // Remove optimistic message on failure
+        setHistories(prev => ({
+          ...prev,
+          [activeChatId]: (prev[activeChatId] || []).filter(m => m.id !== tempId)
+        }));
+        throw e; // Re-throw to trigger outer catch
+      }
     } catch (error) {
       logger.error("Failed to send message", error);
       toast.error('Failed to send message');
@@ -724,8 +720,8 @@ const InnerApp: React.FC = () => {
       setMyProfile({ username: name, bio });
       toast.success('Profile created');
 
-      // On-chain profile registration (only if blockchain proof ON)
-      if (blockchainProof) (async () => {
+      // On-chain profile registration (optional, non-blocking)
+      (async () => {
         try {
           await registerProfileOnChain();
           toast.success('On-chain profile registered');
@@ -750,8 +746,8 @@ const InnerApp: React.FC = () => {
       setMyProfile({ username: name, bio });
       toast.success('Profile updated');
 
-      // On-chain profile update (only if blockchain proof ON)
-      if (blockchainProof) (async () => {
+      // On-chain profile update (optional, non-blocking)
+      (async () => {
         try {
           await registerProfileOnChain();
           toast.success('On-chain profile updated');
@@ -790,17 +786,19 @@ const InnerApp: React.FC = () => {
       toast.success(`${type === 'channel' ? 'Channel' : 'Group'} "${name}" created`);
       fetchRooms(type).then(type === 'channel' ? setChannels : setGroups);
 
-      // On-chain proof of creation (only if blockchain proof ON)
-      if (blockchainProof && publicKey) {
-        try {
-          const nameHash = hashAddress(name);
-          const creatorHash = hashAddress(publicKey);
-          const fn = type === 'channel' ? 'create_channel' : 'create_group';
-          await executeTransaction(fn, [nameHash, creatorHash]);
-          toast.success(`On-chain ${type} proof recorded`);
-        } catch (e: any) {
-          logger.warn(`On-chain ${type} proof failed (non-critical):`, e?.message);
-        }
+      // On-chain proof of creation (optional, non-blocking)
+      if (publicKey) {
+        (async () => {
+          try {
+            const nameHash = hashAddress(name);
+            const creatorHash = hashAddress(publicKey);
+            const fn = type === 'channel' ? 'create_channel' : 'create_group';
+            await executeTransaction(fn, [nameHash, creatorHash]);
+            toast.success(`On-chain ${type} proof recorded`);
+          } catch (e: any) {
+            logger.warn(`On-chain ${type} proof failed (non-critical):`, e?.message);
+          }
+        })();
       }
     }
   };
@@ -813,16 +811,18 @@ const InnerApp: React.FC = () => {
     if (activeRoomId === roomId) setActiveRoomId(null);
     toast.success('Room deleted');
 
-    // On-chain deletion proof (only if blockchain proof ON)
-    if (blockchainProof && publicKey && room) {
-      try {
-        const nameHash = hashAddress(room.name);
-        const creatorHash = hashAddress(publicKey);
-        const fn = room.type === 'channel' ? 'delete_channel' : 'delete_group';
-        await executeTransaction(fn, [nameHash, creatorHash]);
-      } catch (e: any) {
-        logger.warn('On-chain room deletion failed (non-critical):', e?.message);
-      }
+    // On-chain deletion proof (optional, non-blocking)
+    if (publicKey && room) {
+      (async () => {
+        try {
+          const nameHash = hashAddress(room.name);
+          const creatorHash = hashAddress(publicKey);
+          const fn = room.type === 'channel' ? 'delete_channel' : 'delete_group';
+          await executeTransaction(fn, [nameHash, creatorHash]);
+        } catch (e: any) {
+          logger.warn('On-chain room deletion failed (non-critical):', e?.message);
+        }
+      })();
     }
   };
 
@@ -1011,16 +1011,19 @@ const InnerApp: React.FC = () => {
       }));
     }
 
-    // 2. On-chain delete (non-blocking, only if blockchain proof ON)
-    if (blockchainProof && msg?.timestamp) {
-      (async () => {
-        try {
-          await deleteMessageOnChain(msg.timestamp!);
-          logger.debug('On-chain delete succeeded for timestamp:', msg.timestamp);
-        } catch (e: any) {
-          logger.warn('On-chain delete failed (non-critical):', e?.message);
-        }
-      })();
+    // 2. On-chain delete (REQUIRED)
+    if (msg?.timestamp) {
+      try {
+        toast.loading('Deleting on-chain...', { id: 'delete-tx' });
+        await deleteMessageOnChain(msg.timestamp!);
+        toast.dismiss('delete-tx');
+        toast.success('Message deleted on-chain');
+        logger.debug('On-chain delete succeeded for timestamp:', msg.timestamp);
+      } catch (e: any) {
+        toast.dismiss('delete-tx');
+        logger.error('On-chain delete failed:', e?.message);
+        toast.error('On-chain delete failed: ' + (e?.message || 'Unknown error'));
+      }
     }
   };
 
@@ -1038,16 +1041,19 @@ const InnerApp: React.FC = () => {
       [activeChatId!]: (prev[activeChatId!] || []).map(m => m.id === msgId ? { ...m, text: newText, edited: true } : m)
     }));
 
-    // 2. On-chain edit (non-blocking, only if blockchain proof ON)
-    if (blockchainProof && msg?.timestamp && contact.address) {
-      (async () => {
-        try {
-          await editMessageOnChain(msg.timestamp!, newText, contact.address!);
-          logger.debug('On-chain edit succeeded for timestamp:', msg.timestamp);
-        } catch (e: any) {
-          logger.warn('On-chain edit failed (non-critical):', e?.message);
-        }
-      })();
+    // 2. On-chain edit (REQUIRED)
+    if (msg?.timestamp && contact.address) {
+      try {
+        toast.loading('Updating on-chain...', { id: 'edit-tx' });
+        await editMessageOnChain(msg.timestamp!, newText, contact.address!);
+        toast.dismiss('edit-tx');
+        toast.success('Message updated on-chain');
+        logger.debug('On-chain edit succeeded for timestamp:', msg.timestamp);
+      } catch (e: any) {
+        toast.dismiss('edit-tx');
+        logger.error('On-chain edit failed:', e?.message);
+        toast.error('On-chain edit failed: ' + (e?.message || 'Unknown error'));
+      }
     }
   };
 
@@ -1309,8 +1315,6 @@ const InnerApp: React.FC = () => {
             publicKey={publicKey}
             balance={balance}
             onDisconnect={() => disconnect && disconnect()}
-            blockchainProof={blockchainProof}
-            onToggleBlockchainProof={toggleBlockchainProof}
           />
         )}
       </main>

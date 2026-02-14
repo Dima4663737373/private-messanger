@@ -15,10 +15,6 @@ interface SettingsViewProps {
   publicKey: string | null;
   balance?: number | null;
   onDisconnect: () => void;
-
-  // Blockchain proof toggle
-  blockchainProof: boolean;
-  onToggleBlockchainProof: () => void;
 }
 
 type Section = 'main' | 'profile' | 'wallet' | 'security' | 'privacy';
@@ -32,9 +28,7 @@ const SettingsView: React.FC<SettingsViewProps> = ({
   isWalletConnected,
   publicKey,
   balance,
-  onDisconnect,
-  blockchainProof,
-  onToggleBlockchainProof
+  onDisconnect
 }) => {
   const [activeSection, setActiveSection] = useState<Section>('main');
   const [name, setName] = useState(initialData?.username || '');
@@ -419,34 +413,18 @@ const SettingsView: React.FC<SettingsViewProps> = ({
               </div>
             </div>
 
-            {/* Blockchain Proof Toggle */}
-            <div className="p-6 bg-[#FAFAFA] border border-[#E5E5E5] rounded-2xl">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-3">
-                  <Link size={20} className="text-[#FF8C00]" />
-                  <div>
-                    <h3 className="font-bold mb-1 text-[#0A0A0A]">Blockchain Proof</h3>
-                    <p className="text-sm text-[#666]">Record messages on Aleo blockchain</p>
-                  </div>
+            {/* On-Chain Transactions - Always Active */}
+            <div className="p-6 bg-[#FAFAFA] border border-[#E5E5E5] rounded-2xl flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <Link size={20} className="text-[#FF8C00]" />
+                <div>
+                  <h3 className="font-bold mb-1 text-[#0A0A0A]">On-Chain Messages</h3>
+                  <p className="text-sm text-[#666]">All messages recorded on Aleo blockchain</p>
                 </div>
-                <button
-                  onClick={onToggleBlockchainProof}
-                  className={`relative w-12 h-6 rounded-full transition-colors ${
-                    blockchainProof ? 'bg-[#FF8C00]' : 'bg-[#D1D5DB]'
-                  }`}
-                >
-                  <span
-                    className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform ${
-                      blockchainProof ? 'translate-x-6' : 'translate-x-0'
-                    }`}
-                  />
-                </button>
               </div>
-              <p className="text-xs text-[#999] mt-3 ml-8">
-                {blockchainProof
-                  ? 'ON — wallet popup per message (on-chain proof)'
-                  : 'OFF — off-chain only (instant, no popups)'}
-              </p>
+              <div className="px-3 py-1 bg-[#FF8C00] text-white text-xs font-bold rounded-full">
+                ACTIVE
+              </div>
             </div>
 
             <div className="p-6 bg-[#FAFAFA] border border-[#E5E5E5] rounded-2xl">
