@@ -773,8 +773,8 @@ app.get('/preferences/:address', requireAuth, preferencesLimiter, async (req: an
   }
 });
 
-// POST /preferences/:address — update user preferences (requires full auth + ownership)
-app.post('/preferences/:address', requireFullAuth, preferencesLimiter, async (req: any, res) => {
+// POST /preferences/:address — update user preferences (requires auth + ownership)
+app.post('/preferences/:address', requireAuth, preferencesLimiter, async (req: any, res) => {
   try {
     const address = req.params.address as string;
     if (address !== req.authenticatedAddress) {
