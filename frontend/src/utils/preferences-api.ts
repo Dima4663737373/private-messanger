@@ -9,6 +9,7 @@
  */
 
 import { safeBackendFetch } from './api-client';
+import { waitForToken } from './auth-store';
 
 export interface UserSettings {
   // Privacy
@@ -62,6 +63,13 @@ const DEFAULT_PREFS = (address: string): UserPreferences => ({
  * Fetch user preferences from backend
  */
 export async function fetchPreferences(address: string): Promise<UserPreferences> {
+  // Wait for WS auth to complete and session token to become available
+  try {
+    await waitForToken();
+  } catch {
+    // Token timeout — return defaults (user may not be authenticated yet)
+    return DEFAULT_PREFS(address);
+  }
   const { data, error } = await safeBackendFetch<UserPreferences>(`/preferences/${address}`);
   if (error || !data) {
     return DEFAULT_PREFS(address);
@@ -86,6 +94,13 @@ export async function updatePreferences(
     migrated: boolean;
   }>
 ): Promise<boolean> {
+  // Wait for WS auth to complete and session token to become available
+  try {
+    await waitForToken();
+  } catch {
+    console.error('updatePreferences: auth token not available');
+    return false;
+  }
   const { error } = await safeBackendFetch(`/preferences/${address}`, {
     method: 'POST',
     body: updates,

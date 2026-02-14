@@ -283,6 +283,27 @@ wss.on('connection', (ws: any) => {
         return;
       }
 
+      // AUTH_KEY_MISMATCH — client's encryption keys changed, can't decrypt challenge
+      // Issue limited token so client can re-register profile with new keys
+      if (data.type === 'AUTH_KEY_MISMATCH') {
+        const pending = pendingChallenges.get(ws);
+        const address = pending?.address || data.address;
+        pendingChallenges.delete(ws);
+
+        if (!address || !isValidAddress(address)) {
+          ws.send(JSON.stringify({ type: 'AUTH_FAILED', message: 'Invalid address' }));
+          return;
+        }
+
+        const token = uuidv4();
+        sessions.set(token, { address, limited: true, createdAt: Date.now() });
+        ws.authenticated = true;
+        ws.authenticatedAddress = address;
+        ws.sessionToken = token;
+        ws.send(JSON.stringify({ type: 'AUTH_SUCCESS', address, token, requiresProfile: true }));
+        return;
+      }
+
       // Require authentication for all other operations
       if (!ws.authenticated) {
         ws.send(JSON.stringify({ type: 'error', message: 'Authentication required. Send AUTH message first.' }));
@@ -702,8 +723,8 @@ const preferencesLimiter = rateLimit({
   message: { error: 'Preferences rate limit exceeded' }
 });
 
-// GET /preferences/:address — get user preferences (requires full auth + ownership)
-app.get('/preferences/:address', requireFullAuth, preferencesLimiter, async (req: any, res) => {
+// GET /preferences/:address — get user preferences (requires auth + ownership)
+app.get('/preferences/:address', requireAuth, preferencesLimiter, async (req: any, res) => {
   const address = req.params.address as string;
   if (address !== req.authenticatedAddress) {
     return res.status(403).json({ error: 'Can only access your own preferences' });

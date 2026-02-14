@@ -252,9 +252,8 @@ export function useSync(
               try {
                 const myKeys = getCachedKeys(address);
                 if (!myKeys) {
-                  logger.error('Cannot respond to AUTH_CHALLENGE — keys not derived yet');
-                  // Close and reconnect after keys are ready
-                  socket.close();
+                  logger.warn('Cannot respond to AUTH_CHALLENGE — keys not derived yet, requesting limited token');
+                  socket.send(JSON.stringify({ type: 'AUTH_KEY_MISMATCH', address }));
                   return;
                 }
                 const encrypted = decodeBase64(data.encryptedChallenge);
@@ -264,15 +263,15 @@ export function useSync(
 
                 const decrypted = nacl.box.open(encrypted, nonce, serverPubKey, mySecretKey);
                 if (!decrypted) {
-                  logger.error('Failed to decrypt AUTH_CHALLENGE');
-                  socket.close();
+                  logger.warn('AUTH_CHALLENGE decryption failed (keys may have changed), requesting limited token');
+                  socket.send(JSON.stringify({ type: 'AUTH_KEY_MISMATCH', address }));
                   return;
                 }
                 const decryptedChallenge = new TextDecoder().decode(decrypted);
                 socket.send(JSON.stringify({ type: 'AUTH_RESPONSE', decryptedChallenge }));
               } catch (e) {
                 logger.error('AUTH_CHALLENGE handling failed:', e);
-                socket.close();
+                socket.send(JSON.stringify({ type: 'AUTH_KEY_MISMATCH', address }));
               }
               return;
             }
