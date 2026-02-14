@@ -144,6 +144,20 @@ const ChatArea: React.FC<ChatAreaProps> = ({
     }
   }, [searchIndex, searchMatchIds]);
 
+  // Highlight search query within message text
+  const highlightText = (text: string, isMatch: boolean) => {
+    if (!isMatch || !searchQuery.trim()) return text;
+    const q = searchQuery.trim();
+    const regex = new RegExp(`(${q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`, 'gi');
+    const parts = text.split(regex);
+    if (parts.length === 1) return text;
+    return parts.map((part, i) =>
+      regex.test(part)
+        ? <mark key={i} className="bg-[#FF8C00]/40 text-inherit rounded-sm px-0.5">{part}</mark>
+        : part
+    );
+  };
+
   // Close menu when clicking outside
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -762,7 +776,7 @@ const ChatArea: React.FC<ChatAreaProps> = ({
                         {roomChat && !msg.isMine && msg.senderHash && (
                           <p className="text-[11px] font-bold text-[#FF8C00] mb-1">{msg.senderHash}</p>
                         )}
-                        <p className="text-[15px] leading-relaxed">{msg.text}</p>
+                        <p className="text-[15px] leading-relaxed">{highlightText(msg.text, isSearchMatch)}</p>
                         <div className={`text-[10px] mt-2 font-mono opacity-60 flex items-center gap-1 ${msg.isMine ? 'justify-end' : 'justify-start'}`}>
                         {msg.time}
                         {msg.edited && <span className="italic text-[#FF8C00]">(edited)</span>}
