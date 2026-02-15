@@ -1,8 +1,8 @@
-// Ghost Messenger — Unified Aleo Program (V4)
+// Ghost Messenger — Unified Aleo Program (V5)
 // Combines messaging (records, encryption keys) with channels/groups proof.
-// Added: update_profile, clear_history, delete_chat transitions.
+// Added: update_profile, clear_history, delete_chat, add_contact, update_contact, delete_contact.
 
-program ghost_msg_016.aleo {
+program ghost_msg_017.aleo {
 
     @noupgrade
     async constructor() {}
@@ -35,6 +35,7 @@ program ghost_msg_016.aleo {
 
     mapping profile_pubkey: field => EncryptionKey;
     mapping dialog_last_block: field => u32;
+    mapping contacts: field => bool;
     mapping channels: field => field;
     mapping groups: field => field;
 
@@ -195,6 +196,56 @@ program ghost_msg_016.aleo {
         let dialog_pair: DialogPair = DialogPair { a: min_hash, b: max_hash };
         let dialog_key: field = BHP256::hash_to_field(dialog_pair);
         Mapping::remove(dialog_last_block, dialog_key);
+    }
+
+    // ── Contact Transitions ────────────────────────────────
+
+    /// Add contact on-chain (proof of action).
+    async transition add_contact(
+        public contact_hash: field
+    ) -> Future {
+        let owner_hash: field = BHP256::hash_to_field(self.caller);
+        return finalize_add_contact(owner_hash, contact_hash);
+    }
+
+    async function finalize_add_contact(
+        owner_hash: field,
+        contact_hash: field
+    ) {
+        let key: field = owner_hash + contact_hash;
+        Mapping::set(contacts, key, true);
+    }
+
+    /// Update contact on-chain (proof of rename).
+    async transition update_contact(
+        public contact_hash: field
+    ) -> Future {
+        let owner_hash: field = BHP256::hash_to_field(self.caller);
+        return finalize_update_contact(owner_hash, contact_hash);
+    }
+
+    async function finalize_update_contact(
+        owner_hash: field,
+        contact_hash: field
+    ) {
+        let key: field = owner_hash + contact_hash;
+        Mapping::set(contacts, key, true);
+    }
+
+    /// Delete contact on-chain (proof of removal).
+    async transition delete_contact(
+        public contact_hash: field
+    ) -> Future {
+        let owner_hash: field = BHP256::hash_to_field(self.caller);
+        return finalize_delete_contact(owner_hash, contact_hash);
+    }
+
+    async function finalize_delete_contact(
+        owner_hash: field,
+        contact_hash: field
+    ) {
+        let key: field = owner_hash + contact_hash;
+        Mapping::remove(contacts, key);
     }
 
     // ── Channel/Group Transitions ───────────────────────────

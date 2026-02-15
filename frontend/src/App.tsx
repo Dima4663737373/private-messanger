@@ -44,7 +44,7 @@ const mapContactToChat = (contact: Contact, isActive: boolean): Chat => ({
 
 const InnerApp: React.FC = () => {
   const { publicKey, wallet, signMessage, requestTransaction, disconnect, select, wallets } = useWallet();
-  const { executeTransaction, sendMessageOnChain, registerProfile: registerProfileOnChain, updateProfile: updateProfileOnChain, deleteMessage: deleteMessageOnChain, editMessage: editMessageOnChain, clearHistoryOnChain, deleteChatOnChain, loading: contractLoading } = useContract();
+  const { executeTransaction, sendMessageOnChain, registerProfile: registerProfileOnChain, updateProfile: updateProfileOnChain, deleteMessage: deleteMessageOnChain, editMessage: editMessageOnChain, clearHistoryOnChain, deleteChatOnChain, addContactOnChain, updateContactOnChain, deleteContactOnChain, loading: contractLoading } = useContract();
 
   // User Preferences (replaces localStorage)
   const {
@@ -845,7 +845,7 @@ const InnerApp: React.FC = () => {
     }
   };
 
-  const handleAddContact = (address: string, name: string) => {
+  const handleAddContact = async (address: string, name: string) => {
     if (!publicKey) {
         toast.error('Connect wallet to add contacts');
         return;
@@ -857,8 +857,20 @@ const InnerApp: React.FC = () => {
         return;
     }
 
+    // On-chain transaction (wallet popup)
+    try {
+      toast.loading('Waiting for add contact transaction...', { id: 'add-contact-tx' });
+      await addContactOnChain(address);
+      toast.dismiss('add-contact-tx');
+    } catch (e: any) {
+      toast.dismiss('add-contact-tx');
+      toast.error('Transaction rejected');
+      logger.error('Add contact on-chain failed:', e?.message);
+      return; // Don't add contact if transaction was rejected
+    }
+
     const newContact: Contact = {
-      id: address, // Use address as ID for uniqueness
+      id: address,
       name,
       address,
       description: 'Added via contacts',
@@ -867,21 +879,46 @@ const InnerApp: React.FC = () => {
       unreadCount: 0
     };
 
-    const updatedContacts = [...contacts, newContact];
-    setContacts(updatedContacts);
+    setContacts(prev => [...prev, newContact]);
     toast.success(`Contact ${name} added`);
   };
 
-  const handleEditContact = (id: string, newName: string) => {
+  const handleEditContact = async (id: string, newName: string) => {
     if (!publicKey) return;
+
+    // On-chain transaction (wallet popup)
+    try {
+      toast.loading('Waiting for update contact transaction...', { id: 'update-contact-tx' });
+      await updateContactOnChain(id); // id is the address
+      toast.dismiss('update-contact-tx');
+    } catch (e: any) {
+      toast.dismiss('update-contact-tx');
+      toast.error('Transaction rejected');
+      logger.error('Update contact on-chain failed:', e?.message);
+      return;
+    }
+
     setContacts(prev =>
       prev.map(c => c.id === id ? { ...c, name: newName, initials: newName.slice(0, 2).toUpperCase() } : c)
     );
     toast.success('Contact renamed');
   };
 
-  const handleDeleteContact = (id: string) => {
+  const handleDeleteContact = async (id: string) => {
     if (!publicKey) return;
+
+    // On-chain transaction (wallet popup)
+    try {
+      toast.loading('Waiting for delete contact transaction...', { id: 'delete-contact-tx' });
+      await deleteContactOnChain(id); // id is the address
+      toast.dismiss('delete-contact-tx');
+    } catch (e: any) {
+      toast.dismiss('delete-contact-tx');
+      toast.error('Transaction rejected');
+      logger.error('Delete contact on-chain failed:', e?.message);
+      return;
+    }
+
     setContacts(prev => prev.filter(c => c.id !== id));
     if (activeChatId === id) setActiveChatId(null);
     toast.success('Contact deleted');

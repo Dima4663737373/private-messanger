@@ -319,6 +319,42 @@ export function useContract() {
     return await executeTransaction('delete_chat', [recipientHash], options);
   };
 
+  /**
+   * Add contact on-chain (proof of action) — uses add_contact transition
+   */
+  const addContactOnChain = async (
+    contactAddress: string,
+    options?: ExecuteTransactionOptions
+  ) => {
+    if (!publicKey) throw new Error("Wallet not connected");
+    const contactHash = hashAddress(contactAddress);
+    return await executeTransaction('add_contact', [contactHash], options);
+  };
+
+  /**
+   * Update contact on-chain (proof of rename) — uses update_contact transition
+   */
+  const updateContactOnChain = async (
+    contactAddress: string,
+    options?: ExecuteTransactionOptions
+  ) => {
+    if (!publicKey) throw new Error("Wallet not connected");
+    const contactHash = hashAddress(contactAddress);
+    return await executeTransaction('update_contact', [contactHash], options);
+  };
+
+  /**
+   * Delete contact on-chain (proof of removal) — uses delete_contact transition
+   */
+  const deleteContactOnChain = async (
+    contactAddress: string,
+    options?: ExecuteTransactionOptions
+  ) => {
+    if (!publicKey) throw new Error("Wallet not connected");
+    const contactHash = hashAddress(contactAddress);
+    return await executeTransaction('delete_contact', [contactHash], options);
+  };
+
   return {
     loading,
     error,
@@ -329,6 +365,9 @@ export function useContract() {
     editMessage,
     clearHistoryOnChain,
     deleteChatOnChain,
+    addContactOnChain,
+    updateContactOnChain,
+    deleteContactOnChain,
     findRecordByTimestamp,
     executeTransaction,
   };

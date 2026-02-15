@@ -139,17 +139,19 @@ const Sidebar: React.FC<SidebarProps> = ({
 
   const showListPanel = currentView === 'chats' || currentView === 'channels' || currentView === 'groups';
 
-  const NavItem = ({ icon, view, label, badge }: { icon: React.ReactNode, view: AppView, label: string, badge?: number }) => (
+  const NavItem = ({ icon, view, label, badge, disabled }: { icon: React.ReactNode, view: AppView, label: string, badge?: number, disabled?: boolean }) => (
     <button
-      onClick={() => onSetView(view)}
+      onClick={() => !disabled && onSetView(view)}
       className={`relative flex items-center rounded-xl transition-all whitespace-nowrap ${
         navHovered ? 'w-full gap-3 px-3 py-2.5' : 'w-10 h-10 justify-center mx-auto'
       } ${
-        currentView === view
+        disabled
+        ? 'opacity-30 cursor-not-allowed text-[#444]'
+        : currentView === view
         ? 'bg-[#FF8C00] text-black shadow-lg shadow-[#FF8C00]/20'
         : 'text-[#666] hover:bg-[#1A1A1A] hover:text-white'
       }`}
-      title={label}
+      title={disabled ? `${label} (Soon)` : label}
     >
       <span className="shrink-0 flex items-center justify-center">{icon}</span>
       <span className={`text-sm font-medium truncate transition-[opacity,max-width] duration-300 ${navHovered ? 'opacity-100 max-w-[120px]' : 'opacity-0 max-w-0'} overflow-hidden`}>{label}</span>
@@ -185,8 +187,8 @@ const Sidebar: React.FC<SidebarProps> = ({
         {/* Nav Items */}
         <div className={`${navHovered ? 'space-y-1' : 'space-y-2 flex flex-col items-center'}`}>
           <NavItem icon={<MessageSquare size={18} />} view="chats" label="Messages" />
-          <NavItem icon={<Radio size={18} />} view="channels" label="Channels" />
-          <NavItem icon={<Users size={18} />} view="groups" label="Groups" />
+          <NavItem icon={<Radio size={18} />} view="channels" label="Channels" disabled />
+          <NavItem icon={<Users size={18} />} view="groups" label="Groups" disabled />
           <NavItem icon={<User size={18} />} view="contacts" label="Contacts" />
           <NavItem icon={<Bell size={18} />} view="notifications" label="Notifications" badge={unreadNotifications} />
           <NavItem icon={<Settings size={18} />} view="settings" label="Settings" />
