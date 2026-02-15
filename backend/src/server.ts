@@ -713,6 +713,16 @@ app.post('/profiles', requireAuth, profileWriteLimiter, async (req: any, res) =>
 
     await Profile.upsert(data);
 
+    // Broadcast profile update to all connected clients (so they see the new name)
+    if (data.username) {
+      const payload = { type: 'profile_detected', payload: { address, username: data.username } };
+      wss.clients.forEach((client: any) => {
+        if (client.readyState === WebSocket.OPEN && client.authenticatedAddress !== address) {
+          client.send(JSON.stringify(payload));
+        }
+      });
+    }
+
     // If this was a limited session and user just registered with an encryption key,
     // upgrade the session to full access
     if (req.sessionLimited && encryptionPublicKey) {

@@ -11,10 +11,7 @@ import { stringToFields } from '../utils/messageUtils';
 import { hashAddress } from '../utils/aleo-utils';
 import { encryptMessage } from '../utils/crypto';
 import { getCachedKeys } from '../utils/key-derivation';
-import { API_CONFIG } from '../config';
 import { safeBackendFetch } from '../utils/api-client';
-
-const BACKEND_URL = API_CONFIG.BACKEND_BASE;
 
 export interface ExecuteTransactionOptions {
   maxRetries?: number;
@@ -87,35 +84,22 @@ export function useContract() {
     options?: ExecuteTransactionOptions
   ) => {
     if (!publicKey) throw new Error("Wallet not connected");
-    
+
     // Get encryption keys from session cache (derived from wallet signature)
     const keys = getCachedKeys(publicKey);
     if (!keys) throw new Error("Encryption keys not available. Please reconnect wallet.");
-    
+
     // Split public key (base64) into two fields
     const keyFields = stringToFields(keys.publicKey, 2);
-    
+
     const txId = await executeTransaction(
       'register_profile',
       [keyFields[0], keyFields[1]],
       options
     );
 
-    // Push profile + Public Key to backend (for easier discovery by address)
-    // Note: On-chain we only have hash->key. Backend helps map address->hash->key.
-    // Uses safeBackendFetch for automatic auth token injection
-    try {
-        await safeBackendFetch('/profiles', {
-            method: 'POST',
-            body: {
-                encryptionPublicKey: keys.publicKey,
-                txId
-            }
-        });
-    } catch (e) {
-        logger.error("Failed to push profile metadata", e);
-    }
-
+    // Backend profile push is handled by notifyProfileUpdate in App.tsx
+    // which includes name, bio, encryptionPublicKey, and txId in a single call.
     return txId;
   };
 
@@ -278,18 +262,7 @@ export function useContract() {
       options
     );
 
-    try {
-      await safeBackendFetch('/profiles', {
-        method: 'POST',
-        body: {
-          encryptionPublicKey: keys.publicKey,
-          txId
-        }
-      });
-    } catch (e) {
-      logger.error("Failed to push profile metadata", e);
-    }
-
+    // Backend profile push is handled by notifyProfileUpdate in App.tsx
     return txId;
   };
 

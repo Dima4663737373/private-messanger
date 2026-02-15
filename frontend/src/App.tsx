@@ -442,7 +442,14 @@ const InnerApp: React.FC = () => {
     });
   }, []);
 
-  const { isConnected: isSyncConnected, typingUsers, notifyProfileUpdate, searchProfiles, fetchMessages, fetchDialogs, fetchDialogMessages, syncProfile, cacheDecryptedMessage, sendTyping, sendReadReceipt, addReaction, removeReaction, fetchRooms, createRoom, deleteRoom: deleteRoomApi, renameRoom: renameRoomApi, joinRoom, leaveRoom, fetchRoomInfo, fetchRoomMessages, sendRoomMessage, subscribeRoom, sendRoomTyping, clearDMHistory, deleteRoomMessage, editRoomMessage, prepareDMMessage, commitDMMessage, sendDMMessage, deleteDMMessage, editDMMessage, fetchPins, pinMessage, unpinMessage } = useSync(publicKey, handleNewMessage, handleMessageDeleted, handleMessageUpdated, handleReactionUpdate, handleRoomMessage, handleRoomCreated, handleRoomDeleted, handleDMCleared, handlePinUpdate, handleRoomMessageDeleted, handleRoomMessageEdited, handleDMSent, handleReadReceipt);
+  // Profile updated — update contact name in real-time when someone changes their profile
+  const handleProfileUpdated = React.useCallback((addr: string, username: string) => {
+    setContacts(prev => prev.map(c =>
+      c.address === addr ? { ...c, name: username, initials: username.slice(0, 2).toUpperCase() } : c
+    ));
+  }, []);
+
+  const { isConnected: isSyncConnected, typingUsers, notifyProfileUpdate, searchProfiles, fetchMessages, fetchDialogs, fetchDialogMessages, syncProfile, cacheDecryptedMessage, sendTyping, sendReadReceipt, addReaction, removeReaction, fetchRooms, createRoom, deleteRoom: deleteRoomApi, renameRoom: renameRoomApi, joinRoom, leaveRoom, fetchRoomInfo, fetchRoomMessages, sendRoomMessage, subscribeRoom, sendRoomTyping, clearDMHistory, deleteRoomMessage, editRoomMessage, prepareDMMessage, commitDMMessage, sendDMMessage, deleteDMMessage, editDMMessage, fetchPins, pinMessage, unpinMessage } = useSync(publicKey, handleNewMessage, handleMessageDeleted, handleMessageUpdated, handleReactionUpdate, handleRoomMessage, handleRoomCreated, handleRoomDeleted, handleDMCleared, handlePinUpdate, handleRoomMessageDeleted, handleRoomMessageEdited, handleDMSent, handleReadReceipt, handleProfileUpdated);
 
   // Keep refs in sync for use inside memoized callbacks
   activeChatIdRef.current = activeChatId;
@@ -610,6 +617,24 @@ const InnerApp: React.FC = () => {
             return combined;
           });
         }
+
+        // Mark all loaded dialog messages as processed (prevent duplicate WS notifications)
+        for (const dialogMsg of dialogs) {
+          if (dialogMsg.id) processedMsgIds.current.add(dialogMsg.id);
+        }
+
+        // Push notifications for recent incoming messages (received within last 24h)
+        const oneDayAgo = Date.now() - 86_400_000;
+        for (const dialogMsg of dialogs) {
+          const isMine = dialogMsg.sender === publicKey;
+          if (!isMine && dialogMsg.timestamp > oneDayAgo) {
+            const preview = dialogMsg.text && dialogMsg.text !== 'Encrypted Message'
+              ? (dialogMsg.text.length > 80 ? dialogMsg.text.slice(0, 80) + '...' : dialogMsg.text)
+              : 'New encrypted message';
+            const senderAddr = dialogMsg.sender;
+            pushNotification('message', 'Message received', preview, senderAddr);
+          }
+        }
       } catch (e) {
         logger.error("Failed to sync dialogs:", e);
       }
@@ -667,6 +692,17 @@ const InnerApp: React.FC = () => {
   const activeDialogHash = useMemo(() => {
     return contacts.find(c => c.id === activeChatId)?.dialogHash;
   }, [contacts, activeChatId]);
+
+  // Build address → display name map for ChatArea (DM contacts + room members)
+  const memberNames = useMemo(() => {
+    const map: Record<string, string> = {};
+    for (const c of contacts) {
+      if (c.address && c.name && !c.name.startsWith('User ')) {
+        map[c.address] = c.name;
+      }
+    }
+    return map;
+  }, [contacts]);
 
   // Load messages when active chat changes
   useEffect(() => {
@@ -929,21 +965,21 @@ const InnerApp: React.FC = () => {
     setIsProcessing(true);
 
     try {
-      // 1. Off-chain profile save
-      await notifyProfileUpdate(name, bio, 'off-chain');
+      // 1. On-chain profile registration (wallet popup)
+      toast.loading('Waiting for transaction approval...', { id: 'profile-tx' });
+      const txId = await registerProfileOnChain();
+      toast.dismiss('profile-tx');
+
+      // 2. Save profile to backend (single call with ALL data: name, bio, key, txId)
+      await notifyProfileUpdate(name, bio, txId || 'off-chain');
       setMyProfile({ username: name, bio });
 
-      // 2. On-chain profile registration (REQUIRED - wallet popup)
-      toast.loading('Waiting for transaction approval...', { id: 'profile-tx' });
-      await registerProfileOnChain();
-      toast.dismiss('profile-tx');
       toast.success('Profile created on-chain');
       logger.debug('On-chain profile registered');
     } catch (e: any) {
       toast.dismiss('profile-tx');
       logger.error("Failed to create profile", e);
       toast.error('Profile creation failed: ' + (e?.message || 'Unknown error'));
-      // Rollback optimistic update
       setMyProfile(null);
     } finally {
       setIsProcessing(false);
@@ -957,21 +993,21 @@ const InnerApp: React.FC = () => {
     const oldProfile = myProfile;
 
     try {
-      // 1. Off-chain profile update
-      await notifyProfileUpdate(name, bio, 'off-chain');
+      // 1. On-chain profile update (wallet popup)
+      toast.loading('Waiting for transaction approval...', { id: 'profile-update-tx' });
+      const txId = await updateProfileOnChain();
+      toast.dismiss('profile-update-tx');
+
+      // 2. Save profile to backend (single call with ALL data)
+      await notifyProfileUpdate(name, bio, txId || 'off-chain');
       setMyProfile({ username: name, bio });
 
-      // 2. On-chain profile update (REQUIRED - wallet popup)
-      toast.loading('Waiting for transaction approval...', { id: 'profile-update-tx' });
-      await updateProfileOnChain();
-      toast.dismiss('profile-update-tx');
       toast.success('Profile updated on-chain');
       logger.debug('On-chain profile updated');
     } catch (e: any) {
       toast.dismiss('profile-update-tx');
       logger.error("Failed to update profile", e);
       toast.error('Profile update failed: ' + (e?.message || 'Unknown error'));
-      // Rollback to old profile
       setMyProfile(oldProfile);
     } finally {
       setIsProcessing(false);
@@ -1075,7 +1111,7 @@ const InnerApp: React.FC = () => {
 
   const handleSendRoomMessage = (text: string) => {
     if (!activeRoomId) return;
-    sendRoomMessage(activeRoomId, text);
+    sendRoomMessage(activeRoomId, text, myProfile?.username);
     // Optimistic update
     const tempMsg: Message = {
       id: Date.now().toString(),
@@ -1276,10 +1312,17 @@ const InnerApp: React.FC = () => {
     // 2. Off-chain delete (instant)
     await deleteDMMessage(msgId);
     if (activeChatId) {
-      setHistories(prev => ({
-        ...prev,
-        [activeChatId!]: (prev[activeChatId!] || []).filter(m => m.id !== msgId)
-      }));
+      setHistories(prev => {
+        const remaining = (prev[activeChatId!] || []).filter(m => m.id !== msgId);
+        // Update sidebar preview to show the last remaining message (or empty)
+        const lastMsg = remaining.length > 0 ? remaining[remaining.length - 1] : null;
+        setContacts(pc => pc.map(c =>
+          c.id === activeChatId
+            ? { ...c, lastMessage: lastMsg?.text || '', lastMessageTime: lastMsg ? new Date(lastMsg.timestamp) : undefined }
+            : c
+        ));
+        return { ...prev, [activeChatId!]: remaining };
+      });
     }
     toast.success('Message deleted');
   };
@@ -1307,10 +1350,17 @@ const InnerApp: React.FC = () => {
     // 2. Off-chain edit (instant via backend)
     await editDMMessage(msgId, newText, contact.address);
     // Optimistic update
-    setHistories(prev => ({
-      ...prev,
-      [activeChatId!]: (prev[activeChatId!] || []).map(m => m.id === msgId ? { ...m, text: newText, edited: true } : m)
-    }));
+    setHistories(prev => {
+      const updated = (prev[activeChatId!] || []).map(m => m.id === msgId ? { ...m, text: newText, edited: true } : m);
+      // Update sidebar preview if this was the last message
+      const lastMsg = updated[updated.length - 1];
+      if (lastMsg && lastMsg.id === msgId) {
+        setContacts(pc => pc.map(c =>
+          c.id === activeChatId ? { ...c, lastMessage: newText } : c
+        ));
+      }
+      return { ...prev, [activeChatId!]: updated };
+    });
     toast.success('Message edited');
   };
 
@@ -1547,6 +1597,7 @@ const InnerApp: React.FC = () => {
             onDeleteDMMessage={!activeRoomId && activeChatId ? handleDeleteDMMessage : undefined}
             onEditDMMessage={!activeRoomId && activeChatId ? handleEditDMMessage : undefined}
             roomMembers={activeRoomId ? roomMembers : undefined}
+            memberNames={memberNames}
           />
         )}
 

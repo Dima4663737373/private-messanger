@@ -27,7 +27,8 @@ export function useSync(
   onRoomMessageDeleted?: (roomId: string, messageId: string) => void,
   onRoomMessageEdited?: (roomId: string, messageId: string, text: string) => void,
   onDMSent?: (tempId: string, realId: string) => void,
-  onReadReceipt?: (dialogHash: string, messageIds: string[]) => void
+  onReadReceipt?: (dialogHash: string, messageIds: string[]) => void,
+  onProfileUpdated?: (address: string, username: string) => void
 ) {
   const ws = useRef<WebSocket | null>(null);
   const [isConnected, setIsConnected] = useState(false);
@@ -223,10 +224,10 @@ export function useSync(
   };
 
   // Callbacks Ref
-  const callbacksRef = useRef({ onNewMessage, onMessageDeleted, onMessageUpdated, onReactionUpdate, onRoomMessage, onRoomCreated, onRoomDeleted, onDMCleared, onPinUpdate, onRoomMessageDeleted, onRoomMessageEdited, onDMSent, onReadReceipt });
+  const callbacksRef = useRef({ onNewMessage, onMessageDeleted, onMessageUpdated, onReactionUpdate, onRoomMessage, onRoomCreated, onRoomDeleted, onDMCleared, onPinUpdate, onRoomMessageDeleted, onRoomMessageEdited, onDMSent, onReadReceipt, onProfileUpdated });
   useEffect(() => {
-      callbacksRef.current = { onNewMessage, onMessageDeleted, onMessageUpdated, onReactionUpdate, onRoomMessage, onRoomCreated, onRoomDeleted, onDMCleared, onPinUpdate, onRoomMessageDeleted, onRoomMessageEdited, onDMSent, onReadReceipt };
-  }, [onNewMessage, onMessageDeleted, onMessageUpdated, onReactionUpdate, onRoomMessage, onRoomCreated, onRoomDeleted, onDMCleared, onPinUpdate, onRoomMessageDeleted, onRoomMessageEdited, onDMSent, onReadReceipt]);
+      callbacksRef.current = { onNewMessage, onMessageDeleted, onMessageUpdated, onReactionUpdate, onRoomMessage, onRoomCreated, onRoomDeleted, onDMCleared, onPinUpdate, onRoomMessageDeleted, onRoomMessageEdited, onDMSent, onReadReceipt, onProfileUpdated };
+  }, [onNewMessage, onMessageDeleted, onMessageUpdated, onReactionUpdate, onRoomMessage, onRoomCreated, onRoomDeleted, onDMCleared, onPinUpdate, onRoomMessageDeleted, onRoomMessageEdited, onDMSent, onReadReceipt, onProfileUpdated]);
 
   useEffect(() => {
     if (!address) return;
@@ -457,6 +458,10 @@ export function useSync(
                  toast(`${data.payload.username || 'User'} updated their profile`, { icon: '👤' });
                  if (data.payload.address) {
                      keyCache.current.delete(data.payload.address);
+                     // Update contact name in real-time
+                     if (data.payload.username && callbacksRef.current.onProfileUpdated) {
+                       callbacksRef.current.onProfileUpdated(data.payload.address, data.payload.username);
+                     }
                  }
             }
             else if (data.type === 'message_deleted') {
@@ -883,7 +888,7 @@ export function useSync(
     }));
   };
 
-  const sendRoomMessage = async (roomId: string, text: string) => {
+  const sendRoomMessage = async (roomId: string, text: string, senderName?: string) => {
     if (ws.current && ws.current.readyState === WebSocket.OPEN && address) {
       // Encrypt the message with the room symmetric key
       let encryptedText = text;
@@ -893,7 +898,7 @@ export function useSync(
       }
       ws.current.send(JSON.stringify({
         type: 'ROOM_MESSAGE',
-        roomId, sender: address, text: encryptedText, timestamp: Date.now()
+        roomId, sender: address, senderName: senderName || '', text: encryptedText, timestamp: Date.now()
       }));
     }
   };

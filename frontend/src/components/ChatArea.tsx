@@ -43,6 +43,7 @@ interface ChatAreaProps {
   onDeleteDMMessage?: (msgId: string) => void;
   onEditDMMessage?: (msgId: string, newText: string) => void;
   roomMembers?: string[];
+  memberNames?: Record<string, string>;
   onJoinRoom?: () => void;
 }
 
@@ -77,6 +78,7 @@ const ChatArea: React.FC<ChatAreaProps> = ({
   onDeleteDMMessage,
   onEditDMMessage,
   roomMembers = [],
+  memberNames = {},
   onJoinRoom
 }) => {
   const [input, setInput] = useState('');
@@ -89,6 +91,10 @@ const ChatArea: React.FC<ChatAreaProps> = ({
 
   const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
   const [editContent, setEditContent] = useState('');
+
+  // Helper: resolve address to display name
+  const resolveName = (addr: string) =>
+    addr === currentUserId ? 'You' : (memberNames[addr] || `${addr.slice(0, 10)}...${addr.slice(-6)}`);
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
 
@@ -593,14 +599,17 @@ const ChatArea: React.FC<ChatAreaProps> = ({
               {roomMembers.length === 0 ? (
                 <p className="px-5 text-sm text-[#999]">No members data</p>
               ) : (
-                roomMembers.map((addr) => (
+                roomMembers.map((addr) => {
+                  const name = resolveName(addr);
+                  const initials = memberNames[addr] ? memberNames[addr].slice(0, 2).toUpperCase() : addr.slice(-2).toUpperCase();
+                  return (
                   <div key={addr} className="flex items-center gap-3 px-5 py-2.5 hover:bg-[#FAFAFA] transition-colors">
                     <div className="w-8 h-8 rounded-full bg-[#0A0A0A] flex items-center justify-center text-[#FF8C00] text-xs font-bold shrink-0">
-                      {addr.slice(-2).toUpperCase()}
+                      {initials}
                     </div>
                     <div className="flex-1 min-w-0">
                       <p className="text-sm font-medium text-[#0A0A0A] truncate">
-                        {addr === currentUserId ? 'You' : `${addr.slice(0, 10)}...${addr.slice(-6)}`}
+                        {name}
                       </p>
                       {addr === roomChat.createdBy && (
                         <p className="text-[10px] text-[#FF8C00] font-bold">CREATOR</p>
@@ -616,7 +625,8 @@ const ChatArea: React.FC<ChatAreaProps> = ({
                       <Copy size={12} />
                     </button>
                   </div>
-                ))
+                  );
+                })
               )}
             </div>
 
@@ -733,7 +743,7 @@ const ChatArea: React.FC<ChatAreaProps> = ({
                         {msg.replyToText && (
                           <div className={`mb-2 pl-3 border-l-2 ${msg.isMine ? 'border-[#FF8C00]/60' : 'border-[#FF8C00]'} rounded-sm`}>
                             <p className={`text-[10px] font-bold ${msg.isMine ? 'text-[#FF8C00]/80' : 'text-[#FF8C00]'}`}>
-                              {msg.replyToSender === 'me' || msg.replyToSender === currentUserId ? 'You' : (msg.replyToSender?.slice(0, 8) || 'User')}
+                              {msg.replyToSender === 'me' || msg.replyToSender === currentUserId ? 'You' : (memberNames[msg.replyToSender || ''] || activeChat?.name || msg.replyToSender?.slice(0, 8) || 'User')}
                             </p>
                             <p className={`text-xs ${msg.isMine ? 'text-white/50' : 'text-[#999]'} truncate max-w-[200px]`}>
                               {msg.replyToText}
@@ -773,8 +783,10 @@ const ChatArea: React.FC<ChatAreaProps> = ({
                                 )}
                             </div>
                         )}
-                        {roomChat && !msg.isMine && msg.senderHash && (
-                          <p className="text-[11px] font-bold text-[#FF8C00] mb-1">{msg.senderHash}</p>
+                        {roomChat && !msg.isMine && (msg.senderId || msg.senderHash) && (
+                          <p className="text-[11px] font-bold text-[#FF8C00] mb-1">
+                            {memberNames[msg.senderId || ''] || msg.senderHash || msg.senderId?.slice(0, 10)}
+                          </p>
                         )}
                         <p className="text-[15px] leading-relaxed">{highlightText(msg.text, isSearchMatch)}</p>
                         <div className={`text-[10px] mt-2 font-mono opacity-60 flex items-center gap-1 ${msg.isMine ? 'justify-end' : 'justify-start'}`}>
@@ -921,7 +933,9 @@ const ChatArea: React.FC<ChatAreaProps> = ({
               <div className="w-1 h-8 bg-[#FF8C00] rounded-full flex-shrink-0" />
               <div className="overflow-hidden">
                 <p className="text-xs font-bold text-[#FF8C00]">
-                  {replyingTo.sender === 'me' || replyingTo.sender === currentUserId ? 'Replying to yourself' : `Replying to ${replyingTo.sender.slice(0, 10)}...`}
+                  {replyingTo.sender === 'me' || replyingTo.sender === currentUserId
+                    ? 'Replying to yourself'
+                    : `Replying to ${memberNames[replyingTo.sender] || activeChat?.name || replyingTo.sender.slice(0, 10) + '...'}`}
                 </p>
                 <p className="text-xs text-[#999] truncate max-w-[300px]">{replyingTo.text}</p>
               </div>
