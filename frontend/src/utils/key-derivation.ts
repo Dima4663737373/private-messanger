@@ -1,15 +1,14 @@
 /**
  * Encryption Key Derivation & Management
  *
- * Strategy (ordered by preference):
- * 1. Try wallet.signMessage() — deterministic, same wallet = same keys (future Leo Wallet support)
- * 2. Try to restore from encrypted backup on backend (passphrase-protected)
- * 3. Generate fresh random keypair (session-only unless backed up)
+ * Strategy (like alpaca-invoice):
+ * 1. Return from memory cache
+ * 2. Return from sessionStorage (survives page reload within same tab)
+ * 3. Call signMessage() from wallet context → derive deterministic keys
+ * 4. If signMessage not available → generate random keypair
  *
- * Security:
- * - Secret keys never stored in plaintext (no localStorage, no unencrypted backend)
- * - Passphrase-encrypted backup enables cross-device recovery (opt-in)
- * - Session cache only (Map in memory)
+ * Keys are deterministic when wallet supports signMessage (same wallet = same keys).
+ * sessionStorage is just a performance cache — keys are always re-derivable.
  */
 
 import nacl from 'tweetnacl';
@@ -21,7 +20,7 @@ export interface EncryptionKeyPair {
   secretKey: string;  // Base64-encoded
 }
 
-// --- Session Cache with TTL ---
+// --- Memory Cache with TTL ---
 
 const KEY_CACHE_TTL = 4 * 60 * 60 * 1000; // 4 hours
 
@@ -62,55 +61,8 @@ setInterval(() => {
   }
 }, 30 * 60 * 1000);
 
-// --- Key Derivation ---
-
-/**
- * Derive a NaCl keypair from arbitrary seed bytes using SHA-256
- */
-async function seedToKeypair(seedInput: string): Promise<EncryptionKeyPair> {
-  const seedBytes = decodeUTF8(seedInput);
-  const seedHash = await crypto.subtle.digest('SHA-256', seedBytes);
-  const seed = new Uint8Array(seedHash);
-  const keypair = nacl.box.keyPair.fromSecretKey(seed);
-  return {
-    publicKey: encodeBase64(keypair.publicKey),
-    secretKey: encodeBase64(keypair.secretKey)
-  };
-}
-
-/**
- * Try to derive keys from wallet signMessage (deterministic).
- * Only works if wallet adapter exposes signMessage().
- *
- * @returns EncryptionKeyPair or null if signMessage not supported
- */
-async function trySignMessageDerivation(
-  wallet: any,
-  publicKey: string
-): Promise<EncryptionKeyPair | null> {
-  // Check if adapter supports signMessage
-  const adapter = wallet?.adapter || wallet;
-  if (!adapter?.signMessage) return null;
-
-  try {
-    const message = new TextEncoder().encode(
-      `Ghost Messenger - Derive encryption keys for ${publicKey}`
-    );
-    const signature: Uint8Array = await adapter.signMessage(message);
-    const signatureB64 = encodeBase64(signature);
-    return await seedToKeypair(signatureB64 + publicKey);
-  } catch (e: any) {
-    // User cancelled or signMessage not actually implemented
-    if (e?.message?.includes('cancel') || e?.message?.includes('denied')) {
-      throw e; // Re-throw user cancellation
-    }
-    console.warn('signMessage derivation failed:', e?.message);
-    return null;
-  }
-}
-
-// --- Session Storage (survives page reload, cleared on tab close) ---
-const SESSION_KEY_PREFIX = 'ghost_sk_';
+// --- Session Storage (performance cache — survives page reload) ---
+const SESSION_KEY_PREFIX = 'ghost_ek_';
 
 function getSessionKeys(publicKey: string): EncryptionKeyPair | null {
   try {
@@ -132,49 +84,104 @@ export function clearSessionKeys(publicKey?: string): void {
   try {
     if (publicKey) {
       sessionStorage.removeItem(SESSION_KEY_PREFIX + publicKey);
+      // Clean old prefixes from previous versions
+      sessionStorage.removeItem('ghost_sk_' + publicKey);
     } else {
-      // Clear all ghost keys
       for (let i = sessionStorage.length - 1; i >= 0; i--) {
         const key = sessionStorage.key(i);
-        if (key?.startsWith(SESSION_KEY_PREFIX)) sessionStorage.removeItem(key);
+        if (key?.startsWith(SESSION_KEY_PREFIX) || key?.startsWith('ghost_sk_')) {
+          sessionStorage.removeItem(key);
+        }
       }
     }
+    // Also clean localStorage keys from previous version
+    try {
+      if (publicKey) {
+        localStorage.removeItem('ghost_ek_' + publicKey);
+      }
+    } catch { /* ignore */ }
   } catch { /* ignore */ }
 }
 
+// --- Key Derivation ---
+
+/**
+ * Derive a NaCl keypair from arbitrary seed bytes using SHA-256
+ */
+async function seedToKeypair(seedInput: string): Promise<EncryptionKeyPair> {
+  const seedBytes = decodeUTF8(seedInput);
+  const seedHash = await crypto.subtle.digest('SHA-256', seedBytes);
+  const seed = new Uint8Array(seedHash);
+  const keypair = nacl.box.keyPair.fromSecretKey(seed);
+  return {
+    publicKey: encodeBase64(keypair.publicKey),
+    secretKey: encodeBase64(keypair.secretKey)
+  };
+}
+
+// Type for signMessage from useWallet() context
+type SignMessageFn = (message: Uint8Array) => Promise<Uint8Array>;
+
+/**
+ * Main entry point: get or derive encryption keys.
+ *
+ * @param signMessageFn - signMessage function from useWallet() context
+ * @param publicKey - User's Aleo address
+ */
 export async function getOrDeriveKeys(
-  wallet: any,
+  signMessageFn: SignMessageFn | undefined,
   publicKey: string,
   useCache: boolean = true
 ): Promise<EncryptionKeyPair> {
+  // 1. Memory cache
   if (useCache) {
     const cached = getCachedKeys(publicKey);
     if (cached) return cached;
   }
 
-  // 1. Try signMessage derivation (deterministic, future-proof)
+  // 2. sessionStorage (survives page reload within same tab)
+  const stored = getSessionKeys(publicKey);
+  if (stored) {
+    if (useCache) setCachedKeys(publicKey, stored);
+    return stored;
+  }
+
+  // Also check old sessionStorage key prefix (migration)
   try {
-    const derived = await trySignMessageDerivation(wallet, publicKey);
-    if (derived) {
+    const oldRaw = sessionStorage.getItem('ghost_sk_' + publicKey);
+    if (oldRaw) {
+      const oldKeys = JSON.parse(oldRaw);
+      if (oldKeys?.publicKey && oldKeys?.secretKey) {
+        setSessionKeys(publicKey, oldKeys);
+        sessionStorage.removeItem('ghost_sk_' + publicKey);
+        if (useCache) setCachedKeys(publicKey, oldKeys);
+        return oldKeys;
+      }
+    }
+  } catch { /* ignore */ }
+
+  // 3. Derive deterministic keys via wallet signMessage (like alpaca-invoice)
+  if (signMessageFn) {
+    try {
+      const message = new TextEncoder().encode(
+        `Ghost Messenger - Derive encryption keys for ${publicKey}`
+      );
+      const signatureBytes = await signMessageFn(message);
+      const signatureB64 = encodeBase64(signatureBytes);
+      const derived = await seedToKeypair(signatureB64 + publicKey);
       if (useCache) setCachedKeys(publicKey, derived);
       setSessionKeys(publicKey, derived);
       return derived;
-    }
-  } catch (e: any) {
-    // User cancelled — don't fall through, propagate
-    if (e?.message?.includes('cancel') || e?.message?.includes('denied')) {
-      throw e;
+    } catch (e: any) {
+      // User cancelled — don't fall through, propagate
+      if (e?.message?.includes('cancel') || e?.message?.includes('denied') || e?.message?.includes('rejected')) {
+        throw e;
+      }
+      console.warn('signMessage derivation failed:', e?.message);
     }
   }
 
-  // 2. Restore from sessionStorage (survives page reload within same tab)
-  const sessionKeys = getSessionKeys(publicKey);
-  if (sessionKeys) {
-    if (useCache) setCachedKeys(publicKey, sessionKeys);
-    return sessionKeys;
-  }
-
-  // 3. signMessage not available, no session — generate random keys
+  // 4. Fallback: generate random keypair + save to session
   const keys = generateKeyPair();
   if (useCache) setCachedKeys(publicKey, keys);
   setSessionKeys(publicKey, keys);
@@ -185,7 +192,6 @@ export async function getOrDeriveKeys(
 
 /**
  * Encrypt keypair with a user passphrase for backend storage.
- * Uses NaCl secretbox with SHA-256(passphrase + address) as key.
  */
 export async function encryptKeysWithPassphrase(
   keys: EncryptionKeyPair,

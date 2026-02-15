@@ -43,7 +43,7 @@ const mapContactToChat = (contact: Contact, isActive: boolean): Chat => ({
 });
 
 const InnerApp: React.FC = () => {
-  const { publicKey, wallet, requestTransaction, disconnect, select, wallets } = useWallet();
+  const { publicKey, wallet, signMessage, requestTransaction, disconnect, select, wallets } = useWallet();
   const { executeTransaction, sendMessageOnChain, registerProfile: registerProfileOnChain, deleteMessage: deleteMessageOnChain, editMessage: editMessageOnChain, requestWalletProof, loading: contractLoading } = useContract();
 
   // User Preferences (replaces localStorage)
@@ -63,6 +63,7 @@ const InnerApp: React.FC = () => {
   } = usePreferences(publicKey);
 
   // Derive encryption keys EARLY — before WS connects, so AUTH_CHALLENGE can be answered
+  // Uses signMessage from useWallet() context for deterministic derivation (like alpaca-invoice)
   const [keysReady, setKeysReady] = useState(false);
   useEffect(() => {
     if (!publicKey || !wallet) return;
@@ -71,17 +72,17 @@ const InnerApp: React.FC = () => {
     (async () => {
       try {
         const { getOrDeriveKeys } = await import('./utils/key-derivation');
-        const keys = await getOrDeriveKeys(wallet, publicKey);
+        const keys = await getOrDeriveKeys(signMessage || undefined, publicKey);
         setCachedKeys(publicKey, keys);
         logger.debug('Encryption keys derived early (before WS)');
       } catch {
         const keys = generateKeyPair();
         setCachedKeys(publicKey, keys);
-        logger.warn('Key derivation failed, using session keys');
+        logger.warn('Key derivation failed, using random session keys');
       }
       setKeysReady(true);
     })();
-  }, [publicKey, wallet]);
+  }, [publicKey, wallet, signMessage]);
 
   // Contacts State - In-Memory Only (Declared first to avoid ReferenceError)
   const [contacts, setContacts] = useState<Contact[]>([]);
