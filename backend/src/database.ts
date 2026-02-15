@@ -321,6 +321,7 @@ export class UserPreferences extends Model {
   declare pinned_chats: string; // JSON array
   declare muted_chats: string; // JSON array
   declare deleted_chats: string; // JSON array
+  declare saved_contacts: string; // JSON array of {address, name}
   declare disappear_timers: string; // JSON object
   declare encrypted_keys: string | null; // JSON object with publicKey/secretKey
   declare key_nonce: string | null;
@@ -342,6 +343,10 @@ UserPreferences.init({
     defaultValue: '[]',
   },
   deleted_chats: {
+    type: DataTypes.TEXT,
+    defaultValue: '[]',
+  },
+  saved_contacts: {
     type: DataTypes.TEXT,
     defaultValue: '[]',
   },

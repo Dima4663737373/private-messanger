@@ -12,13 +12,14 @@
  */
 
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { fetchPreferences, updatePreferences, UserSettings, DEFAULT_SETTINGS } from '../utils/preferences-api';
+import { fetchPreferences, updatePreferences, UserSettings, DEFAULT_SETTINGS, SavedContact } from '../utils/preferences-api';
 import { logger } from '../utils/logger';
 
 export interface Preferences {
   pinnedChats: string[];
   mutedChats: string[];
   deletedChats: string[];
+  savedContacts: SavedContact[];
   disappearTimers: Record<string, string>;
   settings: UserSettings;
 }
@@ -27,6 +28,7 @@ const DEFAULT_PREFERENCES: Preferences = {
   pinnedChats: [],
   mutedChats: [],
   deletedChats: [],
+  savedContacts: [],
   disappearTimers: {},
   settings: { ...DEFAULT_SETTINGS }
 };
@@ -54,6 +56,7 @@ export function usePreferences(publicKey: string | null) {
         pinnedChats: prefs.pinned_chats || [],
         mutedChats: prefs.muted_chats || [],
         deletedChats: prefs.deleted_chats || [],
+        savedContacts: prefs.saved_contacts || [],
         disappearTimers: prefs.disappear_timers || {},
         settings: { ...DEFAULT_SETTINGS, ...(prefs.settings || {}) }
       });
@@ -123,6 +126,15 @@ export function usePreferences(publicKey: string | null) {
     });
   }, [saveToBackend]);
 
+  // Update saved contacts
+  const setSavedContacts = useCallback((contacts: SavedContact[] | ((prev: SavedContact[]) => SavedContact[])) => {
+    setPreferences(prev => {
+      const next = typeof contacts === 'function' ? contacts(prev.savedContacts) : contacts;
+      saveToBackend({ savedContacts: next });
+      return { ...prev, savedContacts: next };
+    });
+  }, [saveToBackend]);
+
   // Update disappear timers
   const setDisappearTimers = useCallback((timers: Record<string, string> | ((prev: Record<string, string>) => Record<string, string>)) => {
     setPreferences(prev => {
@@ -173,6 +185,7 @@ export function usePreferences(publicKey: string | null) {
     setPinnedChats,
     setMutedChats,
     setDeletedChats,
+    setSavedContacts,
     setDisappearTimers,
     togglePin,
     toggleMute,

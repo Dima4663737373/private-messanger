@@ -40,11 +40,17 @@ export const DEFAULT_SETTINGS: UserSettings = {
   avatarColor: '#FF8C00',
 };
 
+export interface SavedContact {
+  address: string;
+  name: string;
+}
+
 export interface UserPreferences {
   address: string;
   pinned_chats: string[];
   muted_chats: string[];
   deleted_chats: string[];
+  saved_contacts: SavedContact[];
   disappear_timers: Record<string, string>;
   settings: Partial<UserSettings>;
   migrated?: boolean;
@@ -55,6 +61,7 @@ const DEFAULT_PREFS = (address: string): UserPreferences => ({
   pinned_chats: [],
   muted_chats: [],
   deleted_chats: [],
+  saved_contacts: [],
   disappear_timers: {},
   settings: {},
 });
@@ -89,6 +96,7 @@ export async function updatePreferences(
     pinnedChats: string[];
     mutedChats: string[];
     deletedChats: string[];
+    savedContacts: SavedContact[];
     disappearTimers: Record<string, string>;
     settings: Partial<UserSettings>;
     migrated: boolean;

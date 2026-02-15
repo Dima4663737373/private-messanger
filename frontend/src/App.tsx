@@ -51,8 +51,10 @@ const InnerApp: React.FC = () => {
     pinnedChats: pinnedChatIds,
     mutedChats: mutedChatIds,
     deletedChats,
+    savedContacts: backendSavedContacts,
     disappearTimers,
     setDisappearTimers,
+    setSavedContacts: setBackendSavedContacts,
     togglePin,
     toggleMute,
     markChatDeleted,
@@ -84,8 +86,21 @@ const InnerApp: React.FC = () => {
     })();
   }, [publicKey, wallet, signMessage]);
 
-  // Contacts State - In-Memory Only (Declared first to avoid ReferenceError)
+  // Contacts State — persisted to backend via savedContacts preference
   const [contacts, setContacts] = useState<Contact[]>([]);
+  const contactsSyncedRef = useRef(false); // Prevent saving on initial load
+
+  // Sync contacts to backend whenever they change (debounced via usePreferences)
+  useEffect(() => {
+    // Skip initial render and empty states before load
+    if (!publicKey || !preferencesLoaded) return;
+    if (!contactsSyncedRef.current) {
+      contactsSyncedRef.current = true;
+      return; // Skip the first update (initial load sets contacts)
+    }
+    const toSave = contacts.map(c => ({ address: c.address, name: c.name }));
+    setBackendSavedContacts(toSave);
+  }, [contacts, publicKey, preferencesLoaded, setBackendSavedContacts]);
 
   // Track processed message IDs for deduplication
   const processedMsgIds = useRef<Set<string>>(new Set());
@@ -468,7 +483,7 @@ const InnerApp: React.FC = () => {
 
   // Sync initial messages & Profile
   useEffect(() => {
-    if (!isSyncConnected || !publicKey) return;
+    if (!isSyncConnected || !publicKey || !preferencesLoaded) return;
 
     const initSession = async () => {
       // 0. Migrate legacy localStorage data (one-time, must complete before key load)
@@ -494,7 +509,21 @@ const InnerApp: React.FC = () => {
         }
       });
 
-      // 2. Sync Dialogs (keys are now guaranteed to be cached)
+      // 2. Load saved contacts from backend (persisted empty chats etc.)
+      if (backendSavedContacts.length > 0) {
+        const restored: Contact[] = backendSavedContacts.map(sc => ({
+          id: sc.address,
+          name: sc.name,
+          address: sc.address,
+          description: 'Saved contact',
+          context: 'Saved',
+          initials: sc.name.slice(0, 2).toUpperCase(),
+          unreadCount: 0
+        }));
+        setContacts(restored);
+      }
+
+      // 3. Sync Dialogs (keys are now guaranteed to be cached)
       await loadDialogs();
 
       // Push a system notification for session start
@@ -589,7 +618,8 @@ const InnerApp: React.FC = () => {
     initSession();
     // eslint-disable-next-line react-hooks/exhaustive-deps
     // syncProfile, fetchDialogs, hashAddress are from useSync — stable by behavior but not by reference
-  }, [isSyncConnected, publicKey]);
+    // backendSavedContacts intentionally NOT in deps — only read once during init
+  }, [isSyncConnected, publicKey, preferencesLoaded]);
 
   // Load Channels & Groups on connect
   useEffect(() => {
@@ -1185,11 +1215,25 @@ const InnerApp: React.FC = () => {
     }
   };
 
-  // --- Off-chain DM Delete / Edit (+ optional on-chain proof) ---
+  // --- DM Delete / Edit (off-chain + on-chain transaction) ---
   const handleDeleteDMMessage = async (msgId: string) => {
     const msg = activeChatId ? (histories[activeChatId] || []).find(m => m.id === msgId) : undefined;
 
-    // 1. Off-chain delete (instant)
+    // 1. On-chain delete transaction (if message has a timestamp for record lookup)
+    if (msg?.timestamp) {
+      try {
+        toast.loading('Waiting for delete transaction approval...', { id: 'delete-tx' });
+        await deleteMessageOnChain(msg.timestamp);
+        toast.dismiss('delete-tx');
+        toast.success('Message deleted on-chain');
+      } catch (e: any) {
+        toast.dismiss('delete-tx');
+        logger.warn('On-chain delete skipped:', e?.message);
+        // Continue with off-chain delete regardless
+      }
+    }
+
+    // 2. Off-chain delete (instant)
     await deleteDMMessage(msgId);
     // Optimistic removal
     if (activeChatId) {
@@ -1199,10 +1243,6 @@ const InnerApp: React.FC = () => {
       }));
     }
     toast.success('Message deleted');
-
-    // On-chain delete/edit is not attempted for DMs — records require
-    // wallet sync with the program, which triggers INVALID_PARAMS errors.
-    // Off-chain operations via backend are sufficient for DM messages.
   };
 
   const handleEditDMMessage = async (msgId: string, newText: string) => {
@@ -1210,7 +1250,22 @@ const InnerApp: React.FC = () => {
     const contact = contacts.find(c => c.id === activeChatId);
     if (!contact?.address) return;
 
-    // Off-chain edit (instant via backend)
+    // 1. On-chain edit transaction (if message has a timestamp for record lookup)
+    const msg = (histories[activeChatId] || []).find(m => m.id === msgId);
+    if (msg?.timestamp) {
+      try {
+        toast.loading('Waiting for edit transaction approval...', { id: 'edit-tx' });
+        await editMessageOnChain(msg.timestamp, newText, contact.address);
+        toast.dismiss('edit-tx');
+        toast.success('Message edited on-chain');
+      } catch (e: any) {
+        toast.dismiss('edit-tx');
+        logger.warn('On-chain edit skipped:', e?.message);
+        // Continue with off-chain edit regardless
+      }
+    }
+
+    // 2. Off-chain edit (instant via backend)
     await editDMMessage(msgId, newText, contact.address);
     // Optimistic update
     setHistories(prev => ({

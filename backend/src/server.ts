@@ -747,6 +747,7 @@ app.get('/preferences/:address', requireAuth, preferencesLimiter, async (req: an
     pinned_chats: [],
     muted_chats: [],
     deleted_chats: [],
+    saved_contacts: [],
     disappear_timers: {},
     encrypted_keys: null,
     key_nonce: null,
@@ -769,6 +770,7 @@ app.get('/preferences/:address', requireAuth, preferencesLimiter, async (req: an
       pinned_chats: JSON.parse(prefs.pinned_chats || '[]'),
       muted_chats: JSON.parse(prefs.muted_chats || '[]'),
       deleted_chats: JSON.parse(prefs.deleted_chats || '[]'),
+      saved_contacts: JSON.parse(prefs.saved_contacts || '[]'),
       disappear_timers: JSON.parse(prefs.disappear_timers || '{}'),
       encrypted_keys: null, // Secret keys no longer returned — derived from wallet
       key_nonce: null,
@@ -793,7 +795,7 @@ app.post('/preferences/:address', requireAuth, preferencesLimiter, async (req: a
       return res.status(403).json({ error: 'Can only update your own preferences' });
     }
 
-    const { pinnedChats, mutedChats, deletedChats, disappearTimers, settings, migrated } = req.body;
+    const { pinnedChats, mutedChats, deletedChats, savedContacts, disappearTimers, settings, migrated } = req.body;
     // Note: encryptedKeys and keyNonce are no longer accepted — keys derived from wallet
 
     // Validate and stringify JSON fields
@@ -812,6 +814,11 @@ app.post('/preferences/:address', requireAuth, preferencesLimiter, async (req: a
     if (deletedChats !== undefined) {
       if (!Array.isArray(deletedChats)) return res.status(400).json({ error: 'deletedChats must be array' });
       data.deleted_chats = JSON.stringify(deletedChats.slice(0, 100));
+    }
+
+    if (savedContacts !== undefined) {
+      if (!Array.isArray(savedContacts)) return res.status(400).json({ error: 'savedContacts must be array' });
+      data.saved_contacts = JSON.stringify(savedContacts.slice(0, 500));
     }
 
     if (disappearTimers !== undefined) {
