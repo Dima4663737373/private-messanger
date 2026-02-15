@@ -1049,45 +1049,59 @@ const InnerApp: React.FC = () => {
   const handleClearDM = async () => {
     if (!activeChatId) return;
     const contact = contacts.find(c => c.id === activeChatId);
+    const recipientAddress = contact?.address || activeChatId;
 
-    if (!contact?.dialogHash) {
-      // No dialogHash — just clear local state (no messages to delete on server)
-      setHistories(prev => ({ ...prev, [activeChatId!]: [] }));
-      toast.success('Chat history cleared');
+    // 1. On-chain proof via clear_history transition
+    toast.loading('Waiting for transaction approval...', { id: 'clear-dm-tx' });
+    try {
+      await clearHistoryOnChain(recipientAddress);
+      toast.dismiss('clear-dm-tx');
+    } catch (e: any) {
+      toast.dismiss('clear-dm-tx');
+      logger.error('Clear history cancelled:', e?.message);
+      toast.error('Clear history cancelled');
       return;
     }
 
-    try {
-      await clearDMHistory(contact.dialogHash);
-      setHistories(prev => ({ ...prev, [activeChatId!]: [] }));
-      toast.success('Chat history cleared');
-    } catch (e: any) {
-      logger.error('Clear history failed:', e?.message);
-      // Still clear locally even if backend fails
-      setHistories(prev => ({ ...prev, [activeChatId!]: [] }));
-      toast.success('Chat history cleared locally');
+    // 2. Delete messages from backend
+    if (contact?.dialogHash) {
+      try { await clearDMHistory(contact.dialogHash); } catch {}
     }
+
+    // 3. Clear local state
+    setHistories(prev => ({ ...prev, [activeChatId!]: [] }));
+    toast.success('Chat history cleared');
   };
 
   const handleDeleteChat = async (chatId: string) => {
+    const contact = contacts.find(c => c.id === chatId);
+    const recipientAddress = contact?.address || chatId;
+
+    // 1. On-chain proof via delete_chat transition
+    toast.loading('Waiting for transaction approval...', { id: 'delete-chat-tx' });
     try {
-      // Remove contact from state
-      setContacts(prev => prev.filter(c => c.id !== chatId));
-      // Clear history
-      setHistories(prev => {
-        const next = { ...prev };
-        delete next[chatId];
-        return next;
-      });
-      // Close chat if it was active
-      if (activeChatId === chatId) setActiveChatId(null);
-      // Mark as deleted in backend preferences
-      markChatDeleted(chatId);
-      toast.success('Chat deleted');
+      await deleteChatOnChain(recipientAddress);
+      toast.dismiss('delete-chat-tx');
     } catch (e: any) {
-      logger.error('Delete chat failed:', e?.message);
-      toast.error('Failed to delete chat');
+      toast.dismiss('delete-chat-tx');
+      logger.error('Delete chat cancelled:', e?.message);
+      toast.error('Delete chat cancelled');
+      return;
     }
+
+    // 2. Remove contact from state
+    setContacts(prev => prev.filter(c => c.id !== chatId));
+    // 3. Clear history
+    setHistories(prev => {
+      const next = { ...prev };
+      delete next[chatId];
+      return next;
+    });
+    // Close chat if it was active
+    if (activeChatId === chatId) setActiveChatId(null);
+    // Mark as deleted in backend preferences
+    markChatDeleted(chatId);
+    toast.success('Chat deleted');
   };
 
   const handleClearAllConversations = async () => {
