@@ -722,15 +722,18 @@ const InnerApp: React.FC = () => {
 
   // Fetch online status / lastSeen when active DM chat changes
   const [contactOnlineStatus, setContactOnlineStatus] = useState<{ online: boolean; lastSeen: number | null; showAvatar: boolean } | null>(null);
+  const contactsRef = useRef(contacts);
+  contactsRef.current = contacts;
   useEffect(() => {
     if (!activeChatId || activeRoomId) { setContactOnlineStatus(null); return; }
-    const contact = contacts.find(c => c.id === activeChatId);
+    const contact = contactsRef.current.find(c => c.id === activeChatId);
     if (!contact?.address) return;
     try {
       const addrHash = hashAddress(contact.address);
       fetchOnlineStatus(addrHash).then(setContactOnlineStatus);
     } catch { /* ignore */ }
-  }, [activeChatId, activeRoomId, contacts, fetchOnlineStatus]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeChatId, activeRoomId]);
 
   // Load messages when active chat changes
   useEffect(() => {
