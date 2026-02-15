@@ -1135,8 +1135,11 @@ const InnerApp: React.FC = () => {
       try { await clearDMHistory(contact.dialogHash); } catch {}
     }
 
-    // 3. Clear local state
+    // 3. Clear local state (messages + sidebar preview)
     setHistories(prev => ({ ...prev, [activeChatId!]: [] }));
+    setContacts(prev => prev.map(c =>
+      c.id === activeChatId ? { ...c, lastMessage: '', lastMessageTime: undefined } : c
+    ));
     toast.success('Chat history cleared');
   };
 
