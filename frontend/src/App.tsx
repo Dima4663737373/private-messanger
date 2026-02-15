@@ -44,7 +44,7 @@ const mapContactToChat = (contact: Contact, isActive: boolean): Chat => ({
 
 const InnerApp: React.FC = () => {
   const { publicKey, wallet, signMessage, requestTransaction, disconnect, select, wallets } = useWallet();
-  const { executeTransaction, sendMessageOnChain, registerProfile: registerProfileOnChain, deleteMessage: deleteMessageOnChain, editMessage: editMessageOnChain, requestWalletProof, loading: contractLoading } = useContract();
+  const { executeTransaction, sendMessageOnChain, registerProfile: registerProfileOnChain, deleteMessage: deleteMessageOnChain, editMessage: editMessageOnChain, loading: contractLoading } = useContract();
 
   // User Preferences (replaces localStorage)
   const {
@@ -1051,74 +1051,58 @@ const InnerApp: React.FC = () => {
     const contact = contacts.find(c => c.id === activeChatId);
     if (!contact?.dialogHash) return;
 
-    // Require wallet transaction proof before destructive action
-    toast.loading('Waiting for wallet approval...', { id: 'clear-dm-proof' });
     try {
-      await requestWalletProof();
-      toast.dismiss('clear-dm-proof');
+      await clearDMHistory(contact.dialogHash);
+      setHistories(prev => ({ ...prev, [activeChatId!]: [] }));
+      toast.success('Chat history cleared');
     } catch (e: any) {
-      toast.dismiss('clear-dm-proof');
-      logger.error('Clear history cancelled:', e?.message);
-      toast.error('Clear history cancelled: wallet not approved');
-      return;
+      logger.error('Clear history failed:', e?.message);
+      toast.error('Failed to clear history');
     }
-
-    await clearDMHistory(contact.dialogHash);
-    setHistories(prev => ({ ...prev, [activeChatId!]: [] }));
-    toast.success('Chat history cleared (on-chain proof recorded)');
   };
 
   const handleDeleteChat = async (chatId: string) => {
-    // Require wallet transaction proof before destructive action
-    toast.loading('Waiting for wallet approval...', { id: 'delete-chat-proof' });
     try {
-      await requestWalletProof();
-      toast.dismiss('delete-chat-proof');
+      // Remove contact from state
+      setContacts(prev => prev.filter(c => c.id !== chatId));
+      // Clear history
+      setHistories(prev => {
+        const next = { ...prev };
+        delete next[chatId];
+        return next;
+      });
+      // Close chat if it was active
+      if (activeChatId === chatId) setActiveChatId(null);
+      // Mark as deleted in backend preferences
+      markChatDeleted(chatId);
+      toast.success('Chat deleted');
     } catch (e: any) {
-      toast.dismiss('delete-chat-proof');
-      logger.error('Delete chat cancelled:', e?.message);
-      toast.error('Delete chat cancelled: wallet not approved');
-      return;
+      logger.error('Delete chat failed:', e?.message);
+      toast.error('Failed to delete chat');
     }
-
-    // Remove contact from state
-    setContacts(prev => prev.filter(c => c.id !== chatId));
-    // Clear history
-    setHistories(prev => {
-      const next = { ...prev };
-      delete next[chatId];
-      return next;
-    });
-    // Close chat if it was active
-    if (activeChatId === chatId) setActiveChatId(null);
-    // Mark as deleted in backend preferences
-    markChatDeleted(chatId);
-    toast.success('Chat deleted (on-chain proof recorded)');
   };
 
   const handleClearAllConversations = async () => {
-    // Require wallet transaction proof
-    toast.loading('Waiting for wallet approval...', { id: 'clear-all-proof' });
     try {
-      await requestWalletProof();
-      toast.dismiss('clear-all-proof');
-    } catch (e: any) {
-      toast.dismiss('clear-all-proof');
-      logger.error('Clear all cancelled:', e?.message);
-      toast.error('Clear all cancelled: wallet not approved');
-      return;
-    }
-
-    // Clear all conversations via backend
-    for (const contact of contacts) {
-      if (contact.dialogHash) {
-        try { await clearDMHistory(contact.dialogHash); } catch {}
+      // Clear all conversations via backend
+      let failed = 0;
+      for (const contact of contacts) {
+        if (contact.dialogHash) {
+          try { await clearDMHistory(contact.dialogHash); } catch { failed++; }
+        }
       }
+      setContacts([]);
+      setHistories({});
+      setActiveChatId(null);
+      if (failed > 0) {
+        toast.success(`Conversations cleared (${failed} failed)`);
+      } else {
+        toast.success('All conversations cleared');
+      }
+    } catch (e: any) {
+      logger.error('Clear all failed:', e?.message);
+      toast.error('Failed to clear conversations');
     }
-    setContacts([]);
-    setHistories({});
-    setActiveChatId(null);
-    toast.success('All conversations cleared (on-chain proof recorded)');
   };
 
   // --- Sidebar Context Menu Handler ---

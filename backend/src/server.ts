@@ -1146,6 +1146,29 @@ app.patch('/rooms/:id', requireFullAuth, async (req: any, res) => {
   }
 });
 
+// DELETE /rooms/dm-clear — clear DM history (requires full auth)
+// MUST be before /rooms/:id to avoid :id catching "dm-clear"
+app.delete('/rooms/dm-clear', requireFullAuth, async (req: any, res) => {
+  try {
+    const { dialogHash } = req.body;
+    if (!dialogHash || typeof dialogHash !== 'string') return res.status(400).json({ error: 'dialogHash required' });
+
+    await Message.destroy({ where: { dialog_hash: dialogHash } });
+
+    // Notify all WS clients in this dialog
+    wss.clients.forEach((client: any) => {
+      if (client.readyState === WebSocket.OPEN && (client.subscribedDialog === dialogHash || (client.subscribedHash && dialogHash.includes(client.subscribedHash)))) {
+        client.send(JSON.stringify({ type: 'dm_cleared', payload: { dialogHash } }));
+      }
+    });
+
+    res.json({ success: true });
+  } catch (e) {
+    console.error('DELETE /rooms/dm-clear error:', e);
+    res.status(500).json({ error: 'Failed to clear DM' });
+  }
+});
+
 // DELETE /rooms/:id — delete room (creator only, requires full auth)
 app.delete('/rooms/:id', requireFullAuth, async (req: any, res) => {
   try {
@@ -1356,27 +1379,6 @@ app.get('/rooms/:id/members', requireFullAuth, async (req: any, res) => {
   }
 });
 
-// DELETE /rooms/dm-clear — clear DM history between two addresses (requires full auth)
-app.delete('/rooms/dm-clear', requireFullAuth, async (req: any, res) => {
-  try {
-    const { dialogHash } = req.body;
-    if (!dialogHash || typeof dialogHash !== 'string') return res.status(400).json({ error: 'dialogHash required' });
-
-    await Message.destroy({ where: { dialog_hash: dialogHash } });
-
-    // Notify all WS clients in this dialog
-    wss.clients.forEach((client: any) => {
-      if (client.readyState === WebSocket.OPEN && (client.subscribedDialog === dialogHash || (client.subscribedHash && dialogHash.includes(client.subscribedHash)))) {
-        client.send(JSON.stringify({ type: 'dm_cleared', payload: { dialogHash } }));
-      }
-    });
-
-    res.json({ success: true });
-  } catch (e) {
-    console.error('DELETE /rooms/dm-clear error:', e);
-    res.status(500).json({ error: 'Failed to clear DM' });
-  }
-});
 
 // --- Pinned Messages ---
 

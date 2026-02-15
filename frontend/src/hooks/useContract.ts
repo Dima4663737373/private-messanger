@@ -260,22 +260,6 @@ export function useContract() {
     return await executeTransaction('send_message', inputs, options);
   };
 
-  /**
-   * Wallet proof-of-authorization — uses register_profile as an on-chain
-   * proof that the wallet owner consciously approved a destructive action
-   * (clear history, delete chat, etc.). The contract is @noupgrade, so
-   * we reuse an existing idempotent transition.
-   */
-  const requestWalletProof = async (options?: ExecuteTransactionOptions) => {
-    if (!publicKey) throw new Error("Wallet not connected");
-
-    const keys = getCachedKeys(publicKey);
-    if (!keys) throw new Error("Encryption keys not available. Please reconnect wallet.");
-
-    const keyFields = stringToFields(keys.publicKey, 2);
-    return await executeTransaction('register_profile', [keyFields[0], keyFields[1]], options);
-  };
-
   return {
     loading,
     error,
@@ -285,6 +269,5 @@ export function useContract() {
     editMessage,
     findRecordByTimestamp,
     executeTransaction,
-    requestWalletProof,
   };
 }
