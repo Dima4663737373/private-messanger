@@ -12,6 +12,69 @@ import { toast } from 'react-hot-toast';
 
 const QUICK_EMOJIS = ['👍', '❤️', '😂', '😮', '😢', '🔥'];
 
+function timeAgo(ts: number): string {
+  const diff = Date.now() - ts;
+  if (diff < 60_000) return 'just now';
+  if (diff < 3_600_000) return `${Math.floor(diff / 60_000)}m ago`;
+  if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)}h ago`;
+  return `${Math.floor(diff / 86_400_000)}d ago`;
+}
+
+const GENERIC_AVATAR = 'https://ui-avatars.com/api/?name=?&background=888&color=fff';
+const URL_REGEX = /https?:\/\/[^\s<>"')\]]+/g;
+
+// Inline link preview card component
+const previewCache = new Map<string, { title: string | null; description: string | null; image: string | null; siteName: string | null }>();
+
+const LinkPreviewCard: React.FC<{
+  url: string;
+  fetchPreview: (url: string) => Promise<{ title: string | null; description: string | null; image: string | null; siteName: string | null }>;
+}> = ({ url, fetchPreview }) => {
+  const [preview, setPreview] = useState<{ title: string | null; description: string | null; image: string | null; siteName: string | null } | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    const cached = previewCache.get(url);
+    if (cached) { setPreview(cached); setLoading(false); return; }
+    fetchPreview(url).then(data => {
+      if (cancelled) return;
+      previewCache.set(url, data);
+      setPreview(data);
+      setLoading(false);
+    }).catch(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [url, fetchPreview]);
+
+  if (loading) return (
+    <div className="mt-2 rounded-lg border border-[#E5E5E5] bg-white/80 p-3 animate-pulse">
+      <div className="h-3 bg-[#E5E5E5] rounded w-2/3 mb-2" />
+      <div className="h-2 bg-[#E5E5E5] rounded w-full" />
+    </div>
+  );
+
+  if (!preview || (!preview.title && !preview.description)) return null;
+
+  const domain = (() => { try { return new URL(url).hostname; } catch { return url; } })();
+
+  return (
+    <a href={url} target="_blank" rel="noreferrer" className="block mt-2 rounded-lg border border-[#E5E5E5] bg-white overflow-hidden hover:border-[#FF8C00] transition-colors no-underline">
+      <div className="flex">
+        {preview.image && (
+          <div className="w-20 h-20 shrink-0 bg-[#F5F5F5]">
+            <img src={preview.image} alt="" className="w-full h-full object-cover" onError={e => (e.currentTarget.style.display = 'none')} />
+          </div>
+        )}
+        <div className="p-2.5 min-w-0 flex-1">
+          {preview.title && <p className="text-xs font-bold text-[#0A0A0A] truncate">{preview.title}</p>}
+          {preview.description && <p className="text-[11px] text-[#666] line-clamp-2 mt-0.5">{preview.description}</p>}
+          <p className="text-[10px] text-[#999] font-mono mt-1">{preview.siteName || domain}</p>
+        </div>
+      </div>
+    </a>
+  );
+};
+
 interface ChatAreaProps {
   chatId: string | null;
   onToggleSidebar: () => void;
@@ -44,6 +107,11 @@ interface ChatAreaProps {
   onEditDMMessage?: (msgId: string, newText: string) => void;
   roomMembers?: string[];
   memberNames?: Record<string, string>;
+  contactOnline?: boolean;
+  contactLastSeen?: number | null;
+  contactHideAvatar?: boolean;
+  linkPreviews?: boolean;
+  fetchLinkPreview?: (url: string) => Promise<{ title: string | null; description: string | null; image: string | null; siteName: string | null }>;
   onJoinRoom?: () => void;
 }
 
@@ -79,6 +147,11 @@ const ChatArea: React.FC<ChatAreaProps> = ({
   onEditDMMessage,
   roomMembers = [],
   memberNames = {},
+  contactOnline,
+  contactLastSeen,
+  contactHideAvatar,
+  linkPreviews = true,
+  fetchLinkPreview,
   onJoinRoom
 }) => {
   const [input, setInput] = useState('');
@@ -150,18 +223,43 @@ const ChatArea: React.FC<ChatAreaProps> = ({
     }
   }, [searchIndex, searchMatchIds]);
 
-  // Highlight search query within message text
-  const highlightText = (text: string, isMatch: boolean) => {
-    if (!isMatch || !searchQuery.trim()) return text;
-    const q = searchQuery.trim();
-    const regex = new RegExp(`(${q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`, 'gi');
-    const parts = text.split(regex);
-    if (parts.length === 1) return text;
-    return parts.map((part, i) =>
-      regex.test(part)
-        ? <mark key={i} className="bg-[#FF8C00]/40 text-inherit rounded-sm px-0.5">{part}</mark>
-        : part
-    );
+  // Render message text with clickable URLs and optional search highlighting
+  const renderMessageText = (text: string, isSearchMatch: boolean) => {
+    // Split text by URLs
+    const urlParts = text.split(URL_REGEX);
+    const urls = text.match(URL_REGEX) || [];
+    if (urls.length === 0) {
+      // No URLs — just highlight search if needed
+      if (!isSearchMatch || !searchQuery.trim()) return text;
+      const q = searchQuery.trim();
+      const regex = new RegExp(`(${q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`, 'gi');
+      const parts = text.split(regex);
+      if (parts.length === 1) return text;
+      return parts.map((part, i) =>
+        regex.test(part)
+          ? <mark key={i} className="bg-[#FF8C00]/40 text-inherit rounded-sm px-0.5">{part}</mark>
+          : part
+      );
+    }
+    // Interleave text parts and URL links
+    const elements: React.ReactNode[] = [];
+    urlParts.forEach((part, i) => {
+      if (part) elements.push(<React.Fragment key={`t${i}`}>{part}</React.Fragment>);
+      if (i < urls.length) {
+        elements.push(
+          <a key={`u${i}`} href={urls[i]} target="_blank" rel="noreferrer" className="text-[#3B82F6] underline break-all hover:text-[#2563EB]">
+            {urls[i]}
+          </a>
+        );
+      }
+    });
+    return <>{elements}</>;
+  };
+
+  // Extract first URL from message text
+  const extractFirstUrl = (text: string): string | null => {
+    const match = text.match(URL_REGEX);
+    return match ? match[0] : null;
   };
 
   // Close menu when clicking outside
@@ -361,7 +459,7 @@ const ChatArea: React.FC<ChatAreaProps> = ({
               <MessageSquare size={22} className="text-[#FF8C00]" />
             </div>
           ) : (
-            <Avatar src={activeChat.avatar} status={activeChat.status} size={48} />
+            <Avatar src={contactHideAvatar ? GENERIC_AVATAR : activeChat.avatar} status={activeChat.status} size={48} />
           )}
           <div
             onClick={() => !roomChat && onViewProfile && onViewProfile(activeChat)}
@@ -369,14 +467,18 @@ const ChatArea: React.FC<ChatAreaProps> = ({
           >
             <h2 className="text-[#0A0A0A] text-lg font-bold flex items-center gap-2">
               {roomChat ? `# ${roomChat.name}` : activeChat.name}
-              {!roomChat && <span className="w-2 h-2 bg-[#10B981] rounded-full animate-pulse" />}
+              {!roomChat && contactOnline && <span className="w-2 h-2 bg-[#10B981] rounded-full animate-pulse" />}
             </h2>
             <p className="text-[#666] text-xs font-mono tracking-tighter uppercase">
               {roomChat
                 ? `${roomChat.type.toUpperCase()} · ${roomChat.memberCount || 0} members`
-                : activeChat.address
-                  ? `${activeChat.address.slice(0, 14)}...${activeChat.address.slice(-6)}`
-                  : activeChat.id}
+                : contactOnline
+                  ? 'Online'
+                  : contactLastSeen
+                    ? `Last seen ${timeAgo(contactLastSeen)}`
+                    : activeChat.address
+                      ? `${activeChat.address.slice(0, 14)}...${activeChat.address.slice(-6)}`
+                      : activeChat.id}
             </p>
           </div>
         </div>
@@ -788,7 +890,10 @@ const ChatArea: React.FC<ChatAreaProps> = ({
                             {memberNames[msg.senderId || ''] || msg.senderHash || msg.senderId?.slice(0, 10)}
                           </p>
                         )}
-                        <p className="text-[15px] leading-relaxed">{highlightText(msg.text, isSearchMatch)}</p>
+                        <p className="text-[15px] leading-relaxed">{renderMessageText(msg.text, isSearchMatch)}</p>
+                        {linkPreviews && fetchLinkPreview && extractFirstUrl(msg.text) && (
+                          <LinkPreviewCard url={extractFirstUrl(msg.text)!} fetchPreview={fetchLinkPreview} />
+                        )}
                         <div className={`text-[10px] mt-2 font-mono opacity-60 flex items-center gap-1 ${msg.isMine ? 'justify-end' : 'justify-start'}`}>
                         {msg.time}
                         {msg.edited && <span className="italic text-[#FF8C00]">(edited)</span>}

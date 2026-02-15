@@ -487,7 +487,7 @@ wss.on('connection', (ws: any) => {
 });
 
 // --- Online Status Endpoint ---
-app.get('/online/:addressHash', (_req, res) => {
+app.get('/online/:addressHash', async (_req, res) => {
   const { addressHash } = _req.params;
   let isOnline = false;
   let lastSeen = 0;
@@ -499,7 +499,96 @@ app.get('/online/:addressHash', (_req, res) => {
     }
   });
 
-  res.json({ online: isOnline, lastSeen });
+  // Respect show_last_seen preference
+  let showLastSeen = true;
+  let showAvatar = true;
+  try {
+    const profile = await Profile.findOne({ where: { address_hash: addressHash } });
+    if (profile) {
+      showLastSeen = profile.show_last_seen !== false;
+      showAvatar = profile.show_avatar !== false;
+    }
+  } catch { /* ignore */ }
+
+  res.json({
+    online: isOnline,
+    lastSeen: showLastSeen ? lastSeen : null,
+    showAvatar
+  });
+});
+
+// --- Link Preview Endpoint ---
+const linkPreviewCache = new Map<string, { data: any; expires: number }>();
+const linkPreviewLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 30,
+  keyGenerator: rateLimitKeyGenerator,
+  message: { error: 'Link preview rate limit exceeded' },
+  validate: false
+});
+
+app.get('/link-preview', linkPreviewLimiter, async (req, res) => {
+  try {
+    const url = req.query.url as string;
+    if (!url || !/^https?:\/\/.+/.test(url)) {
+      return res.status(400).json({ error: 'Invalid URL' });
+    }
+
+    // Check cache (15min TTL)
+    const cached = linkPreviewCache.get(url);
+    if (cached && cached.expires > Date.now()) {
+      return res.json(cached.data);
+    }
+
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 5000);
+
+    const response = await fetch(url, {
+      signal: controller.signal,
+      headers: { 'User-Agent': 'GhostMessenger/1.0 LinkPreview' }
+    });
+    clearTimeout(timeout);
+
+    if (!response.ok) return res.json({ title: null, description: null, image: null });
+
+    const contentType = response.headers.get('content-type') || '';
+    if (!contentType.includes('text/html')) {
+      return res.json({ title: null, description: null, image: null });
+    }
+
+    const html = await response.text();
+    const getMetaContent = (name: string): string | null => {
+      const patterns = [
+        new RegExp(`<meta[^>]+(?:property|name)=["']${name}["'][^>]+content=["']([^"']+)["']`, 'i'),
+        new RegExp(`<meta[^>]+content=["']([^"']+)["'][^>]+(?:property|name)=["']${name}["']`, 'i'),
+      ];
+      for (const p of patterns) {
+        const m = html.match(p);
+        if (m) return m[1];
+      }
+      return null;
+    };
+
+    const titleMatch = html.match(/<title[^>]*>([^<]+)<\/title>/i);
+    const result = {
+      title: getMetaContent('og:title') || titleMatch?.[1]?.trim() || null,
+      description: getMetaContent('og:description') || getMetaContent('description') || null,
+      image: getMetaContent('og:image') || null,
+      siteName: getMetaContent('og:site_name') || null,
+    };
+
+    // Cache for 15 minutes
+    linkPreviewCache.set(url, { data: result, expires: Date.now() + 15 * 60 * 1000 });
+    // Cleanup old cache entries periodically
+    if (linkPreviewCache.size > 500) {
+      const now = Date.now();
+      for (const [k, v] of linkPreviewCache) { if (v.expires < now) linkPreviewCache.delete(k); }
+    }
+
+    res.json(result);
+  } catch (e) {
+    res.json({ title: null, description: null, image: null });
+  }
 });
 
 // --- Routes ---
@@ -690,7 +779,7 @@ app.get('/history/:address', requireFullAuth, async (req: any, res) => {
 app.post('/profiles', requireAuth, profileWriteLimiter, async (req: any, res) => {
   try {
     const address = req.authenticatedAddress; // Use authenticated address, not client-provided
-    const { name, bio, txId, encryptionPublicKey, addressHash } = req.body;
+    const { name, bio, txId, encryptionPublicKey, addressHash, showLastSeen, showProfilePhoto } = req.body;
 
     // Build update data — only include non-empty fields to avoid overwriting
     const data: any = { address };
@@ -710,12 +799,18 @@ app.post('/profiles', requireAuth, profileWriteLimiter, async (req: any, res) =>
     if (typeof addressHash === 'string' && addressHash.length > 0) {
       data.address_hash = addressHash.slice(0, 500);
     }
+    if (typeof showLastSeen === 'boolean') {
+      data.show_last_seen = showLastSeen;
+    }
+    if (typeof showProfilePhoto === 'boolean') {
+      data.show_avatar = showProfilePhoto;
+    }
 
     await Profile.upsert(data);
 
-    // Broadcast profile update to all connected clients (so they see the new name)
-    if (data.username) {
-      const payload = { type: 'profile_detected', payload: { address, username: data.username } };
+    // Broadcast profile update to all connected clients (so they see the new name / avatar change)
+    if (data.username || typeof showProfilePhoto === 'boolean') {
+      const payload = { type: 'profile_detected', payload: { address, username: data.username, showAvatar: data.show_avatar } };
       wss.clients.forEach((client: any) => {
         if (client.readyState === WebSocket.OPEN && client.authenticatedAddress !== address) {
           client.send(JSON.stringify(payload));

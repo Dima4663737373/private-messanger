@@ -28,7 +28,7 @@ export function useSync(
   onRoomMessageEdited?: (roomId: string, messageId: string, text: string) => void,
   onDMSent?: (tempId: string, realId: string) => void,
   onReadReceipt?: (dialogHash: string, messageIds: string[]) => void,
-  onProfileUpdated?: (address: string, username: string) => void
+  onProfileUpdated?: (address: string, username?: string, showAvatar?: boolean) => void
 ) {
   const ws = useRef<WebSocket | null>(null);
   const [isConnected, setIsConnected] = useState(false);
@@ -246,7 +246,6 @@ export function useSync(
           // Step 1: Authenticate with server before subscribing
           if (socket.readyState === WebSocket.OPEN) {
              socket.send(JSON.stringify({ type: 'AUTH', address }));
-             // Note: setIsConnected(true) will be called after AUTH_SUCCESS
           }
         };
 
@@ -458,9 +457,9 @@ export function useSync(
                  toast(`${data.payload.username || 'User'} updated their profile`, { icon: '👤' });
                  if (data.payload.address) {
                      keyCache.current.delete(data.payload.address);
-                     // Update contact name in real-time
-                     if (data.payload.username && callbacksRef.current.onProfileUpdated) {
-                       callbacksRef.current.onProfileUpdated(data.payload.address, data.payload.username);
+                     // Update contact name + avatar visibility in real-time
+                     if (callbacksRef.current.onProfileUpdated) {
+                       callbacksRef.current.onProfileUpdated(data.payload.address, data.payload.username, data.payload.showAvatar);
                      }
                  }
             }
@@ -543,10 +542,10 @@ export function useSync(
 
         socket.onclose = () => {
             setIsConnected(false);
-            setSessionToken(null); // Clear session token on disconnect
+            setSessionToken(null);
             if (ws.current === socket) {
                 reconnectTimer = setTimeout(connect, reconnectDelay);
-                reconnectDelay = Math.min(reconnectDelay * 2, 30000); // Exponential backoff, max 30s
+                reconnectDelay = Math.min(reconnectDelay * 2, 30000);
             }
         };
         
@@ -737,7 +736,7 @@ export function useSync(
     return data && data.exists ? data.profile : null;
   };
   
-  const notifyProfileUpdate = async (name: string, bio: string, txId: string) => {
+  const notifyProfileUpdate = async (name: string, bio: string, txId: string, privacySettings?: { showLastSeen?: boolean; showProfilePhoto?: boolean }) => {
     if (!address) return;
     const keys = getCachedKeys(address);
     let addressHash = '';
@@ -751,7 +750,8 @@ export function useSync(
           bio,
           txId,
           encryptionPublicKey: keys?.publicKey || '',
-          addressHash
+          addressHash,
+          ...(privacySettings || {})
       }
     });
   };
@@ -1070,6 +1070,30 @@ export function useSync(
     });
   };
 
+  // Fetch online status + lastSeen for a contact
+  const fetchOnlineStatus = async (addressHash: string): Promise<{ online: boolean; lastSeen: number | null; showAvatar: boolean }> => {
+    try {
+      const { data } = await safeBackendFetch<any>(`online/${addressHash}`, {
+        mockFallback: { online: false, lastSeen: null, showAvatar: true }
+      });
+      return data || { online: false, lastSeen: null, showAvatar: true };
+    } catch {
+      return { online: false, lastSeen: null, showAvatar: true };
+    }
+  };
+
+  // Fetch link preview metadata for a URL
+  const fetchLinkPreview = async (url: string): Promise<{ title: string | null; description: string | null; image: string | null; siteName: string | null }> => {
+    try {
+      const { data } = await safeBackendFetch<any>(`link-preview?url=${encodeURIComponent(url)}`, {
+        mockFallback: { title: null, description: null, image: null, siteName: null }
+      });
+      return data || { title: null, description: null, image: null, siteName: null };
+    } catch {
+      return { title: null, description: null, image: null, siteName: null };
+    }
+  };
+
   // Heartbeat — keep lastSeen fresh on server (every 30s)
   useEffect(() => {
     if (!isConnected) return;
@@ -1120,6 +1144,10 @@ export function useSync(
     // Pins
     fetchPins,
     pinMessage,
-    unpinMessage
+    unpinMessage,
+    // Online status
+    fetchOnlineStatus,
+    // Link preview
+    fetchLinkPreview
   };
 }

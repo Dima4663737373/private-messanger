@@ -30,10 +30,14 @@ import { playNotificationSound } from './utils/notification-sound';
 // lucide icons removed - FAB is now in Sidebar
 import ProfileView from './components/ProfileView';
 
+const GENERIC_AVATAR = 'https://ui-avatars.com/api/?name=?&background=888&color=fff';
+
 const mapContactToChat = (contact: Contact, isActive: boolean): Chat => ({
   id: contact.id,
   name: contact.name,
-  avatar: `https://ui-avatars.com/api/?name=${encodeURIComponent(contact.name)}&background=random&color=fff`,
+  avatar: contact.hideAvatar
+    ? GENERIC_AVATAR
+    : `https://ui-avatars.com/api/?name=${encodeURIComponent(contact.name)}&background=random&color=fff`,
   status: 'offline',
   lastMessage: contact.lastMessage || 'No messages yet',
   time: contact.lastMessageTime ? new Date(contact.lastMessageTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '',
@@ -236,8 +240,12 @@ const InnerApp: React.FC = () => {
         // Fetch profile for this new contact
         if (counterpartyAddress.startsWith('aleo1')) {
             syncProfile(counterpartyAddress).then(profile => {
-                 if (profile && profile.username) {
-                     setContacts(curr => curr.map(c => c.id === counterpartyAddress ? { ...c, name: profile.username, initials: profile.username.slice(0,2).toUpperCase() } : c));
+                 if (profile) {
+                     setContacts(curr => curr.map(c => c.id === counterpartyAddress ? {
+                       ...c,
+                       ...(profile.username ? { name: profile.username, initials: profile.username.slice(0,2).toUpperCase() } : {}),
+                       hideAvatar: profile.show_avatar === false
+                     } : c));
                  }
             });
         }
@@ -442,14 +450,18 @@ const InnerApp: React.FC = () => {
     });
   }, []);
 
-  // Profile updated — update contact name in real-time when someone changes their profile
-  const handleProfileUpdated = React.useCallback((addr: string, username: string) => {
-    setContacts(prev => prev.map(c =>
-      c.address === addr ? { ...c, name: username, initials: username.slice(0, 2).toUpperCase() } : c
-    ));
+  // Profile updated — update contact name + avatar visibility in real-time when someone changes their profile
+  const handleProfileUpdated = React.useCallback((addr: string, username?: string, showAvatar?: boolean) => {
+    setContacts(prev => prev.map(c => {
+      if (c.address !== addr) return c;
+      const updates: Partial<Contact> = {};
+      if (username) { updates.name = username; updates.initials = username.slice(0, 2).toUpperCase(); }
+      if (typeof showAvatar === 'boolean') { updates.hideAvatar = !showAvatar; }
+      return { ...c, ...updates };
+    }));
   }, []);
 
-  const { isConnected: isSyncConnected, typingUsers, notifyProfileUpdate, searchProfiles, fetchMessages, fetchDialogs, fetchDialogMessages, syncProfile, cacheDecryptedMessage, sendTyping, sendReadReceipt, addReaction, removeReaction, fetchRooms, createRoom, deleteRoom: deleteRoomApi, renameRoom: renameRoomApi, joinRoom, leaveRoom, fetchRoomInfo, fetchRoomMessages, sendRoomMessage, subscribeRoom, sendRoomTyping, clearDMHistory, deleteRoomMessage, editRoomMessage, prepareDMMessage, commitDMMessage, sendDMMessage, deleteDMMessage, editDMMessage, fetchPins, pinMessage, unpinMessage } = useSync(publicKey, handleNewMessage, handleMessageDeleted, handleMessageUpdated, handleReactionUpdate, handleRoomMessage, handleRoomCreated, handleRoomDeleted, handleDMCleared, handlePinUpdate, handleRoomMessageDeleted, handleRoomMessageEdited, handleDMSent, handleReadReceipt, handleProfileUpdated);
+  const { isConnected: isSyncConnected, typingUsers, notifyProfileUpdate, searchProfiles, fetchMessages, fetchDialogs, fetchDialogMessages, syncProfile, cacheDecryptedMessage, sendTyping, sendReadReceipt, addReaction, removeReaction, fetchRooms, createRoom, deleteRoom: deleteRoomApi, renameRoom: renameRoomApi, joinRoom, leaveRoom, fetchRoomInfo, fetchRoomMessages, sendRoomMessage, subscribeRoom, sendRoomTyping, clearDMHistory, deleteRoomMessage, editRoomMessage, prepareDMMessage, commitDMMessage, sendDMMessage, deleteDMMessage, editDMMessage, fetchPins, pinMessage, unpinMessage, fetchOnlineStatus, fetchLinkPreview } = useSync(publicKey, handleNewMessage, handleMessageDeleted, handleMessageUpdated, handleReactionUpdate, handleRoomMessage, handleRoomCreated, handleRoomDeleted, handleDMCleared, handlePinUpdate, handleRoomMessageDeleted, handleRoomMessageEdited, handleDMSent, handleReadReceipt, handleProfileUpdated);
 
   // Keep refs in sync for use inside memoized callbacks
   activeChatIdRef.current = activeChatId;
@@ -585,10 +597,14 @@ const InnerApp: React.FC = () => {
           // Fetch profile for aleo addresses
           if (finalAddress.startsWith("aleo")) {
             syncProfile(finalAddress).then(profile => {
-              if (profile && profile.username) {
+              if (profile) {
                 setContacts(curr => curr.map(c =>
                   c.id === finalAddress
-                    ? { ...c, name: profile.username, initials: profile.username.slice(0,2).toUpperCase() }
+                    ? {
+                        ...c,
+                        ...(profile.username ? { name: profile.username, initials: profile.username.slice(0,2).toUpperCase() } : {}),
+                        hideAvatar: profile.show_avatar === false
+                      }
                     : c
                 ));
               }
@@ -703,6 +719,18 @@ const InnerApp: React.FC = () => {
     }
     return map;
   }, [contacts]);
+
+  // Fetch online status / lastSeen when active DM chat changes
+  const [contactOnlineStatus, setContactOnlineStatus] = useState<{ online: boolean; lastSeen: number | null; showAvatar: boolean } | null>(null);
+  useEffect(() => {
+    if (!activeChatId || activeRoomId) { setContactOnlineStatus(null); return; }
+    const contact = contacts.find(c => c.id === activeChatId);
+    if (!contact?.address) return;
+    try {
+      const addrHash = hashAddress(contact.address);
+      fetchOnlineStatus(addrHash).then(setContactOnlineStatus);
+    } catch { /* ignore */ }
+  }, [activeChatId, activeRoomId, contacts, fetchOnlineStatus]);
 
   // Load messages when active chat changes
   useEffect(() => {
@@ -1598,6 +1626,11 @@ const InnerApp: React.FC = () => {
             onEditDMMessage={!activeRoomId && activeChatId ? handleEditDMMessage : undefined}
             roomMembers={activeRoomId ? roomMembers : undefined}
             memberNames={memberNames}
+            contactOnline={contactOnlineStatus?.online}
+            contactLastSeen={contactOnlineStatus?.lastSeen}
+            contactHideAvatar={contactOnlineStatus?.showAvatar === false}
+            linkPreviews={userSettings.linkPreviews}
+            fetchLinkPreview={fetchLinkPreview}
           />
         )}
 
@@ -1645,7 +1678,17 @@ const InnerApp: React.FC = () => {
             onClearAllConversations={handleClearAllConversations}
             contactCount={contacts.length}
             settings={userSettings}
-            onUpdateSetting={updateSetting}
+            onUpdateSetting={(key, value) => {
+              updateSetting(key, value);
+              // Sync privacy settings to Profile so other users respect them
+              if (key === 'showLastSeen' || key === 'showProfilePhoto') {
+                const privacy = {
+                  showLastSeen: key === 'showLastSeen' ? value as boolean : userSettings.showLastSeen,
+                  showProfilePhoto: key === 'showProfilePhoto' ? value as boolean : userSettings.showProfilePhoto,
+                };
+                notifyProfileUpdate(myProfile?.username || '', myProfile?.bio || '', 'settings-update', privacy);
+              }
+            }}
           />
         )}
       </main>

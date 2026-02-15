@@ -44,8 +44,10 @@ export class Profile extends Model {
   declare username: string;
   declare bio: string;
   declare tx_id: string;
-  declare encryption_public_key: string; // Stored as JSON string of parts or combined
+  declare encryption_public_key: string;
   declare address_hash: string;
+  declare show_last_seen: boolean;
+  declare show_avatar: boolean;
 }
 
 Profile.init({
@@ -73,6 +75,14 @@ Profile.init({
     type: DataTypes.STRING,
     allowNull: true,
     unique: true,
+  },
+  show_last_seen: {
+    type: DataTypes.BOOLEAN,
+    defaultValue: true,
+  },
+  show_avatar: {
+    type: DataTypes.BOOLEAN,
+    defaultValue: true,
   },
 }, { sequelize, modelName: 'Profile' });
 

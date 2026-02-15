@@ -102,4 +102,5 @@ export interface Contact {
   lastMessage?: string;
   lastMessageTime?: Date;
   unreadCount?: number;
+  hideAvatar?: boolean;
 }
