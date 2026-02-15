@@ -355,6 +355,28 @@ export function useContract() {
     return await executeTransaction('delete_contact', [contactHash], options);
   };
 
+  /**
+   * Proof of message edit (no record needed — works for off-chain messages)
+   */
+  const editMessageProof = async (
+    timestamp: number,
+    options?: ExecuteTransactionOptions
+  ) => {
+    if (!publicKey) throw new Error("Wallet not connected");
+    return await executeTransaction('edit_message_proof', [`${timestamp}field`], options);
+  };
+
+  /**
+   * Proof of message delete (no record needed — works for off-chain messages)
+   */
+  const deleteMessageProof = async (
+    timestamp: number,
+    options?: ExecuteTransactionOptions
+  ) => {
+    if (!publicKey) throw new Error("Wallet not connected");
+    return await executeTransaction('delete_message_proof', [`${timestamp}field`], options);
+  };
+
   return {
     loading,
     error,
@@ -368,6 +390,8 @@ export function useContract() {
     addContactOnChain,
     updateContactOnChain,
     deleteContactOnChain,
+    editMessageProof,
+    deleteMessageProof,
     findRecordByTimestamp,
     executeTransaction,
   };

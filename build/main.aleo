@@ -1,4 +1,4 @@
-program ghost_msg_017.aleo;
+program ghost_msg_018.aleo;
 
 record Message:
     owner as address.private;
@@ -29,6 +29,10 @@ mapping contacts:
     key as field.public;
     value as boolean.public;
 
+mapping message_actions:
+    key as field.public;
+    value as boolean.public;
+
 mapping channels:
     key as field.public;
     value as field.public;
@@ -42,7 +46,7 @@ function register_profile:
     input r1 as field.public;
     hash.bhp256 self.caller into r2 as field;
     async register_profile r2 r0 r1 into r3;
-    output r3 as ghost_msg_017.aleo/register_profile.future;
+    output r3 as ghost_msg_018.aleo/register_profile.future;
 
 finalize register_profile:
     input r0 as field.public;
@@ -56,7 +60,7 @@ function update_profile:
     input r1 as field.public;
     hash.bhp256 self.caller into r2 as field;
     async update_profile r2 r0 r1 into r3;
-    output r3 as ghost_msg_017.aleo/update_profile.future;
+    output r3 as ghost_msg_018.aleo/update_profile.future;
 
 finalize update_profile:
     input r0 as field.public;
@@ -82,7 +86,7 @@ function send_message:
     async send_message r0 r1 into r11;
     output r9 as Message.record;
     output r10 as Message.record;
-    output r11 as ghost_msg_017.aleo/send_message.future;
+    output r11 as ghost_msg_018.aleo/send_message.future;
 
 finalize send_message:
     input r0 as field.public;
@@ -107,7 +111,7 @@ function clear_history:
     input r0 as field.public;
     hash.bhp256 self.caller into r1 as field;
     async clear_history r1 r0 into r2;
-    output r2 as ghost_msg_017.aleo/clear_history.future;
+    output r2 as ghost_msg_018.aleo/clear_history.future;
 
 finalize clear_history:
     input r0 as field.public;
@@ -123,7 +127,7 @@ function delete_chat:
     input r0 as field.public;
     hash.bhp256 self.caller into r1 as field;
     async delete_chat r1 r0 into r2;
-    output r2 as ghost_msg_017.aleo/delete_chat.future;
+    output r2 as ghost_msg_018.aleo/delete_chat.future;
 
 finalize delete_chat:
     input r0 as field.public;
@@ -135,11 +139,35 @@ finalize delete_chat:
     hash.bhp256 r5 into r6 as field;
     remove dialog_last_block[r6];
 
+function edit_message_proof:
+    input r0 as field.public;
+    hash.bhp256 self.caller into r1 as field;
+    async edit_message_proof r1 r0 into r2;
+    output r2 as ghost_msg_018.aleo/edit_message_proof.future;
+
+finalize edit_message_proof:
+    input r0 as field.public;
+    input r1 as field.public;
+    add r0 r1 into r2;
+    set true into message_actions[r2];
+
+function delete_message_proof:
+    input r0 as field.public;
+    hash.bhp256 self.caller into r1 as field;
+    async delete_message_proof r1 r0 into r2;
+    output r2 as ghost_msg_018.aleo/delete_message_proof.future;
+
+finalize delete_message_proof:
+    input r0 as field.public;
+    input r1 as field.public;
+    add r0 r1 into r2;
+    set true into message_actions[r2];
+
 function add_contact:
     input r0 as field.public;
     hash.bhp256 self.caller into r1 as field;
     async add_contact r1 r0 into r2;
-    output r2 as ghost_msg_017.aleo/add_contact.future;
+    output r2 as ghost_msg_018.aleo/add_contact.future;
 
 finalize add_contact:
     input r0 as field.public;
@@ -151,7 +179,7 @@ function update_contact:
     input r0 as field.public;
     hash.bhp256 self.caller into r1 as field;
     async update_contact r1 r0 into r2;
-    output r2 as ghost_msg_017.aleo/update_contact.future;
+    output r2 as ghost_msg_018.aleo/update_contact.future;
 
 finalize update_contact:
     input r0 as field.public;
@@ -163,7 +191,7 @@ function delete_contact:
     input r0 as field.public;
     hash.bhp256 self.caller into r1 as field;
     async delete_contact r1 r0 into r2;
-    output r2 as ghost_msg_017.aleo/delete_contact.future;
+    output r2 as ghost_msg_018.aleo/delete_contact.future;
 
 finalize delete_contact:
     input r0 as field.public;
@@ -175,7 +203,7 @@ function create_channel:
     input r0 as field.private;
     input r1 as field.private;
     async create_channel r0 r1 into r2;
-    output r2 as ghost_msg_017.aleo/create_channel.future;
+    output r2 as ghost_msg_018.aleo/create_channel.future;
 
 finalize create_channel:
     input r0 as field.public;
@@ -189,7 +217,7 @@ function create_group:
     input r0 as field.private;
     input r1 as field.private;
     async create_group r0 r1 into r2;
-    output r2 as ghost_msg_017.aleo/create_group.future;
+    output r2 as ghost_msg_018.aleo/create_group.future;
 
 finalize create_group:
     input r0 as field.public;
@@ -203,7 +231,7 @@ function delete_channel:
     input r0 as field.private;
     input r1 as field.private;
     async delete_channel r0 r1 into r2;
-    output r2 as ghost_msg_017.aleo/delete_channel.future;
+    output r2 as ghost_msg_018.aleo/delete_channel.future;
 
 finalize delete_channel:
     input r0 as field.public;
@@ -216,7 +244,7 @@ function delete_group:
     input r0 as field.private;
     input r1 as field.private;
     async delete_group r0 r1 into r2;
-    output r2 as ghost_msg_017.aleo/delete_group.future;
+    output r2 as ghost_msg_018.aleo/delete_group.future;
 
 finalize delete_group:
     input r0 as field.public;

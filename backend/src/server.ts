@@ -100,7 +100,8 @@ app.use(rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   keyGenerator: rateLimitKeyGenerator,
-  message: { error: 'Too many requests, please try again later' }
+  message: { error: 'Too many requests, please try again later' },
+  validate: false
 }));
 
 // Stricter limiter for search endpoint
@@ -108,7 +109,8 @@ const searchLimiter = rateLimit({
   windowMs: 60 * 1000,
   max: 15,
   keyGenerator: rateLimitKeyGenerator,
-  message: { error: 'Search rate limit exceeded' }
+  message: { error: 'Search rate limit exceeded' },
+  validate: false
 });
 
 // Stricter limiter for profile creation
@@ -116,7 +118,8 @@ const profileWriteLimiter = rateLimit({
   windowMs: 60 * 1000,
   max: 5,
   keyGenerator: rateLimitKeyGenerator,
-  message: { error: 'Profile update rate limit exceeded' }
+  message: { error: 'Profile update rate limit exceeded' },
+  validate: false
 });
 
 // --- Auth Middleware ---
@@ -733,7 +736,8 @@ const preferencesLimiter = rateLimit({
   windowMs: 60 * 1000,
   max: 20,
   keyGenerator: rateLimitKeyGenerator,
-  message: { error: 'Preferences rate limit exceeded' }
+  message: { error: 'Preferences rate limit exceeded' },
+  validate: false
 });
 
 // GET /preferences/:address — get user preferences (requires auth + ownership)
@@ -855,7 +859,8 @@ const reactionLimiter = rateLimit({
   windowMs: 60 * 1000,
   max: 30,
   keyGenerator: rateLimitKeyGenerator,
-  message: { error: 'Reaction rate limit exceeded' }
+  message: { error: 'Reaction rate limit exceeded' },
+  validate: false
 });
 
 function isValidEmoji(str: string): boolean {

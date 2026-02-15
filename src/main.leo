@@ -1,8 +1,8 @@
-// Ghost Messenger — Unified Aleo Program (V5)
+// Ghost Messenger — Unified Aleo Program (V6)
 // Combines messaging (records, encryption keys) with channels/groups proof.
-// Added: update_profile, clear_history, delete_chat, add_contact, update_contact, delete_contact.
+// V6: edit_message_proof, delete_message_proof (no record needed for off-chain messages).
 
-program ghost_msg_017.aleo {
+program ghost_msg_018.aleo {
 
     @noupgrade
     async constructor() {}
@@ -36,6 +36,7 @@ program ghost_msg_017.aleo {
     mapping profile_pubkey: field => EncryptionKey;
     mapping dialog_last_block: field => u32;
     mapping contacts: field => bool;
+    mapping message_actions: field => bool;
     mapping channels: field => field;
     mapping groups: field => field;
 
@@ -196,6 +197,40 @@ program ghost_msg_017.aleo {
         let dialog_pair: DialogPair = DialogPair { a: min_hash, b: max_hash };
         let dialog_key: field = BHP256::hash_to_field(dialog_pair);
         Mapping::remove(dialog_last_block, dialog_key);
+    }
+
+    // ── Message Proof Transitions (no record needed) ───────
+
+    /// Proof of message edit (for off-chain messages without records).
+    async transition edit_message_proof(
+        public message_hash: field
+    ) -> Future {
+        let sender_hash: field = BHP256::hash_to_field(self.caller);
+        return finalize_edit_message_proof(sender_hash, message_hash);
+    }
+
+    async function finalize_edit_message_proof(
+        sender_hash: field,
+        message_hash: field
+    ) {
+        let key: field = sender_hash + message_hash;
+        Mapping::set(message_actions, key, true);
+    }
+
+    /// Proof of message delete (for off-chain messages without records).
+    async transition delete_message_proof(
+        public message_hash: field
+    ) -> Future {
+        let sender_hash: field = BHP256::hash_to_field(self.caller);
+        return finalize_delete_message_proof(sender_hash, message_hash);
+    }
+
+    async function finalize_delete_message_proof(
+        sender_hash: field,
+        message_hash: field
+    ) {
+        let key: field = sender_hash + message_hash;
+        Mapping::set(message_actions, key, true);
     }
 
     // ── Contact Transitions ────────────────────────────────

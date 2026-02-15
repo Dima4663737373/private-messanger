@@ -44,7 +44,7 @@ const mapContactToChat = (contact: Contact, isActive: boolean): Chat => ({
 
 const InnerApp: React.FC = () => {
   const { publicKey, wallet, signMessage, requestTransaction, disconnect, select, wallets } = useWallet();
-  const { executeTransaction, sendMessageOnChain, registerProfile: registerProfileOnChain, updateProfile: updateProfileOnChain, deleteMessage: deleteMessageOnChain, editMessage: editMessageOnChain, clearHistoryOnChain, deleteChatOnChain, addContactOnChain, updateContactOnChain, deleteContactOnChain, loading: contractLoading } = useContract();
+  const { executeTransaction, sendMessageOnChain, registerProfile: registerProfileOnChain, updateProfile: updateProfileOnChain, deleteMessage: deleteMessageOnChain, editMessage: editMessageOnChain, clearHistoryOnChain, deleteChatOnChain, addContactOnChain, updateContactOnChain, deleteContactOnChain, editMessageProof, deleteMessageProof, loading: contractLoading } = useContract();
 
   // User Preferences (replaces localStorage)
   const {
@@ -1252,27 +1252,26 @@ const InnerApp: React.FC = () => {
     }
   };
 
-  // --- DM Delete / Edit (off-chain + on-chain transaction) ---
+  // --- DM Delete / Edit (on-chain proof + off-chain) ---
   const handleDeleteDMMessage = async (msgId: string) => {
     const msg = activeChatId ? (histories[activeChatId] || []).find(m => m.id === msgId) : undefined;
 
-    // 1. On-chain delete transaction (if message has a timestamp for record lookup)
+    // 1. On-chain proof transaction (wallet popup — always required)
     if (msg?.timestamp) {
       try {
         toast.loading('Waiting for delete transaction approval...', { id: 'delete-tx' });
-        await deleteMessageOnChain(msg.timestamp);
+        await deleteMessageProof(msg.timestamp);
         toast.dismiss('delete-tx');
-        toast.success('Message deleted on-chain');
       } catch (e: any) {
         toast.dismiss('delete-tx');
-        logger.warn('On-chain delete skipped:', e?.message);
-        // Continue with off-chain delete regardless
+        toast.error('Transaction rejected');
+        logger.error('Delete message on-chain failed:', e?.message);
+        return; // Don't delete if transaction was rejected
       }
     }
 
     // 2. Off-chain delete (instant)
     await deleteDMMessage(msgId);
-    // Optimistic removal
     if (activeChatId) {
       setHistories(prev => ({
         ...prev,
@@ -1287,18 +1286,18 @@ const InnerApp: React.FC = () => {
     const contact = contacts.find(c => c.id === activeChatId);
     if (!contact?.address) return;
 
-    // 1. On-chain edit transaction (if message has a timestamp for record lookup)
+    // 1. On-chain proof transaction (wallet popup — always required)
     const msg = (histories[activeChatId] || []).find(m => m.id === msgId);
     if (msg?.timestamp) {
       try {
         toast.loading('Waiting for edit transaction approval...', { id: 'edit-tx' });
-        await editMessageOnChain(msg.timestamp, newText, contact.address);
+        await editMessageProof(msg.timestamp);
         toast.dismiss('edit-tx');
-        toast.success('Message edited on-chain');
       } catch (e: any) {
         toast.dismiss('edit-tx');
-        logger.warn('On-chain edit skipped:', e?.message);
-        // Continue with off-chain edit regardless
+        toast.error('Transaction rejected');
+        logger.error('Edit message on-chain failed:', e?.message);
+        return; // Don't edit if transaction was rejected
       }
     }
 
