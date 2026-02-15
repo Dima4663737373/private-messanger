@@ -109,17 +109,39 @@ async function trySignMessageDerivation(
   }
 }
 
-/**
- * Main entry point: get or derive encryption keys.
- *
- * Priority:
- * 1. Return from cache if available
- * 2. Try signMessage-based derivation (deterministic)
- * 3. Generate random keypair (session-only)
- *
- * @param wallet - Leo Wallet adapter instance
- * @param publicKey - User's Aleo address
- */
+// --- Session Storage (survives page reload, cleared on tab close) ---
+const SESSION_KEY_PREFIX = 'ghost_sk_';
+
+function getSessionKeys(publicKey: string): EncryptionKeyPair | null {
+  try {
+    const raw = sessionStorage.getItem(SESSION_KEY_PREFIX + publicKey);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (parsed?.publicKey && parsed?.secretKey) return parsed;
+  } catch { /* ignore */ }
+  return null;
+}
+
+function setSessionKeys(publicKey: string, keys: EncryptionKeyPair): void {
+  try {
+    sessionStorage.setItem(SESSION_KEY_PREFIX + publicKey, JSON.stringify(keys));
+  } catch { /* ignore quota errors */ }
+}
+
+export function clearSessionKeys(publicKey?: string): void {
+  try {
+    if (publicKey) {
+      sessionStorage.removeItem(SESSION_KEY_PREFIX + publicKey);
+    } else {
+      // Clear all ghost keys
+      for (let i = sessionStorage.length - 1; i >= 0; i--) {
+        const key = sessionStorage.key(i);
+        if (key?.startsWith(SESSION_KEY_PREFIX)) sessionStorage.removeItem(key);
+      }
+    }
+  } catch { /* ignore */ }
+}
+
 export async function getOrDeriveKeys(
   wallet: any,
   publicKey: string,
@@ -135,6 +157,7 @@ export async function getOrDeriveKeys(
     const derived = await trySignMessageDerivation(wallet, publicKey);
     if (derived) {
       if (useCache) setCachedKeys(publicKey, derived);
+      setSessionKeys(publicKey, derived);
       return derived;
     }
   } catch (e: any) {
@@ -144,9 +167,17 @@ export async function getOrDeriveKeys(
     }
   }
 
-  // 2. signMessage not available — generate random keys
+  // 2. Restore from sessionStorage (survives page reload within same tab)
+  const sessionKeys = getSessionKeys(publicKey);
+  if (sessionKeys) {
+    if (useCache) setCachedKeys(publicKey, sessionKeys);
+    return sessionKeys;
+  }
+
+  // 3. signMessage not available, no session — generate random keys
   const keys = generateKeyPair();
   if (useCache) setCachedKeys(publicKey, keys);
+  setSessionKeys(publicKey, keys);
   return keys;
 }
 

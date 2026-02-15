@@ -53,6 +53,7 @@ export const stringToFields = (str: string, count: number = 4): string[] => {
 // Convert Aleo field to string
 export const fieldToString = (fieldStr: string): string => {
   try {
+    if (!fieldStr || typeof fieldStr !== 'string') return '';
     let valStr = fieldStr.replace(/field/g, "")
       .replace(/u64/g, "")
       .replace(/\.private/g, "")

@@ -71,21 +71,36 @@ export function useSync(
   };
 
   // Helper to decrypt - Unified logic using Worker
+  // Check if raw payload looks like NaCl encrypted format (base64nonce.base64ciphertext)
+  const isEncryptedFormat = (p: string): boolean => {
+      if (!p || typeof p !== 'string') return false;
+      const parts = p.split('.');
+      if (parts.length !== 2) return false;
+      const b64 = /^[A-Za-z0-9+/=]{16,}$/;
+      return b64.test(parts[0]) && b64.test(parts[1]);
+  };
+
   const decryptPayload = async (
-      payload: string, 
-      sender: string, 
-      recipient: string, 
+      payload: string,
+      sender: string,
+      recipient: string,
       timestamp: number,
       payloadSelf?: string
   ): Promise<string> => {
-      if (!address) return fieldToString(payload);
+      // Null/empty payload guard
+      if (!payload || typeof payload !== 'string') return "[Encrypted Message]";
+
+      // Check raw payload format BEFORE any processing
+      const encrypted = isEncryptedFormat(payload);
+      const isMine = sender === address;
+
+      if (!address) return encrypted ? "[Encrypted Message]" : payload;
 
       try {
         const myKeys = getCachedKeys(address);
-        if (!myKeys) return fieldToString(payload); // Keys not yet derived
-        const isMine = sender === address;
+        if (!myKeys) return encrypted ? "[Encrypted Message]" : payload;
         const otherParty = isMine ? recipient : sender;
-        
+
         // Strategy for "Encrypt to Self"
         if (isMine && payloadSelf) {
              try {
@@ -96,7 +111,7 @@ export function useSync(
 
         // fetch key if needed
         const otherKey = await getSenderKey(otherParty);
-        
+
         if (otherKey) {
             if (isMine) {
                 // I am the sender, decrypt using my secret + recipient public
@@ -112,22 +127,16 @@ export function useSync(
                 } catch (e) { /* ignore */ }
             }
         }
-        
-        // Fallback for legacy/plaintext
-        const legacy = fieldToString(payload);
-        
-        // Stricter detection: encrypted payloads are "base64nonce.base64ciphertext"
-        const parts = legacy.split('.');
-        const isBase64 = /^[A-Za-z0-9+/=]{16,}$/;
-        const isLikelyEncrypted = parts.length === 2 && isBase64.test(parts[0]) && isBase64.test(parts[1]);
-        
-        if (!isLikelyEncrypted) {
-            return legacy;
+
+        // Decryption failed — show clean placeholder for encrypted payloads
+        if (encrypted) {
+            return isMine ? "[Encrypted Sent Message]" : "[Encrypted Message]";
         }
-        
-        return isMine ? "[Encrypted Sent Message]" : "[Encrypted Message]";
+
+        // Legacy plaintext fallback (non-encrypted Aleo field format)
+        return fieldToString(payload);
       } catch (e) {
-          return fieldToString(payload);
+          return encrypted ? "[Encrypted Message]" : "[Encrypted Message]";
       }
   };
 

@@ -22,7 +22,7 @@ import { useSync } from './hooks/useSync';
 import { useContract } from './hooks/useContract';
 import { usePreferences } from './hooks/usePreferences';
 import { migrateLegacyPreferences } from './utils/migrate-localStorage';
-import { setCachedKeys, clearKeyCache, getCachedKeys } from './utils/key-derivation';
+import { setCachedKeys, clearKeyCache, getCachedKeys, clearSessionKeys } from './utils/key-derivation';
 import { generateKeyPair } from './utils/crypto';
 import { fetchPreferences, updatePreferences } from './utils/preferences-api';
 import { safeBackendFetch } from './utils/api-client';
@@ -708,8 +708,11 @@ const InnerApp: React.FC = () => {
   };
 
   const handleDisconnect = () => {
-    // Clear encryption keys from session cache
-    if (publicKey) clearKeyCache(publicKey);
+    // Clear encryption keys from memory cache and session storage
+    if (publicKey) {
+      clearKeyCache(publicKey);
+      clearSessionKeys(publicKey);
+    }
     // Disconnect wallet
     if (disconnect) disconnect();
   };
