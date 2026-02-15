@@ -1049,7 +1049,13 @@ const InnerApp: React.FC = () => {
   const handleClearDM = async () => {
     if (!activeChatId) return;
     const contact = contacts.find(c => c.id === activeChatId);
-    if (!contact?.dialogHash) return;
+
+    if (!contact?.dialogHash) {
+      // No dialogHash — just clear local state (no messages to delete on server)
+      setHistories(prev => ({ ...prev, [activeChatId!]: [] }));
+      toast.success('Chat history cleared');
+      return;
+    }
 
     try {
       await clearDMHistory(contact.dialogHash);
@@ -1057,7 +1063,9 @@ const InnerApp: React.FC = () => {
       toast.success('Chat history cleared');
     } catch (e: any) {
       logger.error('Clear history failed:', e?.message);
-      toast.error('Failed to clear history');
+      // Still clear locally even if backend fails
+      setHistories(prev => ({ ...prev, [activeChatId!]: [] }));
+      toast.success('Chat history cleared locally');
     }
   };
 

@@ -1,4 +1,4 @@
-program ghost_msg_015.aleo;
+program ghost_msg_016.aleo;
 
 record Message:
     owner as address.private;
@@ -12,6 +12,10 @@ record Message:
 struct EncryptionKey:
     part1 as field;
     part2 as field;
+
+struct DialogPair:
+    a as field;
+    b as field;
 
 mapping profile_pubkey:
     key as field.public;
@@ -34,9 +38,23 @@ function register_profile:
     input r1 as field.public;
     hash.bhp256 self.caller into r2 as field;
     async register_profile r2 r0 r1 into r3;
-    output r3 as ghost_msg_015.aleo/register_profile.future;
+    output r3 as ghost_msg_016.aleo/register_profile.future;
 
 finalize register_profile:
+    input r0 as field.public;
+    input r1 as field.public;
+    input r2 as field.public;
+    cast r1 r2 into r3 as EncryptionKey;
+    set r3 into profile_pubkey[r0];
+
+function update_profile:
+    input r0 as field.public;
+    input r1 as field.public;
+    hash.bhp256 self.caller into r2 as field;
+    async update_profile r2 r0 r1 into r3;
+    output r3 as ghost_msg_016.aleo/update_profile.future;
+
+finalize update_profile:
     input r0 as field.public;
     input r1 as field.public;
     input r2 as field.public;
@@ -60,7 +78,7 @@ function send_message:
     async send_message r0 r1 into r11;
     output r9 as Message.record;
     output r10 as Message.record;
-    output r11 as ghost_msg_015.aleo/send_message.future;
+    output r11 as ghost_msg_016.aleo/send_message.future;
 
 finalize send_message:
     input r0 as field.public;
@@ -68,7 +86,7 @@ finalize send_message:
     lt r0 r1 into r2;
     ternary r2 r0 r1 into r3;
     ternary r2 r1 r0 into r4;
-    add r3 r4 into r5;
+    cast r3 r4 into r5 as DialogPair;
     hash.bhp256 r5 into r6 as field;
     set block.height into dialog_last_block[r6];
 
@@ -81,11 +99,43 @@ function update_message:
 function delete_message:
     input r0 as Message.record;
 
+function clear_history:
+    input r0 as field.public;
+    hash.bhp256 self.caller into r1 as field;
+    async clear_history r1 r0 into r2;
+    output r2 as ghost_msg_016.aleo/clear_history.future;
+
+finalize clear_history:
+    input r0 as field.public;
+    input r1 as field.public;
+    lt r0 r1 into r2;
+    ternary r2 r0 r1 into r3;
+    ternary r2 r1 r0 into r4;
+    cast r3 r4 into r5 as DialogPair;
+    hash.bhp256 r5 into r6 as field;
+    remove dialog_last_block[r6];
+
+function delete_chat:
+    input r0 as field.public;
+    hash.bhp256 self.caller into r1 as field;
+    async delete_chat r1 r0 into r2;
+    output r2 as ghost_msg_016.aleo/delete_chat.future;
+
+finalize delete_chat:
+    input r0 as field.public;
+    input r1 as field.public;
+    lt r0 r1 into r2;
+    ternary r2 r0 r1 into r3;
+    ternary r2 r1 r0 into r4;
+    cast r3 r4 into r5 as DialogPair;
+    hash.bhp256 r5 into r6 as field;
+    remove dialog_last_block[r6];
+
 function create_channel:
     input r0 as field.private;
     input r1 as field.private;
     async create_channel r0 r1 into r2;
-    output r2 as ghost_msg_015.aleo/create_channel.future;
+    output r2 as ghost_msg_016.aleo/create_channel.future;
 
 finalize create_channel:
     input r0 as field.public;
@@ -99,7 +149,7 @@ function create_group:
     input r0 as field.private;
     input r1 as field.private;
     async create_group r0 r1 into r2;
-    output r2 as ghost_msg_015.aleo/create_group.future;
+    output r2 as ghost_msg_016.aleo/create_group.future;
 
 finalize create_group:
     input r0 as field.public;
@@ -113,7 +163,7 @@ function delete_channel:
     input r0 as field.private;
     input r1 as field.private;
     async delete_channel r0 r1 into r2;
-    output r2 as ghost_msg_015.aleo/delete_channel.future;
+    output r2 as ghost_msg_016.aleo/delete_channel.future;
 
 finalize delete_channel:
     input r0 as field.public;
@@ -126,7 +176,7 @@ function delete_group:
     input r0 as field.private;
     input r1 as field.private;
     async delete_group r0 r1 into r2;
-    output r2 as ghost_msg_015.aleo/delete_group.future;
+    output r2 as ghost_msg_016.aleo/delete_group.future;
 
 finalize delete_group:
     input r0 as field.public;

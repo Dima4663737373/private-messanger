@@ -932,10 +932,13 @@ export function useSync(
   };
 
   const clearDMHistory = async (dialogHash: string) => {
-    await safeBackendFetch('rooms/dm-clear', {
+    const { error, status } = await safeBackendFetch('rooms/dm-clear', {
       method: 'DELETE',
       body: { dialogHash }
     });
+    if (error || (status !== 200 && status !== 0)) {
+      throw new Error(error || `Clear history failed (status ${status})`);
+    }
   };
 
   // --- Off-chain DM API ---
