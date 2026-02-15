@@ -93,10 +93,10 @@ function rateLimitKeyGenerator(req: any): string {
   return `ip:${req.ip}`;
 }
 
-// Global rate limiter: 200 requests per 15 minutes
+// Global rate limiter: 600 requests per 15 minutes
 app.use(rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 200,
+  max: 600,
   standardHeaders: true,
   legacyHeaders: false,
   keyGenerator: rateLimitKeyGenerator,
@@ -839,7 +839,7 @@ app.post('/profiles', requireAuth, profileWriteLimiter, async (req: any, res) =>
 // Rate limiter for preferences
 const preferencesLimiter = rateLimit({
   windowMs: 60 * 1000,
-  max: 20,
+  max: 40,
   keyGenerator: rateLimitKeyGenerator,
   message: { error: 'Preferences rate limit exceeded' },
   validate: false
