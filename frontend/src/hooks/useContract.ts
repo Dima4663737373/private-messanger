@@ -260,13 +260,74 @@ export function useContract() {
     return await executeTransaction('send_message', inputs, options);
   };
 
+  /**
+   * Updates profile (on-chain) — uses update_profile transition
+   */
+  const updateProfile = async (options?: ExecuteTransactionOptions) => {
+    if (!publicKey) throw new Error("Wallet not connected");
+
+    const keys = getCachedKeys(publicKey);
+    if (!keys) throw new Error("Encryption keys not available. Please reconnect wallet.");
+
+    const keyFields = stringToFields(keys.publicKey, 2);
+
+    const txId = await executeTransaction(
+      'update_profile',
+      [keyFields[0], keyFields[1]],
+      options
+    );
+
+    try {
+      await safeBackendFetch('/profiles', {
+        method: 'POST',
+        body: {
+          encryptionPublicKey: keys.publicKey,
+          txId
+        }
+      });
+    } catch (e) {
+      logger.error("Failed to push profile metadata", e);
+    }
+
+    return txId;
+  };
+
+  /**
+   * Clear chat history (on-chain proof) — uses clear_history transition
+   */
+  const clearHistoryOnChain = async (
+    recipientAddress: string,
+    options?: ExecuteTransactionOptions
+  ) => {
+    if (!publicKey) throw new Error("Wallet not connected");
+
+    const recipientHash = hashAddress(recipientAddress);
+    return await executeTransaction('clear_history', [recipientHash], options);
+  };
+
+  /**
+   * Delete chat (on-chain proof) — uses delete_chat transition
+   */
+  const deleteChatOnChain = async (
+    recipientAddress: string,
+    options?: ExecuteTransactionOptions
+  ) => {
+    if (!publicKey) throw new Error("Wallet not connected");
+
+    const recipientHash = hashAddress(recipientAddress);
+    return await executeTransaction('delete_chat', [recipientHash], options);
+  };
+
   return {
     loading,
     error,
     sendMessageOnChain,
     registerProfile,
+    updateProfile,
     deleteMessage,
     editMessage,
+    clearHistoryOnChain,
+    deleteChatOnChain,
     findRecordByTimestamp,
     executeTransaction,
   };

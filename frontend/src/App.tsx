@@ -44,7 +44,7 @@ const mapContactToChat = (contact: Contact, isActive: boolean): Chat => ({
 
 const InnerApp: React.FC = () => {
   const { publicKey, wallet, signMessage, requestTransaction, disconnect, select, wallets } = useWallet();
-  const { executeTransaction, sendMessageOnChain, registerProfile: registerProfileOnChain, deleteMessage: deleteMessageOnChain, editMessage: editMessageOnChain, loading: contractLoading } = useContract();
+  const { executeTransaction, sendMessageOnChain, registerProfile: registerProfileOnChain, updateProfile: updateProfileOnChain, deleteMessage: deleteMessageOnChain, editMessage: editMessageOnChain, clearHistoryOnChain, deleteChatOnChain, loading: contractLoading } = useContract();
 
   // User Preferences (replaces localStorage)
   const {
@@ -896,7 +896,7 @@ const InnerApp: React.FC = () => {
 
       // 2. On-chain profile update (REQUIRED - wallet popup)
       toast.loading('Waiting for transaction approval...', { id: 'profile-update-tx' });
-      await registerProfileOnChain();
+      await updateProfileOnChain();
       toast.dismiss('profile-update-tx');
       toast.success('Profile updated on-chain');
       logger.debug('On-chain profile updated');

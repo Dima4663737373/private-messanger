@@ -1,7 +1,8 @@
-// Ghost Messenger — Unified Aleo Program (V3)
+// Ghost Messenger — Unified Aleo Program (V4)
 // Combines messaging (records, encryption keys) with channels/groups proof.
+// Added: update_profile, clear_history, delete_chat transitions.
 
-program ghost_msg_015.aleo {
+program ghost_msg_016.aleo {
 
     @noupgrade
     async constructor() {}
@@ -37,9 +38,9 @@ program ghost_msg_015.aleo {
     mapping channels: field => field;
     mapping groups: field => field;
 
-    // ── Transitions ──────────────────────────────────────────
+    // ── Profile Transitions ─────────────────────────────────
 
-    /// Register or update profile with encryption public key.
+    /// Register profile with encryption public key (first time).
     async transition register_profile(
         public key_part1: field,
         public key_part2: field
@@ -59,6 +60,29 @@ program ghost_msg_015.aleo {
         };
         Mapping::set(profile_pubkey, sender_hash, key_struct);
     }
+
+    /// Update profile encryption key.
+    async transition update_profile(
+        public key_part1: field,
+        public key_part2: field
+    ) -> Future {
+        let sender_hash: field = BHP256::hash_to_field(self.caller);
+        return finalize_update_profile(sender_hash, key_part1, key_part2);
+    }
+
+    async function finalize_update_profile(
+        sender_hash: field,
+        key_part1: field,
+        key_part2: field
+    ) {
+        let key_struct: EncryptionKey = EncryptionKey {
+            part1: key_part1,
+            part2: key_part2
+        };
+        Mapping::set(profile_pubkey, sender_hash, key_struct);
+    }
+
+    // ── Message Transitions ─────────────────────────────────
 
     /// Send message — creates private records for both sender and recipient.
     async transition send_message(
@@ -102,8 +126,6 @@ program ghost_msg_015.aleo {
     async function finalize_send_message(sender_hash: field, recipient_hash: field) {
         let min_hash: field = sender_hash < recipient_hash ? sender_hash : recipient_hash;
         let max_hash: field = sender_hash < recipient_hash ? recipient_hash : sender_hash;
-        // SECURITY FIX: Hash a struct instead of field addition to prevent collisions
-        // (field addition: a+b = c+d is possible for different pairs)
         let dialog_pair: DialogPair = DialogPair { a: min_hash, b: max_hash };
         let dialog_key: field = BHP256::hash_to_field(dialog_pair);
         let height: u32 = block.height;
@@ -132,6 +154,50 @@ program ghost_msg_015.aleo {
     transition delete_message(private msg: Message) {
         // Record consumed — no output.
     }
+
+    // ── Chat Management Transitions ─────────────────────────
+
+    /// Clear chat history — on-chain proof that user cleared dialog messages.
+    /// Removes dialog tracking from mapping.
+    async transition clear_history(
+        public recipient_hash: field
+    ) -> Future {
+        let sender_hash: field = BHP256::hash_to_field(self.caller);
+        return finalize_clear_history(sender_hash, recipient_hash);
+    }
+
+    async function finalize_clear_history(
+        sender_hash: field,
+        recipient_hash: field
+    ) {
+        let min_hash: field = sender_hash < recipient_hash ? sender_hash : recipient_hash;
+        let max_hash: field = sender_hash < recipient_hash ? recipient_hash : sender_hash;
+        let dialog_pair: DialogPair = DialogPair { a: min_hash, b: max_hash };
+        let dialog_key: field = BHP256::hash_to_field(dialog_pair);
+        Mapping::remove(dialog_last_block, dialog_key);
+    }
+
+    /// Delete chat — on-chain proof that user deleted a conversation.
+    /// Removes dialog tracking from mapping.
+    async transition delete_chat(
+        public recipient_hash: field
+    ) -> Future {
+        let sender_hash: field = BHP256::hash_to_field(self.caller);
+        return finalize_delete_chat(sender_hash, recipient_hash);
+    }
+
+    async function finalize_delete_chat(
+        sender_hash: field,
+        recipient_hash: field
+    ) {
+        let min_hash: field = sender_hash < recipient_hash ? sender_hash : recipient_hash;
+        let max_hash: field = sender_hash < recipient_hash ? recipient_hash : sender_hash;
+        let dialog_pair: DialogPair = DialogPair { a: min_hash, b: max_hash };
+        let dialog_key: field = BHP256::hash_to_field(dialog_pair);
+        Mapping::remove(dialog_last_block, dialog_key);
+    }
+
+    // ── Channel/Group Transitions ───────────────────────────
 
     /// Create channel on-chain (proof of creation).
     async transition create_channel(

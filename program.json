@@ -1,7 +1,7 @@
 {
-  "program": "ghost_msg_015.aleo",
-  "version": "0.3.0",
-  "description": "Ghost Messenger — unified messaging + channels/groups on Aleo",
+  "program": "ghost_msg_016.aleo",
+  "version": "0.4.0",
+  "description": "Ghost Messenger — messaging + channels/groups + chat management on Aleo",
   "license": "MIT",
   "leo": "3.4.0",
   "dependencies": null,

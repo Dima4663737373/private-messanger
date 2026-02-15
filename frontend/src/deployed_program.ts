@@ -1,3 +1,3 @@
-// Unified V3: merged messaging (records + encryption keys) + channels/groups
-// Previous: 014 (V2 messenger), 011-013 (iterations), 010 (not indexed)
-export const PROGRAM_ID = 'ghost_msg_015.aleo';
+// Unified V4: added update_profile, clear_history, delete_chat transitions
+// Previous: 015 (V3), 014 (V2 messenger), 011-013 (iterations)
+export const PROGRAM_ID = 'ghost_msg_016.aleo';
