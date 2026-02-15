@@ -124,26 +124,27 @@ export function useContract() {
    */
   const findRecordByTimestamp = async (timestamp: number): Promise<string | null> => {
       if (!adapter || !adapter.requestRecordPlaintexts) {
-          logger.warn("Wallet adapter does not support requestRecordPlaintexts");
           return null;
       }
-      try {
-           const response = await adapter.requestRecordPlaintexts(PROGRAM_ID);
-           if (response && response.records) {
-               for (const rec of response.records) {
-                   // Ensure it's a Message record
-                   // The plaintext usually starts with "record Message {"
-                   const plaintext = rec.plaintext || rec; // handle variations
-                   if (typeof plaintext === 'string' && plaintext.includes("record Message")) {
-                       const match = plaintext.match(/timestamp:\s*(\d+)u64/);
-                       if (match && parseInt(match[1]) === timestamp) {
-                           return plaintext;
-                       }
-                   }
-               }
-           }
-      } catch (e) {
-          logger.error("Failed to fetch records:", e);
+      // Try current program ID, then fall back to previous version
+      const programIds = [PROGRAM_ID, 'ghost_msg_015.aleo'];
+      for (const pid of programIds) {
+        try {
+          const response = await adapter.requestRecordPlaintexts(pid);
+          if (response && response.records) {
+            for (const rec of response.records) {
+              const plaintext = rec.plaintext || rec;
+              if (typeof plaintext === 'string' && plaintext.includes("record Message")) {
+                const match = plaintext.match(/timestamp:\s*(\d+)u64/);
+                if (match && parseInt(match[1]) === timestamp) {
+                  return plaintext;
+                }
+              }
+            }
+          }
+        } catch {
+          // Wallet may not recognize this program yet — skip silently
+        }
       }
       return null;
   };
