@@ -300,7 +300,10 @@ const InnerApp: React.FC = () => {
           const newHistories = { ...prev };
           for (const chatId in newHistories) {
               if (newHistories[chatId].some(m => m.id === msgId)) {
-                  newHistories[chatId] = newHistories[chatId].filter(m => m.id !== msgId);
+                  newHistories[chatId] = newHistories[chatId]
+                    .filter(m => m.id !== msgId)
+                    // Update reply quotes that reference the deleted message
+                    .map(m => m.replyToId === msgId ? { ...m, replyToText: 'Message deleted' } : m);
                   break;
               }
           }
@@ -316,6 +319,12 @@ const InnerApp: React.FC = () => {
               if (idx !== -1) {
                   const msgs = [...newHistories[chatId]];
                   msgs[idx] = { ...msgs[idx], text: newText, edited: true };
+                  // Update reply quotes that reference the edited message
+                  for (let i = 0; i < msgs.length; i++) {
+                    if (msgs[i].replyToId === msgId) {
+                      msgs[i] = { ...msgs[i], replyToText: newText };
+                    }
+                  }
                   newHistories[chatId] = msgs;
                   break;
               }
@@ -1344,7 +1353,9 @@ const InnerApp: React.FC = () => {
     await deleteDMMessage(msgId);
     if (activeChatId) {
       setHistories(prev => {
-        const remaining = (prev[activeChatId!] || []).filter(m => m.id !== msgId);
+        const remaining = (prev[activeChatId!] || []).filter(m => m.id !== msgId)
+          // Update reply quotes that reference the deleted message
+          .map(m => m.replyToId === msgId ? { ...m, replyToText: 'Message deleted' } : m);
         // Update sidebar preview to show the last remaining message (or empty)
         const lastMsg = remaining.length > 0 ? remaining[remaining.length - 1] : null;
         setContacts(pc => pc.map(c =>
@@ -1382,7 +1393,12 @@ const InnerApp: React.FC = () => {
     await editDMMessage(msgId, newText, contact.address);
     // Optimistic update
     setHistories(prev => {
-      const updated = (prev[activeChatId!] || []).map(m => m.id === msgId ? { ...m, text: newText, edited: true } : m);
+      const updated = (prev[activeChatId!] || []).map(m => {
+        if (m.id === msgId) return { ...m, text: newText, edited: true };
+        // Update reply quotes that reference the edited message
+        if (m.replyToId === msgId) return { ...m, replyToText: newText };
+        return m;
+      });
       // Update sidebar preview if this was the last message
       const lastMsg = updated[updated.length - 1];
       if (lastMsg && lastMsg.id === msgId) {

@@ -348,6 +348,12 @@ const ChatArea: React.FC<ChatAreaProps> = ({
       if (roomChat && onDeleteRoomMessage) {
           if (confirm("Delete this message?")) {
               onDeleteRoomMessage(msg.id);
+              // Clear reply-in-progress if replying to deleted message
+              if (replyingTo?.id === msg.id) setReplyingTo(null);
+              // Auto-unpin if pinned
+              if (onUnpinMessage && pinnedMessages.some((p: any) => p.message_id === msg.id)) {
+                onUnpinMessage(msg.id);
+              }
           }
           return;
       }
@@ -356,7 +362,12 @@ const ChatArea: React.FC<ChatAreaProps> = ({
           if (confirm("Are you sure you want to delete this message?")) {
               try {
                   await onDeleteDMMessage(msg.id);
-                  toast.success("Message deleted");
+                  // Clear reply-in-progress if replying to deleted message
+                  if (replyingTo?.id === msg.id) setReplyingTo(null);
+                  // Auto-unpin if pinned
+                  if (onUnpinMessage && pinnedMessages.some((p: any) => p.message_id === msg.id)) {
+                    onUnpinMessage(msg.id);
+                  }
               } catch (e: any) {
                   toast.error("Failed to delete: " + e.message);
               }
@@ -843,11 +854,23 @@ const ChatArea: React.FC<ChatAreaProps> = ({
                     <>
                         {/* Reply Quote */}
                         {msg.replyToText && (
-                          <div className={`mb-2 pl-3 border-l-2 ${msg.isMine ? 'border-[#FF8C00]/60' : 'border-[#FF8C00]'} rounded-sm`}>
+                          <div
+                            className={`mb-2 pl-3 border-l-2 ${msg.isMine ? 'border-[#FF8C00]/60' : 'border-[#FF8C00]'} rounded-sm ${msg.replyToText !== 'Message deleted' ? 'cursor-pointer hover:opacity-70' : ''} transition-opacity`}
+                            onClick={() => {
+                              if (msg.replyToId && msg.replyToText !== 'Message deleted') {
+                                const el = document.getElementById(`msg-${msg.replyToId}`);
+                                if (el) {
+                                  el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                                  el.classList.add('ring-2', 'ring-[#FF8C00]', 'ring-opacity-60');
+                                  setTimeout(() => el.classList.remove('ring-2', 'ring-[#FF8C00]', 'ring-opacity-60'), 1500);
+                                }
+                              }
+                            }}
+                          >
                             <p className={`text-[10px] font-bold ${msg.isMine ? 'text-[#FF8C00]/80' : 'text-[#FF8C00]'}`}>
                               {msg.replyToSender === 'me' || msg.replyToSender === currentUserId ? 'You' : (memberNames[msg.replyToSender || ''] || activeChat?.name || msg.replyToSender?.slice(0, 8) || 'User')}
                             </p>
-                            <p className={`text-xs ${msg.isMine ? 'text-white/50' : 'text-[#999]'} truncate max-w-[200px]`}>
+                            <p className={`text-xs truncate max-w-[200px] ${msg.replyToText === 'Message deleted' ? 'italic opacity-50' : ''} ${msg.isMine ? 'text-white/50' : 'text-[#999]'}`}>
                               {msg.replyToText}
                             </p>
                           </div>
@@ -973,6 +996,14 @@ const ChatArea: React.FC<ChatAreaProps> = ({
                                 <Pin size={14} />
                               </button>
                             )}
+                            {/* Copy text */}
+                            <button
+                              onClick={() => { navigator.clipboard.writeText(msg.text); toast.success('Copied'); }}
+                              title="Copy text"
+                              className="p-1.5 rounded-lg text-[#888] hover:text-[#FF8C00] hover:bg-[#FFF3E0] transition-colors"
+                            >
+                              <Copy size={14} />
+                            </button>
                             {msg.isMine && (
                               <>
                                 <button onClick={() => handleEdit(msg)} title="Edit" className="p-1.5 rounded-lg text-[#888] hover:text-[#FF8C00] hover:bg-[#FFF3E0] transition-colors">
