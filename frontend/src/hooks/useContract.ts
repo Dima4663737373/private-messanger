@@ -63,7 +63,7 @@ export function useContract() {
 
       const txId = await requestTransactionWithRetry(adapter, transaction, {
         timeout: 30000,
-        maxRetries: options.maxRetries ?? 3,
+        maxRetries: options.maxRetries ?? 1,
       });
 
       logger.debug('Transaction response:', txId);

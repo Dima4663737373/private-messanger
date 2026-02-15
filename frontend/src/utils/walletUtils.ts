@@ -3,7 +3,7 @@
 import { logger } from './logger';
 
 const WALLET_TIMEOUT = 30000; // 30 seconds
-const MAX_RETRIES = 3;
+const MAX_RETRIES = 1; // No auto-retry — if user rejects, they can retry manually
 const RETRY_DELAY = 2000; // 2 seconds
 
 export interface WalletCallOptions {
