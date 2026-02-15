@@ -842,8 +842,21 @@ const InnerApp: React.FC = () => {
     toast.success(`Contact ${name} added`);
   };
 
-  const handleEditContact = (id: string, newName: string) => {
+  const handleEditContact = async (id: string, newName: string) => {
     if (!publicKey) return;
+
+    // On-chain proof via update_profile transition
+    toast.loading('Waiting for transaction approval...', { id: 'edit-contact-tx' });
+    try {
+      await updateProfileOnChain();
+      toast.dismiss('edit-contact-tx');
+    } catch (e: any) {
+      toast.dismiss('edit-contact-tx');
+      logger.error('Edit contact cancelled:', e?.message);
+      toast.error('Edit contact cancelled');
+      return;
+    }
+
     setContacts(prev =>
       prev.map(c => c.id === id ? { ...c, name: newName, initials: newName.slice(0, 2).toUpperCase() } : c)
     );
