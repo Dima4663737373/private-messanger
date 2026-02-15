@@ -1200,26 +1200,17 @@ const InnerApp: React.FC = () => {
     }
     toast.success('Message deleted');
 
-    // 2. On-chain delete (optional, non-blocking)
-    if (msg?.timestamp) {
-      (async () => {
-        try {
-          await deleteMessageOnChain(msg.timestamp!);
-          logger.debug('On-chain delete succeeded for timestamp:', msg.timestamp);
-        } catch (e: any) {
-          logger.warn('On-chain delete skipped:', e?.message);
-        }
-      })();
-    }
+    // On-chain delete/edit is not attempted for DMs — records require
+    // wallet sync with the program, which triggers INVALID_PARAMS errors.
+    // Off-chain operations via backend are sufficient for DM messages.
   };
 
   const handleEditDMMessage = async (msgId: string, newText: string) => {
     if (!activeChatId) return;
     const contact = contacts.find(c => c.id === activeChatId);
     if (!contact?.address) return;
-    const msg = (histories[activeChatId] || []).find(m => m.id === msgId);
 
-    // 1. Off-chain edit (instant)
+    // Off-chain edit (instant via backend)
     await editDMMessage(msgId, newText, contact.address);
     // Optimistic update
     setHistories(prev => ({
@@ -1227,18 +1218,6 @@ const InnerApp: React.FC = () => {
       [activeChatId!]: (prev[activeChatId!] || []).map(m => m.id === msgId ? { ...m, text: newText, edited: true } : m)
     }));
     toast.success('Message edited');
-
-    // 2. On-chain edit (optional, non-blocking)
-    if (msg?.timestamp && contact.address) {
-      (async () => {
-        try {
-          await editMessageOnChain(msg.timestamp!, newText, contact.address!);
-          logger.debug('On-chain edit succeeded for timestamp:', msg.timestamp);
-        } catch (e: any) {
-          logger.warn('On-chain edit skipped:', e?.message);
-        }
-      })();
-    }
   };
 
   // --- Pin Handlers ---
