@@ -68,13 +68,18 @@ interface Session {
 
 const sessions = new Map<string, Session>();
 const SESSION_TTL = 24 * 60 * 60 * 1000; // 24 hours
-const pendingChallenges = new Map<WebSocket, { challenge: string; address: string }>();
+const CHALLENGE_TTL = 5 * 60 * 1000; // 5 minutes to complete auth challenge
+const pendingChallenges = new Map<WebSocket, { challenge: string; address: string; createdAt: number }>();
 
-// Cleanup expired sessions every hour
+// Cleanup expired sessions and stale challenges every hour
 setInterval(() => {
   const now = Date.now();
   for (const [token, session] of sessions) {
     if (now - session.createdAt > SESSION_TTL) sessions.delete(token);
+  }
+  // Sweep stale pending challenges (e.g. client disconnected without completing auth)
+  for (const [ws, pending] of pendingChallenges) {
+    if (now - pending.createdAt > CHALLENGE_TTL) pendingChallenges.delete(ws);
   }
 }, 60 * 60 * 1000);
 
@@ -211,7 +216,13 @@ wss.on('connection', (ws: any) => {
       }
       ws._msgTimestamps.push(now);
 
-      const data = JSON.parse(message.toString());
+      let data: any;
+      try {
+        data = JSON.parse(msgStr);
+      } catch {
+        ws.send(JSON.stringify({ type: 'error', message: 'Invalid JSON' }));
+        return;
+      }
 
       // AUTH message — initiate challenge-response authentication
       if (data.type === 'AUTH') {
@@ -244,7 +255,7 @@ wss.on('connection', (ws: any) => {
           const challengeBytes = new TextEncoder().encode(challenge);
           const encrypted = nacl.box(challengeBytes, nonce, clientPubKey, serverTempKeys.secretKey);
 
-          pendingChallenges.set(ws, { challenge, address });
+          pendingChallenges.set(ws, { challenge, address, createdAt: Date.now() });
 
           ws.send(JSON.stringify({
             type: 'AUTH_CHALLENGE',
@@ -337,14 +348,39 @@ wss.on('connection', (ws: any) => {
         }
       }
 
-      // Subscribe to a specific room
+      // Subscribe to a specific room (cap at 100, verify membership for private rooms)
       if (data.type === 'SUBSCRIBE_ROOM' && data.roomId && typeof data.roomId === 'string') {
-        ws.subscribedRooms.add(data.roomId);
+        if (ws.subscribedRooms.size < 100) {
+          // Check if room is private (group) — require membership
+          const room = await Room.findByPk(data.roomId);
+          if (room && room.is_private && ws.authenticatedAddress) {
+            const isMember = await RoomMember.findOne({ where: { room_id: data.roomId, user_id: ws.authenticatedAddress } });
+            if (!isMember) {
+              ws.send(JSON.stringify({ type: 'error', message: 'Not a member of this room' }));
+            } else {
+              ws.subscribedRooms.add(data.roomId);
+            }
+          } else {
+            // Public channel — allow subscription
+            ws.subscribedRooms.add(data.roomId);
+          }
+        }
       }
 
-      // Room message — save and broadcast (enforce sender = authenticated user)
+      // Unsubscribe from a room
+      if (data.type === 'UNSUBSCRIBE_ROOM' && data.roomId && typeof data.roomId === 'string') {
+        ws.subscribedRooms.delete(data.roomId);
+      }
+
+      // Room message — save and broadcast (enforce sender = authenticated user + membership check)
       if (data.type === 'ROOM_MESSAGE' && data.roomId && data.text && ws.authenticatedAddress) {
         const sender = ws.authenticatedAddress; // Use authenticated address, not client-provided
+        // Verify sender is a member of this room
+        const membership = await RoomMember.findOne({ where: { room_id: data.roomId, user_id: sender } });
+        if (!membership) {
+          ws.send(JSON.stringify({ type: 'error', message: 'Not a member of this room' }));
+          return;
+        }
         const msgId = uuidv4();
         const timestamp = Date.now();
         const senderName = data.senderName || sender.slice(0, 8) + '...';
@@ -481,6 +517,10 @@ wss.on('connection', (ws: any) => {
 
   ws.on('close', () => {
     pendingChallenges.delete(ws);
+    // Clear subscriptions to help GC
+    ws.subscribedRooms.clear();
+    ws.subscribedHash = null;
+    ws.subscribedDialog = null;
     // Security: invalidate session on disconnect to prevent stolen tokens
     if (ws.sessionToken) {
       sessions.delete(ws.sessionToken);
@@ -490,7 +530,15 @@ wss.on('connection', (ws: any) => {
 });
 
 // --- Online Status Endpoint ---
-app.get('/online/:addressHash', async (_req, res) => {
+const onlineStatusLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 60,
+  keyGenerator: rateLimitKeyGenerator,
+  message: { error: 'Online status rate limit exceeded' },
+  validate: false
+});
+
+app.get('/online/:addressHash', onlineStatusLimiter, async (_req, res) => {
   const { addressHash } = _req.params;
   let isOnline = false;
   let lastSeen = 0;
@@ -533,13 +581,27 @@ const linkPreviewLimiter = rateLimit({
 app.get('/link-preview', linkPreviewLimiter, async (req, res) => {
   try {
     const url = req.query.url as string;
-    if (!url || !/^https?:\/\/.+/.test(url)) {
+    if (!url || url.length > 2048 || !/^https?:\/\/.+/.test(url)) {
+      return res.status(400).json({ error: 'Invalid URL' });
+    }
+
+    // SSRF protection: block private/internal IPs
+    try {
+      const parsed = new URL(url);
+      const hostname = parsed.hostname.toLowerCase();
+      if (hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '0.0.0.0' ||
+          hostname === '::1' || hostname === '[::1]' || hostname.endsWith('.local') ||
+          /^10\./.test(hostname) || /^172\.(1[6-9]|2\d|3[01])\./.test(hostname) ||
+          /^192\.168\./.test(hostname) || /^169\.254\./.test(hostname)) {
+        return res.status(400).json({ error: 'URL not allowed' });
+      }
+    } catch {
       return res.status(400).json({ error: 'Invalid URL' });
     }
 
     // Check cache (15min TTL)
     const cached = linkPreviewCache.get(url);
-    if (cached && cached.expires > Date.now()) {
+    if (cached && typeof cached.expires === 'number' && cached.expires > Date.now()) {
       return res.json(cached.data);
     }
 
@@ -905,16 +967,21 @@ app.get('/preferences/:address', requireAuth, preferencesLimiter, async (req: an
       return res.json(defaults);
     }
 
+    const safeParse = (str: string | null, fallback: any) => {
+      try { return JSON.parse(str || (Array.isArray(fallback) ? '[]' : '{}')); }
+      catch { return fallback; }
+    };
+
     res.json({
       address: prefs.address,
-      pinned_chats: JSON.parse(prefs.pinned_chats || '[]'),
-      muted_chats: JSON.parse(prefs.muted_chats || '[]'),
-      deleted_chats: JSON.parse(prefs.deleted_chats || '[]'),
-      saved_contacts: JSON.parse(prefs.saved_contacts || '[]'),
-      disappear_timers: JSON.parse(prefs.disappear_timers || '{}'),
+      pinned_chats: safeParse(prefs.pinned_chats, []),
+      muted_chats: safeParse(prefs.muted_chats, []),
+      deleted_chats: safeParse(prefs.deleted_chats, []),
+      saved_contacts: safeParse(prefs.saved_contacts, []),
+      disappear_timers: safeParse(prefs.disappear_timers, {}),
       encrypted_keys: null, // Secret keys no longer returned — derived from wallet
       key_nonce: null,
-      settings: JSON.parse(prefs.settings || '{}'),
+      settings: safeParse(prefs.settings, {}),
       migrated: prefs.migrated || false
     });
   } catch (e: any) {
@@ -962,8 +1029,17 @@ app.post('/preferences/:address', requireAuth, preferencesLimiter, async (req: a
     }
 
     if (disappearTimers !== undefined) {
-      if (typeof disappearTimers !== 'object' || disappearTimers === null) {
+      if (typeof disappearTimers !== 'object' || disappearTimers === null || Array.isArray(disappearTimers)) {
         return res.status(400).json({ error: 'disappearTimers must be object' });
+      }
+      // Validate: max 100 entries, values must be valid timer keys
+      const validTimerValues = ['off', '30s', '5m', '1h', '24h'];
+      const entries = Object.entries(disappearTimers);
+      if (entries.length > 100) return res.status(400).json({ error: 'Too many disappearTimers entries' });
+      for (const [key, val] of entries) {
+        if (typeof key !== 'string' || key.length > 300 || typeof val !== 'string' || !validTimerValues.includes(val)) {
+          return res.status(400).json({ error: 'Invalid disappearTimers value' });
+        }
       }
       data.disappear_timers = JSON.stringify(disappearTimers);
     }
@@ -1000,7 +1076,10 @@ const reactionLimiter = rateLimit({
 });
 
 function isValidEmoji(str: string): boolean {
-  return typeof str === 'string' && str.length >= 1 && str.length <= 8;
+  if (typeof str !== 'string' || str.length === 0 || str.length > 32) return false;
+  // Count Unicode codepoints (not UTF-16 length) to properly handle multi-byte emoji
+  const codepoints = [...str].length;
+  return codepoints >= 1 && codepoints <= 8;
 }
 
 // POST /reactions/batch — get reactions for multiple messages at once
@@ -1008,8 +1087,8 @@ app.post('/reactions/batch', async (req, res) => {
   try {
     const { messageIds } = req.body;
     if (!Array.isArray(messageIds) || messageIds.length === 0) return res.json({});
-    // Limit to 200 message IDs per request
-    const ids = messageIds.slice(0, 200).filter((id: unknown) => typeof id === 'string' && id.length <= 300);
+    // Limit to 200 message IDs per request, validate each ID
+    const ids = messageIds.slice(0, 200).filter((id: unknown) => typeof id === 'string' && id.length > 0 && id.length <= 300 && isValidHash(id as string));
     if (ids.length === 0) return res.json({});
 
     const reactions = await Reaction.findAll({ where: { message_id: ids } });
@@ -1248,7 +1327,12 @@ app.get('/rooms', async (req, res) => {
     const type = req.query.type as string;
     const address = req.query.address as string;
 
+    if (type && type !== 'group' && type !== 'channel') {
+      return res.status(400).json({ error: 'type must be "group" or "channel"' });
+    }
+
     if (type === 'group' && address) {
+      if (!isValidAddress(address)) return res.status(400).json({ error: 'Invalid address' });
       // Groups: only where user is a member
       const memberships = await RoomMember.findAll({ where: { user_id: address } });
       const roomIds = memberships.map(m => m.room_id);
@@ -1289,13 +1373,15 @@ app.post('/rooms', requireFullAuth, async (req: any, res) => {
     const creatorAddress = req.authenticatedAddress; // Use authenticated address
     const { name, type } = req.body;
     if (!name || typeof name !== 'string' || name.trim().length === 0) return res.status(400).json({ error: 'name required' });
-    if (name.trim().length > 100) return res.status(400).json({ error: 'name too long (max 100)' });
+    const sanitizedName = name.replace(/[\x00-\x1F\x7F]/g, '').trim(); // Strip control characters
+    if (sanitizedName.length === 0) return res.status(400).json({ error: 'name required' });
+    if (sanitizedName.length > 100) return res.status(400).json({ error: 'name too long (max 100)' });
 
     const roomType = type === 'group' ? 'group' : 'channel';
     const isPrivate = roomType === 'group';
     const roomId = uuidv4();
 
-    await Room.create({ id: roomId, name: name.slice(0, 100), created_by: creatorAddress, is_private: isPrivate, type: roomType });
+    await Room.create({ id: roomId, name: sanitizedName.slice(0, 100), created_by: creatorAddress, is_private: isPrivate, type: roomType });
     await RoomMember.create({ room_id: roomId, user_id: creatorAddress });
 
     const room = await Room.findByPk(roomId);
@@ -1602,10 +1688,15 @@ app.post('/pins', requireAuth, async (req: any, res) => {
 
     const pins = await PinnedMessage.findAll({ where: { context_id: contextId }, order: [['createdAt', 'DESC']] });
 
-    // Broadcast pin update
+    // Broadcast pin update only to clients subscribed to this context (dialog or room)
+    const pinPayload = JSON.stringify({ type: 'pin_update', payload: { contextId, pins: pins.map((p: any) => p.toJSON()) } });
     wss.clients.forEach((client: any) => {
       if (client.readyState === WebSocket.OPEN) {
-        client.send(JSON.stringify({ type: 'pin_update', payload: { contextId, pins: pins.map((p: any) => p.toJSON()) } }));
+        const isDialogSubscriber = client.subscribedDialog === contextId;
+        const isRoomSubscriber = client.subscribedRooms?.has(contextId);
+        if (isDialogSubscriber || isRoomSubscriber) {
+          client.send(pinPayload);
+        }
       }
     });
 
@@ -1626,9 +1717,15 @@ app.delete('/pins', requireAuth, async (req: any, res) => {
 
     const pins = await PinnedMessage.findAll({ where: { context_id: contextId }, order: [['createdAt', 'DESC']] });
 
+    // Broadcast pin update only to clients subscribed to this context
+    const pinPayload = JSON.stringify({ type: 'pin_update', payload: { contextId, pins: pins.map((p: any) => p.toJSON()) } });
     wss.clients.forEach((client: any) => {
       if (client.readyState === WebSocket.OPEN) {
-        client.send(JSON.stringify({ type: 'pin_update', payload: { contextId, pins: pins.map((p: any) => p.toJSON()) } }));
+        const isDialogSubscriber = client.subscribedDialog === contextId;
+        const isRoomSubscriber = client.subscribedRooms?.has(contextId);
+        if (isDialogSubscriber || isRoomSubscriber) {
+          client.send(pinPayload);
+        }
       }
     });
 

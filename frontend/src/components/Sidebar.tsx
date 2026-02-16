@@ -142,7 +142,7 @@ const Sidebar: React.FC<SidebarProps> = ({
   const NavItem = ({ icon, view, label, badge, disabled }: { icon: React.ReactNode, view: AppView, label: string, badge?: number, disabled?: boolean }) => (
     <button
       onClick={() => !disabled && onSetView(view)}
-      className={`relative flex items-center rounded-xl transition-all whitespace-nowrap ${
+      className={`relative flex items-center rounded-xl transition-all whitespace-nowrap btn-press ${
         navHovered ? 'w-full gap-3 px-3 py-2.5' : 'w-10 h-10 justify-center mx-auto'
       } ${
         disabled
@@ -220,7 +220,7 @@ const Sidebar: React.FC<SidebarProps> = ({
               </span>
               <button
                 onClick={onDisconnect}
-                className={`rounded-xl flex items-center justify-center text-[#666] hover:text-red-500 hover:bg-[#1A1A1A] transition-colors shrink-0 ${navHovered ? 'w-7 h-7 rounded-lg' : 'w-10 h-10 mx-auto'}`}
+                className={`rounded-xl flex items-center justify-center text-[#666] hover:text-red-500 hover:bg-[#1A1A1A] shrink-0 btn-icon ${navHovered ? 'w-7 h-7 rounded-lg' : 'w-10 h-10 mx-auto'}`}
                 title="Disconnect"
               >
                 <LogOut size={14} />
@@ -231,7 +231,7 @@ const Sidebar: React.FC<SidebarProps> = ({
           <button
             onClick={onConnectWallet}
             disabled={isConnecting}
-            className={`flex items-center justify-center gap-2 bg-[#1A1A1A] rounded-xl py-2.5 text-[#FF8C00] hover:bg-[#2A2A2A] transition-colors disabled:opacity-50 ${navHovered ? 'w-full' : 'w-10 h-10 mx-auto'}`}
+            className={`flex items-center justify-center gap-2 bg-[#1A1A1A] rounded-xl py-2.5 text-[#FF8C00] hover:bg-[#2A2A2A] transition-all disabled:opacity-50 btn-press hover:shadow-lg hover:shadow-[#FF8C00]/10 ${navHovered ? 'w-full' : 'w-10 h-10 mx-auto'}`}
             title="Connect Wallet"
           >
             {isConnecting ? (
@@ -342,7 +342,7 @@ const Sidebar: React.FC<SidebarProps> = ({
           {onFabClick && currentView === 'chats' && (
             <button
               onClick={onFabClick}
-              className="absolute bottom-5 right-5 w-12 h-12 bg-[#FF8C00] rounded-full flex items-center justify-center text-black shadow-lg shadow-[#FF8C00]/30 hover:shadow-[#FF8C00]/50 hover:scale-110 active:scale-95 transition-all duration-200 z-10"
+              className="absolute bottom-5 right-5 w-12 h-12 bg-[#FF8C00] rounded-full flex items-center justify-center text-black shadow-lg shadow-[#FF8C00]/30 hover:shadow-xl hover:shadow-[#FF8C00]/50 hover:scale-110 active:scale-90 transition-all duration-200 z-10 pulse-ring"
               title="New Message"
             >
               <Plus size={22} />
@@ -373,13 +373,13 @@ const Sidebar: React.FC<SidebarProps> = ({
               <button
                 onClick={submitRename}
                 disabled={!renameValue.trim() || renameValue.trim() === renameTarget.currentName}
-                className="flex-1 py-2 bg-[#FF8C00] text-black font-bold rounded-xl hover:bg-[#FF9F2A] transition-colors disabled:opacity-40 disabled:cursor-not-allowed text-sm"
+                className="flex-1 py-2 bg-[#FF8C00] text-black font-bold rounded-xl hover:bg-[#FF9F2A] transition-all disabled:opacity-40 disabled:cursor-not-allowed text-sm btn-press hover:shadow-lg hover:shadow-[#FF8C00]/20"
               >
                 Save
               </button>
               <button
                 onClick={() => { setRenameTarget(null); setRenameValue(''); }}
-                className="flex-1 py-2 bg-[#2A2A2A] text-[#888] font-bold rounded-xl hover:bg-[#333] transition-colors text-sm"
+                className="flex-1 py-2 bg-[#2A2A2A] text-[#888] font-bold rounded-xl hover:bg-[#333] transition-colors text-sm btn-press"
               >
                 Cancel
               </button>
@@ -396,29 +396,29 @@ const Sidebar: React.FC<SidebarProps> = ({
           style={{ top: ctxMenu.y, left: ctxMenu.x }}
           onClick={(e) => e.stopPropagation()}
         >
-          <button onClick={() => handleCtxAction('open_new_tab')} className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-[#E5E5E5] hover:bg-[#2A2A2A] transition-colors">
+          <button onClick={() => handleCtxAction('open_new_tab')} className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-[#E5E5E5] hover:bg-[#2A2A2A] transition-colors btn-press">
             <ExternalLink size={16} className="text-[#888] shrink-0" /> Open in new tab
           </button>
-          <button onClick={() => handleCtxAction('mark_unread')} className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-[#E5E5E5] hover:bg-[#2A2A2A] transition-colors">
+          <button onClick={() => handleCtxAction('mark_unread')} className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-[#E5E5E5] hover:bg-[#2A2A2A] transition-colors btn-press">
             <Eye size={16} className="text-[#888] shrink-0" /> Mark as unread
           </button>
           <div className="border-t border-[#2A2A2A]" />
-          <button onClick={() => handleCtxAction('pin')} className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-[#E5E5E5] hover:bg-[#2A2A2A] transition-colors">
+          <button onClick={() => handleCtxAction('pin')} className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-[#E5E5E5] hover:bg-[#2A2A2A] transition-colors btn-press">
             <Pin size={16} className={`shrink-0 ${pinnedIds.includes(ctxMenu.id) ? 'text-[#FF8C00]' : 'text-[#888]'}`} />
             {pinnedIds.includes(ctxMenu.id) ? 'Unpin' : 'Pin'}
           </button>
-          <button onClick={() => handleCtxAction('mute')} className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-[#E5E5E5] hover:bg-[#2A2A2A] transition-colors">
+          <button onClick={() => handleCtxAction('mute')} className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-[#E5E5E5] hover:bg-[#2A2A2A] transition-colors btn-press">
             <BellOff size={16} className={`shrink-0 ${mutedIds.includes(ctxMenu.id) ? 'text-[#FF8C00]' : 'text-[#888]'}`} />
             {mutedIds.includes(ctxMenu.id) ? 'Unmute' : 'Mute'}
           </button>
-          <button onClick={() => handleCtxAction('rename')} className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-[#E5E5E5] hover:bg-[#2A2A2A] transition-colors">
+          <button onClick={() => handleCtxAction('rename')} className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-[#E5E5E5] hover:bg-[#2A2A2A] transition-colors btn-press">
             <Edit2 size={16} className="text-[#888] shrink-0" /> Rename
           </button>
-          <button onClick={() => handleCtxAction('archive')} className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-[#E5E5E5] hover:bg-[#2A2A2A] transition-colors">
+          <button onClick={() => handleCtxAction('archive')} className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-[#E5E5E5] hover:bg-[#2A2A2A] transition-colors btn-press">
             <Archive size={16} className="text-[#888] shrink-0" /> Archive
           </button>
           <div className="border-t border-[#2A2A2A]" />
-          <button onClick={() => handleCtxAction('delete')} className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-red-400 hover:bg-red-500/10 transition-colors">
+          <button onClick={() => handleCtxAction('delete')} className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-red-400 hover:bg-red-500/10 transition-colors btn-press">
             <Trash2 size={16} className="shrink-0" /> Delete {ctxMenu.itemType === 'chat' ? 'Chat' : ctxMenu.itemType === 'channel' ? 'Channel' : 'Group'}
           </button>
         </div>

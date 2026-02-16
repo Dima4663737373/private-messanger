@@ -53,3 +53,64 @@ body {
   to { transform: scale(1); opacity: 1; }
 }
 .animate-scale-in { animation: scale-in 0.15s ease-out forwards; }
+
+@keyframes bounce-in {
+  0% { transform: scale(0.3); opacity: 0; }
+  50% { transform: scale(1.05); }
+  70% { transform: scale(0.95); }
+  100% { transform: scale(1); opacity: 1; }
+}
+.animate-bounce-in { animation: bounce-in 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards; }
+
+@keyframes shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+.animate-shimmer {
+  background: linear-gradient(90deg, transparent 0%, rgba(255,255,255,0.08) 50%, transparent 100%);
+  background-size: 200% 100%;
+  animation: shimmer 1.5s infinite;
+}
+
+@keyframes float {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-4px); }
+}
+.animate-float { animation: float 3s ease-in-out infinite; }
+
+/* Button press animation */
+.btn-press { transition: transform 0.1s ease, box-shadow 0.1s ease; }
+.btn-press:active:not(:disabled) { transform: scale(0.95); }
+
+/* Icon button hover glow */
+.btn-icon {
+  transition: all 0.15s ease;
+  position: relative;
+}
+.btn-icon:hover:not(:disabled) { transform: scale(1.1); }
+.btn-icon:active:not(:disabled) { transform: scale(0.9); }
+
+/* Gradient border shimmer for profile */
+@keyframes gradient-rotate {
+  0% { background-position: 0% 50%; }
+  50% { background-position: 100% 50%; }
+  100% { background-position: 0% 50%; }
+}
+.gradient-border {
+  background: linear-gradient(135deg, #FF8C00, #FF5500, #FF8C00, #FFB347);
+  background-size: 300% 300%;
+  animation: gradient-rotate 4s ease infinite;
+}
+
+@keyframes pulse-ring {
+  0% { transform: scale(1); opacity: 0.5; }
+  100% { transform: scale(1.3); opacity: 0; }
+}
+.pulse-ring::before {
+  content: '';
+  position: absolute;
+  inset: -4px;
+  border-radius: inherit;
+  border: 2px solid #FF8C00;
+  animation: pulse-ring 2s cubic-bezier(0, 0, 0.2, 1) infinite;
+}

@@ -506,14 +506,14 @@ const ChatArea: React.FC<ChatAreaProps> = ({
           <button
             aria-label="Search messages"
             onClick={() => { setIsSearchOpen(!isSearchOpen); if (!isSearchOpen) setTimeout(() => searchInputRef.current?.focus(), 100); }}
-            className={`w-10 h-10 flex items-center justify-center border rounded-xl transition-colors ${isSearchOpen ? 'border-[#FF8C00] text-[#FF8C00] bg-[#FFF3E0]' : 'border-[#E5E5E5] text-[#666] hover:text-[#FF8C00]'}`}
+            className={`w-10 h-10 flex items-center justify-center border rounded-xl btn-press ${isSearchOpen ? 'border-[#FF8C00] text-[#FF8C00] bg-[#FFF3E0]' : 'border-[#E5E5E5] text-[#666] hover:text-[#FF8C00]'} transition-colors`}
           >
             <Search size={18} />
           </button>
           <button
             aria-label="Chat menu"
             onClick={() => setIsMenuOpen(!isMenuOpen)}
-            className="w-10 h-10 flex items-center justify-center border border-[#E5E5E5] rounded-xl text-[#666] hover:text-[#FF8C00] transition-colors"
+            className="w-10 h-10 flex items-center justify-center border border-[#E5E5E5] rounded-xl text-[#666] hover:text-[#FF8C00] transition-colors btn-press"
           >
             <MoreVertical size={18} />
           </button>
@@ -526,7 +526,7 @@ const ChatArea: React.FC<ChatAreaProps> = ({
             >
                 {/* DM: View Profile */}
                 {!roomChat && onViewProfile && (
-                  <button onClick={() => { setIsMenuOpen(false); onViewProfile(activeChat); }} className="w-full flex items-center gap-3 px-4 py-3 hover:bg-[#FAFAFA] text-sm font-medium text-[#333]">
+                  <button onClick={() => { setIsMenuOpen(false); onViewProfile(activeChat); }} className="w-full flex items-center gap-3 px-4 py-3 hover:bg-[#FAFAFA] text-sm font-medium text-[#333] btn-press">
                     <Users size={16} className="text-[#888]" /> View Profile
                   </button>
                 )}
@@ -536,7 +536,7 @@ const ChatArea: React.FC<ChatAreaProps> = ({
                   <>
                     <button
                       onClick={() => { setIsMenuOpen(false); setShowRoomInfo(true); }}
-                      className="w-full flex items-center gap-3 px-4 py-3 hover:bg-[#FAFAFA] text-sm font-medium text-[#333]"
+                      className="w-full flex items-center gap-3 px-4 py-3 hover:bg-[#FAFAFA] text-sm font-medium text-[#333] btn-press"
                     >
                       <Users size={16} className="text-[#888]" />
                       Members ({roomChat.memberCount || roomMembers.length})
@@ -547,7 +547,7 @@ const ChatArea: React.FC<ChatAreaProps> = ({
                         toast.success('Room ID copied — share it so others can join');
                         setIsMenuOpen(false);
                       }}
-                      className="w-full flex items-center gap-3 px-4 py-3 hover:bg-[#FAFAFA] text-sm font-medium text-[#333]"
+                      className="w-full flex items-center gap-3 px-4 py-3 hover:bg-[#FAFAFA] text-sm font-medium text-[#333] btn-press"
                     >
                       <Share2 size={16} className="text-[#888]" /> Share Room ID
                     </button>
@@ -563,7 +563,7 @@ const ChatArea: React.FC<ChatAreaProps> = ({
                         <button
                           key={t}
                           onClick={() => { onSetDisappearTimer(t); setIsMenuOpen(false); }}
-                          className={`px-2 py-1 text-xs rounded-md transition-colors ${disappearTimer === t ? 'bg-[#FF8C00] text-white' : 'bg-[#F5F5F5] text-[#666] hover:bg-[#E5E5E5]'}`}
+                          className={`px-2 py-1 text-xs rounded-md transition-colors btn-press ${disappearTimer === t ? 'bg-[#FF8C00] text-white' : 'bg-[#F5F5F5] text-[#666] hover:bg-[#E5E5E5]'}`}
                         >
                           {t === 'off' ? 'Off' : t}
                         </button>
@@ -576,7 +576,7 @@ const ChatArea: React.FC<ChatAreaProps> = ({
                 {!roomChat && onClearDM && (
                   <button
                     onClick={() => { setIsMenuOpen(false); if (confirm('Clear all messages in this chat?')) onClearDM(); }}
-                    className="w-full flex items-center gap-3 px-4 py-3 hover:bg-[#FAFAFA] text-sm font-medium text-[#333] border-t border-[#F0F0F0]"
+                    className="w-full flex items-center gap-3 px-4 py-3 hover:bg-[#FAFAFA] text-sm font-medium text-[#333] btn-press border-t border-[#F0F0F0]"
                   >
                     <Trash2 size={16} className="text-[#888]" /> Clear History
                   </button>
@@ -586,7 +586,7 @@ const ChatArea: React.FC<ChatAreaProps> = ({
                 {roomChat && onLeaveRoom && (
                   <button
                     onClick={() => { setIsMenuOpen(false); if (confirm(`Leave #${roomChat.name}?`)) onLeaveRoom(); }}
-                    className="w-full flex items-center gap-3 px-4 py-3 hover:bg-[#FAFAFA] text-sm font-medium text-[#333] border-t border-[#F0F0F0]"
+                    className="w-full flex items-center gap-3 px-4 py-3 hover:bg-[#FAFAFA] text-sm font-medium text-[#333] btn-press border-t border-[#F0F0F0]"
                   >
                     <LogOut size={16} className="text-[#888]" /> Leave {roomChat.type === 'channel' ? 'Channel' : 'Group'}
                   </button>
@@ -596,7 +596,7 @@ const ChatArea: React.FC<ChatAreaProps> = ({
                 {roomChat && onDeleteRoom && (
                   <button
                     onClick={() => { setIsMenuOpen(false); if (confirm(`Delete #${roomChat.name}? This cannot be undone.`)) onDeleteRoom(); }}
-                    className="w-full flex items-center gap-3 px-4 py-3 hover:bg-red-50 text-sm font-medium text-red-500 border-t border-[#F0F0F0]"
+                    className="w-full flex items-center gap-3 px-4 py-3 hover:bg-red-50 text-sm font-medium text-red-500 border-t border-[#F0F0F0] btn-press"
                   >
                     <Trash2 size={16} /> Delete {roomChat.type === 'channel' ? 'Channel' : 'Group'}
                   </button>
@@ -696,14 +696,14 @@ const ChatArea: React.FC<ChatAreaProps> = ({
                     navigator.clipboard.writeText(roomChat.id);
                     toast.success('Room ID copied');
                   }}
-                  className="flex-1 flex items-center justify-center gap-2 py-2 bg-[#F5F5F5] hover:bg-[#E5E5E5] rounded-xl text-sm font-medium text-[#333] transition-colors"
+                  className="flex-1 flex items-center justify-center gap-2 py-2 bg-[#F5F5F5] hover:bg-[#E5E5E5] rounded-xl text-sm font-medium text-[#333] transition-colors btn-press"
                 >
                   <Copy size={14} /> Copy ID
                 </button>
                 {onJoinRoom && (
                   <button
                     onClick={() => { onJoinRoom(); toast.success('Joined!'); }}
-                    className="flex-1 flex items-center justify-center gap-2 py-2 bg-[#FF8C00] hover:bg-[#FF9F2A] rounded-xl text-sm font-bold text-black transition-colors"
+                    className="flex-1 flex items-center justify-center gap-2 py-2 bg-[#FF8C00] hover:bg-[#FF9F2A] rounded-xl text-sm font-bold text-black transition-all btn-press hover:shadow-lg hover:shadow-[#FF8C00]/20"
                   >
                     Join
                   </button>
@@ -742,7 +742,7 @@ const ChatArea: React.FC<ChatAreaProps> = ({
                         navigator.clipboard.writeText(addr);
                         toast.success('Address copied');
                       }}
-                      className="p-1.5 text-[#CCC] hover:text-[#666] transition-colors shrink-0"
+                      className="p-1.5 text-[#CCC] hover:text-[#666] shrink-0 btn-icon"
                     >
                       <Copy size={12} />
                     </button>
@@ -757,7 +757,7 @@ const ChatArea: React.FC<ChatAreaProps> = ({
               {onLeaveRoom && (
                 <button
                   onClick={() => { setShowRoomInfo(false); if (confirm(`Leave #${roomChat.name}?`)) onLeaveRoom(); }}
-                  className="w-full flex items-center justify-center gap-2 py-2.5 bg-[#F5F5F5] hover:bg-[#E5E5E5] rounded-xl text-sm font-medium text-[#666] transition-colors"
+                  className="w-full flex items-center justify-center gap-2 py-2.5 bg-[#F5F5F5] hover:bg-[#E5E5E5] rounded-xl text-sm font-medium text-[#666] transition-colors btn-press"
                 >
                   <LogOut size={14} /> Leave {roomChat.type === 'channel' ? 'Channel' : 'Group'}
                 </button>
@@ -765,7 +765,7 @@ const ChatArea: React.FC<ChatAreaProps> = ({
               {onDeleteRoom && (
                 <button
                   onClick={() => { setShowRoomInfo(false); if (confirm(`Delete #${roomChat.name}? This cannot be undone.`)) onDeleteRoom(); }}
-                  className="w-full flex items-center justify-center gap-2 py-2.5 bg-red-50 hover:bg-red-100 rounded-xl text-sm font-medium text-red-500 transition-colors"
+                  className="w-full flex items-center justify-center gap-2 py-2.5 bg-red-50 hover:bg-red-100 rounded-xl text-sm font-medium text-red-500 transition-colors btn-press"
                 >
                   <Trash2 size={14} /> Delete {roomChat.type === 'channel' ? 'Channel' : 'Group'}
                 </button>
@@ -950,7 +950,7 @@ const ChatArea: React.FC<ChatAreaProps> = ({
                                     onReact(msg.id, emoji);
                                   }
                                 }}
-                                className={`px-2 py-0.5 rounded-full text-xs border transition-colors ${
+                                className={`px-2 py-0.5 rounded-full text-xs border transition-all btn-press hover:scale-105 ${
                                   userIds.includes(currentUserId)
                                     ? 'bg-[#FF8C00]/20 border-[#FF8C00]/40 text-[#FF8C00]'
                                     : msg.isMine
@@ -971,7 +971,7 @@ const ChatArea: React.FC<ChatAreaProps> = ({
                             <button
                               onClick={() => setReplyingTo({ id: msg.id, text: msg.text, sender: msg.isMine ? 'me' : (msg.senderId || 'User') })}
                               title="Reply"
-                              className="p-1.5 rounded-lg text-[#888] hover:text-[#FF8C00] hover:bg-[#FFF3E0] transition-colors"
+                              className="p-1.5 rounded-lg text-[#888] hover:text-[#FF8C00] hover:bg-[#FFF3E0] btn-icon"
                             >
                               <Reply size={14} />
                             </button>
@@ -980,7 +980,7 @@ const ChatArea: React.FC<ChatAreaProps> = ({
                             <button
                               onClick={() => setEmojiPickerMsgId(emojiPickerMsgId === msg.id ? null : msg.id)}
                               title="React"
-                              className="p-1.5 rounded-lg text-[#888] hover:text-[#FF8C00] hover:bg-[#FFF3E0] transition-colors"
+                              className="p-1.5 rounded-lg text-[#888] hover:text-[#FF8C00] hover:bg-[#FFF3E0] btn-icon"
                             >
                               <Smile size={14} />
                             </button>
@@ -996,7 +996,7 @@ const ChatArea: React.FC<ChatAreaProps> = ({
                                   }
                                 }}
                                 title={pinnedMessages.some((p: PinnedMessage) => p.message_id === msg.id) ? 'Unpin' : 'Pin'}
-                                className={`p-1.5 rounded-lg transition-colors ${
+                                className={`p-1.5 rounded-lg btn-icon ${
                                   pinnedMessages.some((p: PinnedMessage) => p.message_id === msg.id)
                                     ? 'text-[#FF8C00] bg-[#FFF3E0]'
                                     : 'text-[#888] hover:text-[#FF8C00] hover:bg-[#FFF3E0]'
@@ -1009,16 +1009,16 @@ const ChatArea: React.FC<ChatAreaProps> = ({
                             <button
                               onClick={() => { navigator.clipboard.writeText(msg.text); toast.success('Copied'); }}
                               title="Copy text"
-                              className="p-1.5 rounded-lg text-[#888] hover:text-[#FF8C00] hover:bg-[#FFF3E0] transition-colors"
+                              className="p-1.5 rounded-lg text-[#888] hover:text-[#FF8C00] hover:bg-[#FFF3E0] btn-icon"
                             >
                               <Copy size={14} />
                             </button>
                             {msg.isMine && (
                               <>
-                                <button onClick={() => handleEdit(msg)} title="Edit" className="p-1.5 rounded-lg text-[#888] hover:text-[#FF8C00] hover:bg-[#FFF3E0] transition-colors">
+                                <button onClick={() => handleEdit(msg)} title="Edit" className="p-1.5 rounded-lg text-[#888] hover:text-[#FF8C00] hover:bg-[#FFF3E0] btn-icon">
                                     <Edit2 size={14} />
                                 </button>
-                                <button onClick={() => handleDelete(msg)} title="Delete" className="p-1.5 rounded-lg text-[#888] hover:text-red-500 hover:bg-red-50 transition-colors">
+                                <button onClick={() => handleDelete(msg)} title="Delete" className="p-1.5 rounded-lg text-[#888] hover:text-red-500 hover:bg-red-50 btn-icon">
                                     <Trash2 size={14} />
                                 </button>
                               </>
@@ -1041,7 +1041,7 @@ const ChatArea: React.FC<ChatAreaProps> = ({
                                     if (onReact) onReact(msg.id, emoji);
                                     setEmojiPickerMsgId(null);
                                   }}
-                                  className="w-7 h-7 flex items-center justify-center hover:bg-[#F5F5F5] rounded-full text-sm transition-transform hover:scale-125"
+                                  className="w-7 h-7 flex items-center justify-center hover:bg-[#F5F5F5] rounded-full text-sm btn-icon"
                                 >
                                   {emoji}
                                 </button>
@@ -1128,7 +1128,7 @@ const ChatArea: React.FC<ChatAreaProps> = ({
           <button
             aria-label="Attach file"
             onClick={() => fileInputRef.current?.click()}
-            className="w-10 h-10 flex items-center justify-center text-[#666] hover:text-[#0A0A0A] rounded-xl hover:bg-[#E5E5E5] transition-colors"
+            className="w-10 h-10 flex items-center justify-center text-[#666] hover:text-[#0A0A0A] rounded-xl hover:bg-[#E5E5E5] btn-icon"
           >
             <Paperclip size={20} />
           </button>
@@ -1151,14 +1151,14 @@ const ChatArea: React.FC<ChatAreaProps> = ({
             disabled={isSending}
             className="flex-1 bg-transparent border-none focus:ring-0 text-[#0A0A0A] placeholder-[#999] px-2 font-medium disabled:opacity-50 disabled:cursor-not-allowed"
           />
-          <button aria-label="Emoji" className="w-10 h-10 flex items-center justify-center text-[#666] hover:text-[#0A0A0A] rounded-xl hover:bg-[#E5E5E5] transition-colors">
+          <button aria-label="Emoji" className="w-10 h-10 flex items-center justify-center text-[#666] hover:text-[#0A0A0A] rounded-xl hover:bg-[#E5E5E5] btn-icon">
             <Smile size={20} />
           </button>
           <button
             aria-label="Send message"
             onClick={handleSend}
             disabled={!input.trim() || isSending}
-            className="w-10 h-10 flex items-center justify-center bg-[#0A0A0A] text-white rounded-xl hover:bg-[#FF8C00] hover:text-black transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+            className="w-10 h-10 flex items-center justify-center bg-[#0A0A0A] text-white rounded-xl hover:bg-[#FF8C00] hover:text-black transition-all disabled:opacity-50 disabled:cursor-not-allowed btn-press hover:shadow-lg hover:shadow-[#FF8C00]/20"
           >
             {isSending ? <div className="w-4 h-4 border-2 border-white/60 border-t-transparent rounded-full animate-spin" /> : <Send size={18} />}
           </button>

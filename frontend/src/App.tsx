@@ -257,7 +257,7 @@ const InnerApp: React.FC = () => {
                        hideAvatar: profile.show_avatar === false
                      } : c));
                  }
-            });
+            }).catch(() => { /* profile fetch failed, non-critical */ });
         }
         return [...prevContacts, newContact];
       }
@@ -497,25 +497,31 @@ const InnerApp: React.FC = () => {
     const interval = setInterval(() => {
       const now = Date.now();
       setHistories(prev => {
-        let changed = false;
-        const newHistories = { ...prev };
-        for (const chatId in newHistories) {
-          const timer = disappearTimers[chatId];
-          if (!timer || timer === 'off') continue;
-          const ttl = DISAPPEAR_TIMERS[timer];
-          if (!ttl) continue;
-          const filtered = newHistories[chatId].filter(m => {
-            if (!m.timestamp) return true;
-            return now - m.timestamp < ttl;
-          });
-          if (filtered.length !== newHistories[chatId].length) {
-            newHistories[chatId] = filtered;
-            changed = true;
+        try {
+          let changed = false;
+          const newHistories = { ...prev };
+          for (const chatId in newHistories) {
+            const msgs = newHistories[chatId];
+            if (!Array.isArray(msgs)) continue;
+            const timer = disappearTimers[chatId];
+            if (!timer || timer === 'off') continue;
+            const ttl = DISAPPEAR_TIMERS[timer];
+            if (!ttl) continue;
+            const filtered = msgs.filter(m => {
+              if (!m.timestamp) return true;
+              return now - m.timestamp < ttl;
+            });
+            if (filtered.length !== msgs.length) {
+              newHistories[chatId] = filtered;
+              changed = true;
+            }
           }
+          return changed ? newHistories : prev;
+        } catch {
+          return prev;
         }
-        return changed ? newHistories : prev;
       });
-    }, 5000); // Check every 5s
+    }, 5000);
     return () => clearInterval(interval);
   }, [disappearTimers]);
 
@@ -545,7 +551,7 @@ const InnerApp: React.FC = () => {
           logger.debug("Synced profile:", profile);
           setMyProfile({ username: profile.username, bio: profile.bio });
         }
-      });
+      }).catch(() => { /* own profile fetch failed, non-critical */ });
 
       // 2. Load saved contacts from backend (persisted empty chats etc.)
       if (backendSavedContacts.length > 0) {
@@ -627,7 +633,7 @@ const InnerApp: React.FC = () => {
                     : c
                 ));
               }
-            });
+            }).catch(() => { /* profile fetch failed, non-critical */ });
           }
         }
 
@@ -840,9 +846,9 @@ const InnerApp: React.FC = () => {
     const contact = contacts.find(c => c.id === activeChatId);
     if (!contact || !contact.address) return;
 
-    // Validate recipient address for on-chain transactions
-    if (!contact.address.startsWith('aleo1')) {
-      toast.error('Cannot send on-chain message: Invalid recipient address');
+    // Validate recipient address format (aleo1 + 58 chars = 63 total)
+    if (!contact.address.startsWith('aleo1') || contact.address.length < 60) {
+      toast.error('Invalid recipient address');
       logger.error('Invalid recipient address:', contact.address);
       return;
     }
@@ -1762,13 +1768,13 @@ const InnerApp: React.FC = () => {
                   }
                 }}
                 disabled={!fabModalName.trim()}
-                className="flex-1 py-2.5 bg-[#FF8C00] text-black font-bold rounded-xl hover:bg-[#FF9F2A] transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                className="flex-1 py-2.5 bg-[#FF8C00] text-black font-bold rounded-xl hover:bg-[#FF9F2A] transition-all disabled:opacity-40 disabled:cursor-not-allowed btn-press hover:shadow-lg hover:shadow-[#FF8C00]/20"
               >
                 Create
               </button>
               <button
                 onClick={() => { setFabModal(null); setFabModalName(''); }}
-                className="flex-1 py-2.5 bg-[#2A2A2A] text-[#888] font-bold rounded-xl hover:bg-[#333] transition-colors"
+                className="flex-1 py-2.5 bg-[#2A2A2A] text-[#888] font-bold rounded-xl hover:bg-[#333] transition-colors btn-press"
               >
                 Cancel
               </button>
@@ -1865,13 +1871,13 @@ const InnerApp: React.FC = () => {
                   }
                 }}
                 disabled={!newMsgAddress.startsWith('aleo1') || newMsgAddress.length < 60}
-                className="flex-1 py-2.5 bg-[#FF8C00] text-black font-bold rounded-xl hover:bg-[#FF9F2A] transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                className="flex-1 py-2.5 bg-[#FF8C00] text-black font-bold rounded-xl hover:bg-[#FF9F2A] transition-all disabled:opacity-40 disabled:cursor-not-allowed btn-press hover:shadow-lg hover:shadow-[#FF8C00]/20"
               >
                 Start Chat
               </button>
               <button
                 onClick={() => { setNewMsgModal(false); setNewMsgAddress(''); setNewMsgName(''); }}
-                className="flex-1 py-2.5 bg-[#2A2A2A] text-[#888] font-bold rounded-xl hover:bg-[#333] transition-colors"
+                className="flex-1 py-2.5 bg-[#2A2A2A] text-[#888] font-bold rounded-xl hover:bg-[#333] transition-colors btn-press"
               >
                 Cancel
               </button>
@@ -1930,7 +1936,7 @@ class ErrorBoundary extends React.Component<{ children: React.ReactNode }, Error
             <p className="text-[#999] mb-6">{this.state.error?.message || 'An unexpected error occurred.'}</p>
             <button
               onClick={() => window.location.reload()}
-              className="px-6 py-3 bg-[#FF8C00] text-black font-bold rounded-xl hover:bg-[#FF9F2A] transition-colors"
+              className="px-6 py-3 bg-[#FF8C00] text-black font-bold rounded-xl hover:bg-[#FF9F2A] transition-all btn-press hover:shadow-lg hover:shadow-[#FF8C00]/20"
             >
               Reload App
             </button>

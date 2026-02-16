@@ -454,7 +454,7 @@ export function useSync(
                 // I'm an existing member — share my room key with the new member
                 const cachedKey = roomKeyCache.current.get(roomId);
                 if (cachedKey) {
-                  distributeRoomKey(roomId, cachedKey).catch(() => {});
+                  distributeRoomKey(roomId, cachedKey).catch(e => logger.warn('distributeRoomKey failed:', e));
                 }
               }
               return;
@@ -708,19 +708,24 @@ export function useSync(
 
         // Decrypt the last message of each dialog to show previews
         const decryptedDialogs = await Promise.all(rawDialogs.map(async (rawMsg: RawMessage) => {
+          try {
              let text = decryptionCache.current.get(rawMsg.id);
              if (!text) {
                  const payload = rawMsg.encrypted_payload || rawMsg.content_encrypted;
                  text = await decryptPayload(
-                     payload, 
-                     rawMsg.sender, 
-                     rawMsg.recipient, 
+                     payload,
+                     rawMsg.sender,
+                     rawMsg.recipient,
                      rawMsg.timestamp,
                      rawMsg.encrypted_payload_self
                  );
                  if (text) cacheSet(decryptionCache.current, rawMsg.id, text, MAX_CACHE_SIZE);
              }
              return { ...rawMsg, text: text || "Encrypted Message" };
+          } catch (e) {
+             logger.error(`Failed to decrypt dialog msg ${rawMsg.id}:`, e);
+             return { ...rawMsg, text: "Encrypted Message" };
+          }
         }));
 
         return decryptedDialogs;
@@ -741,11 +746,15 @@ export function useSync(
         const { data: rawMessages } = await safeBackendFetch<any[]>(`messages/${dialogHash}?${params.toString()}`);
         if (!rawMessages || !Array.isArray(rawMessages)) return [];
 
-        // Fetch reactions in batch for all messages
+        // Fetch reactions in batch for all messages (non-blocking)
         const messageIds = rawMessages.map((m: RawMessage) => m.id);
-        const allReactions = await fetchReactionsBatch(messageIds);
+        const allReactions = await fetchReactionsBatch(messageIds).catch(e => {
+          logger.error('Failed to fetch reactions batch:', e);
+          return {} as Record<string, Record<string, string[]>>;
+        });
 
-        const decryptedMessages = await Promise.all(rawMessages.map(async (rawMsg: RawMessage) => {
+        const decryptedMessages = (await Promise.all(rawMessages.map(async (rawMsg: RawMessage) => {
+          try {
             let text = decryptionCache.current.get(rawMsg.id);
             if (!text) {
                  const payload = rawMsg.encrypted_payload || rawMsg.content_encrypted;
@@ -784,7 +793,11 @@ export function useSync(
               attachment,
               reactions: allReactions[rawMsg.id] || undefined
             };
-        }));
+          } catch (e) {
+            logger.error(`Failed to decrypt message ${rawMsg.id}:`, e);
+            return null;
+          }
+        }))).filter((m): m is NonNullable<typeof m> => m !== null);
 
         return decryptedMessages;
       } catch (e) {
@@ -815,7 +828,7 @@ export function useSync(
     let addressHash = '';
     try { addressHash = hashAddress(address); } catch { /* ignore */ }
 
-    await safeBackendFetch('profiles', {
+    const { error } = await safeBackendFetch('profiles', {
       method: 'POST',
       body: {
           address,
@@ -827,6 +840,7 @@ export function useSync(
           ...(privacySettings || {})
       }
     });
+    if (error) logger.warn('notifyProfileUpdate failed:', error);
   };
 
   const cacheDecryptedMessage = (id: string, text: string) => {
@@ -836,18 +850,20 @@ export function useSync(
   // --- Reactions API ---
   const addReaction = async (messageId: string, emoji: string) => {
     if (!address) return;
-    await safeBackendFetch('reactions', {
+    const { error } = await safeBackendFetch('reactions', {
       method: 'POST',
       body: { messageId, userAddress: address, emoji }
     });
+    if (error) logger.warn('addReaction failed:', error);
   };
 
   const removeReaction = async (messageId: string, emoji: string) => {
     if (!address) return;
-    await safeBackendFetch('reactions', {
+    const { error } = await safeBackendFetch('reactions', {
       method: 'DELETE',
       body: { messageId, userAddress: address, emoji }
     });
+    if (error) logger.warn('removeReaction failed:', error);
   };
 
   const fetchReactions = async (messageId: string): Promise<Record<string, string[]>> => {
@@ -955,20 +971,26 @@ export function useSync(
   const fetchRoomMessages = async (roomId: string, limit = 100, offset = 0): Promise<Message[]> => {
     const { data } = await safeBackendFetch<any[]>(`rooms/${roomId}/messages?limit=${limit}&offset=${offset}`);
     if (!data || !Array.isArray(data)) return [];
-    // Decrypt all room messages
-    return Promise.all(data.map(async (m: RawRoomMessage) => {
-      const decryptedText = await decryptRoomText(roomId, m.text);
-      return {
-        id: m.id,
-        text: decryptedText,
-        time: new Date(Number(m.timestamp)).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-        senderId: m.sender === address ? 'me' : m.sender,
-        isMine: m.sender === address,
-        status: 'sent' as const,
-        timestamp: Number(m.timestamp),
-        senderHash: m.sender_name || m.sender?.slice(0, 10)
-      };
+    // Decrypt all room messages (per-message try/catch to prevent one failure from losing all)
+    const results = await Promise.all(data.map(async (m: RawRoomMessage) => {
+      try {
+        const decryptedText = await decryptRoomText(roomId, m.text);
+        return {
+          id: m.id,
+          text: decryptedText,
+          time: new Date(Number(m.timestamp)).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+          senderId: m.sender === address ? 'me' : m.sender,
+          isMine: m.sender === address,
+          status: 'sent' as const,
+          timestamp: Number(m.timestamp),
+          senderHash: m.sender_name || m.sender?.slice(0, 10)
+        };
+      } catch (e) {
+        logger.error(`Failed to decrypt room message ${m.id}:`, e);
+        return null;
+      }
     }));
+    return results.filter((m): m is NonNullable<typeof m> => m !== null);
   };
 
   const sendRoomMessage = async (roomId: string, text: string, senderName?: string) => {
@@ -994,9 +1016,10 @@ export function useSync(
 
   const deleteRoomMessage = async (roomId: string, msgId: string) => {
     if (!address) return;
-    await safeBackendFetch(`rooms/${roomId}/messages/${msgId}?address=${encodeURIComponent(address)}`, {
+    const { error } = await safeBackendFetch(`rooms/${roomId}/messages/${msgId}?address=${encodeURIComponent(address)}`, {
       method: 'DELETE'
     });
+    if (error) logger.warn('deleteRoomMessage failed:', error);
   };
 
   const editRoomMessage = async (roomId: string, msgId: string, text: string) => {
@@ -1007,10 +1030,11 @@ export function useSync(
     if (roomSymKey) {
       encryptedText = encryptRoomMessage(text, roomSymKey);
     }
-    await safeBackendFetch(`rooms/${roomId}/messages/${msgId}/edit`, {
+    const { error } = await safeBackendFetch(`rooms/${roomId}/messages/${msgId}/edit`, {
       method: 'POST',
       body: { address, text: encryptedText }
     });
+    if (error) logger.warn('editRoomMessage failed:', error);
   };
 
   const sendRoomTyping = (roomId: string) => {
@@ -1126,9 +1150,10 @@ export function useSync(
 
   const deleteDMMessage = async (msgId: string) => {
     if (!address) return;
-    await safeBackendFetch(`messages/${msgId}?address=${encodeURIComponent(address)}`, {
+    const { error } = await safeBackendFetch(`messages/${msgId}?address=${encodeURIComponent(address)}`, {
       method: 'DELETE'
     });
+    if (error) logger.warn('deleteDMMessage failed:', error);
   };
 
   const editDMMessage = async (msgId: string, newText: string, recipientAddress: string) => {
@@ -1154,10 +1179,11 @@ export function useSync(
       encryptedPayloadSelf = encryptMessage(newText, myKeys.publicKey, myKeys.secretKey);
     }
 
-    await safeBackendFetch(`messages/${msgId}/edit`, {
+    const { error } = await safeBackendFetch(`messages/${msgId}/edit`, {
       method: 'POST',
       body: { address, encryptedPayload, encryptedPayloadSelf }
     });
+    if (error) logger.warn('editDMMessage failed:', error);
   };
 
   // --- Pins API ---
@@ -1168,17 +1194,19 @@ export function useSync(
 
   const pinMessage = async (contextId: string, messageId: string, messageText: string) => {
     if (!address) return;
-    await safeBackendFetch('pins', {
+    const { error } = await safeBackendFetch('pins', {
       method: 'POST',
       body: { contextId, messageId, pinnedBy: address, messageText }
     });
+    if (error) logger.warn('pinMessage failed:', error);
   };
 
   const unpinMessage = async (contextId: string, messageId: string) => {
-    await safeBackendFetch('pins', {
+    const { error } = await safeBackendFetch('pins', {
       method: 'DELETE',
       body: { contextId, messageId }
     });
+    if (error) logger.warn('unpinMessage failed:', error);
   };
 
   // Fetch online status + lastSeen for a contact

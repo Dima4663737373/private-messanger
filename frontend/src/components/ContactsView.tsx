@@ -87,7 +87,7 @@ const ContactsView: React.FC<ContactsViewProps> = ({ contacts, onAddContact, onE
           </div>
           <button 
             onClick={() => setIsAdding(true)}
-            className="bg-white border border-[#E5E5E5] text-[#0A0A0A] px-6 py-3 rounded-xl font-bold hover:border-[#FF8C00] transition-all flex items-center gap-2"
+            className="bg-white border border-[#E5E5E5] text-[#0A0A0A] px-6 py-3 rounded-xl font-bold hover:border-[#FF8C00] transition-all flex items-center gap-2 btn-press"
           >
             <Plus size={20} />
             MANUAL ADD
@@ -135,7 +135,7 @@ const ContactsView: React.FC<ContactsViewProps> = ({ contacts, onAddContact, onE
                       <button
                         aria-label="View profile"
                         onClick={() => onViewProfile && onViewProfile(contact)}
-                        className="p-3 bg-[#F5F5F5] rounded-xl text-[#0A0A0A] hover:bg-[#E5E5E5] transition-colors"
+                        className="p-3 bg-[#F5F5F5] rounded-xl text-[#0A0A0A] hover:bg-[#E5E5E5] btn-icon"
                       >
                          <Info size={20} className="opacity-50" />
                       </button>
@@ -143,7 +143,7 @@ const ContactsView: React.FC<ContactsViewProps> = ({ contacts, onAddContact, onE
                         <button
                           aria-label="Edit contact"
                           onClick={() => { setEditingId(contact.id); setEditName(contact.name); }}
-                          className="p-3 bg-[#F5F5F5] rounded-xl text-[#0A0A0A] hover:bg-[#E5E5E5] transition-colors"
+                          className="p-3 bg-[#F5F5F5] rounded-xl text-[#0A0A0A] hover:bg-[#E5E5E5] btn-icon"
                         >
                           <Pencil size={20} className="opacity-50" />
                         </button>
@@ -152,7 +152,7 @@ const ContactsView: React.FC<ContactsViewProps> = ({ contacts, onAddContact, onE
                         <button
                           aria-label="Delete contact"
                           onClick={() => setDeletingId(contact.id)}
-                          className="p-3 bg-[#F5F5F5] rounded-xl text-[#0A0A0A] hover:bg-red-100 hover:text-red-500 transition-colors"
+                          className="p-3 bg-[#F5F5F5] rounded-xl text-[#0A0A0A] hover:bg-red-100 hover:text-red-500 btn-icon"
                         >
                           <Trash2 size={20} className="opacity-50" />
                         </button>
@@ -160,7 +160,7 @@ const ContactsView: React.FC<ContactsViewProps> = ({ contacts, onAddContact, onE
                       <button
                         aria-label="Send message"
                         onClick={() => onSelectContact(contact.id)}
-                        className="p-3 bg-[#F5F5F5] rounded-xl text-[#0A0A0A] hover:bg-[#FF8C00] transition-colors"
+                        className="p-3 bg-[#F5F5F5] rounded-xl text-[#0A0A0A] hover:bg-[#FF8C00] btn-icon"
                       >
                         <MessageSquare size={20} />
                       </button>
@@ -236,7 +236,7 @@ const ContactsView: React.FC<ContactsViewProps> = ({ contacts, onAddContact, onE
                       {onViewProfile && (
                         <button
                           onClick={() => onViewProfile(profile)}
-                          className="p-3 bg-[#F5F5F5] rounded-xl text-[#0A0A0A] hover:bg-[#E5E5E5] transition-colors"
+                          className="p-3 bg-[#F5F5F5] rounded-xl text-[#0A0A0A] hover:bg-[#E5E5E5] btn-icon"
                           title="View Profile"
                         >
                           <Info size={20} />
@@ -326,7 +326,7 @@ const ContactsView: React.FC<ContactsViewProps> = ({ contacts, onAddContact, onE
                   }
                 }}
                 disabled={!editName.trim()}
-                className="w-full bg-[#0A0A0A] text-white py-4 rounded-xl font-bold hover:bg-[#FF8C00] hover:text-black transition-all disabled:opacity-50 disabled:cursor-not-allowed mt-4"
+                className="w-full bg-[#0A0A0A] text-white py-4 rounded-xl font-bold hover:bg-[#FF8C00] hover:text-black transition-all disabled:opacity-50 disabled:cursor-not-allowed mt-4 btn-press hover:shadow-lg hover:shadow-[#FF8C00]/20"
               >
                 Save
               </button>
@@ -349,13 +349,13 @@ const ContactsView: React.FC<ContactsViewProps> = ({ contacts, onAddContact, onE
                   onDeleteContact(deletingId);
                   setDeletingId(null);
                 }}
-                className="flex-1 py-3 bg-red-500 text-white font-bold rounded-xl hover:bg-red-600 transition-colors"
+                className="flex-1 py-3 bg-red-500 text-white font-bold rounded-xl hover:bg-red-600 transition-all btn-press"
               >
                 Delete
               </button>
               <button
                 onClick={() => setDeletingId(null)}
-                className="flex-1 py-3 bg-[#F5F5F5] text-[#0A0A0A] font-bold rounded-xl hover:bg-[#E5E5E5] transition-colors"
+                className="flex-1 py-3 bg-[#F5F5F5] text-[#0A0A0A] font-bold rounded-xl hover:bg-[#E5E5E5] transition-colors btn-press"
               >
                 Cancel
               </button>
@@ -402,7 +402,7 @@ const ContactsView: React.FC<ContactsViewProps> = ({ contacts, onAddContact, onE
               <button
                 onClick={handleAdd}
                 disabled={!newName || !newAddress}
-                className="w-full bg-[#0A0A0A] text-white py-4 rounded-xl font-bold hover:bg-[#FF8C00] hover:text-black transition-all disabled:opacity-50 disabled:cursor-not-allowed mt-4"
+                className="w-full bg-[#0A0A0A] text-white py-4 rounded-xl font-bold hover:bg-[#FF8C00] hover:text-black transition-all disabled:opacity-50 disabled:cursor-not-allowed mt-4 btn-press hover:shadow-lg hover:shadow-[#FF8C00]/20"
               >
                 Save Contact
               </button>
