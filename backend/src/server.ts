@@ -580,12 +580,23 @@ app.get('/link-preview', linkPreviewLimiter, async (req, res) => {
       siteName: getMetaContent('og:site_name') || null,
     };
 
-    // Cache for 15 minutes
+    // Cache for 15 minutes (max 200 entries)
     linkPreviewCache.set(url, { data: result, expires: Date.now() + 15 * 60 * 1000 });
-    // Cleanup old cache entries periodically
-    if (linkPreviewCache.size > 500) {
+
+    // Cleanup: remove expired + enforce max size (200 entries)
+    if (linkPreviewCache.size > 200) {
       const now = Date.now();
-      for (const [k, v] of linkPreviewCache) { if (v.expires < now) linkPreviewCache.delete(k); }
+      const entries = Array.from(linkPreviewCache.entries());
+      // Remove expired first
+      for (const [k, v] of entries) {
+        if (v.expires < now) linkPreviewCache.delete(k);
+      }
+      // If still over limit, remove oldest entries
+      if (linkPreviewCache.size > 200) {
+        const sortedByAge = entries.sort((a, b) => a[1].expires - b[1].expires);
+        const toRemove = sortedByAge.slice(0, linkPreviewCache.size - 200);
+        toRemove.forEach(([k]) => linkPreviewCache.delete(k));
+      }
     }
 
     res.json(result);

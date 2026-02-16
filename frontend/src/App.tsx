@@ -96,12 +96,19 @@ const InnerApp: React.FC = () => {
 
   // Sync contacts to backend whenever they change (debounced via usePreferences)
   useEffect(() => {
-    // Skip initial render and empty states before load
+    // Skip before preferences are loaded
     if (!publicKey || !preferencesLoaded) return;
+
+    // Mark as synced after first successful run when fully loaded
     if (!contactsSyncedRef.current) {
       contactsSyncedRef.current = true;
-      return; // Skip the first update (initial load sets contacts)
+      // Save contacts immediately after initial load
+      const toSave = contacts.map(c => ({ address: c.address, name: c.name }));
+      setBackendSavedContacts(toSave);
+      return;
     }
+
+    // Subsequent updates: save contacts
     const toSave = contacts.map(c => ({ address: c.address, name: c.name }));
     setBackendSavedContacts(toSave);
   }, [contacts, publicKey, preferencesLoaded, setBackendSavedContacts]);
@@ -842,6 +849,17 @@ const InnerApp: React.FC = () => {
     try {
       let attachmentCID: string | undefined;
       if (file) {
+        // Validate file size (max 100MB)
+        const MAX_FILE_SIZE = 100 * 1024 * 1024;
+        if (file.size > MAX_FILE_SIZE) {
+          toast.error(`File too large: ${(file.size / 1024 / 1024).toFixed(1)}MB (max 100MB)`);
+          return;
+        }
+        // Validate file name length
+        if (file.name.length > 255) {
+          toast.error('File name too long (max 255 characters)');
+          return;
+        }
         toast.loading("Uploading attachment to IPFS...", { id: "ipfs-upload" });
         attachmentCID = await uploadFileToIPFS(file);
         toast.success("Attachment uploaded", { id: "ipfs-upload" });

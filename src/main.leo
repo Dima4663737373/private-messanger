@@ -36,8 +36,8 @@ program ghost_msg_018.aleo {
     mapping profile_pubkey: field => EncryptionKey;
     mapping dialog_last_block: field => u32;
     mapping contacts: field => bool;
-    mapping message_actions: field => bool;
-    mapping channels: field => field;
+    mapping message_actions: field => bool; // Tracks edit/delete proofs (sender_hash + message_hash)
+    mapping channels: field => field; // NOTE: Channels/groups currently disabled in frontend
     mapping groups: field => field;
 
     // ── Profile Transitions ─────────────────────────────────

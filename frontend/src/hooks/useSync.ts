@@ -239,7 +239,16 @@ export function useSync(
         const socket = new WebSocket(API_CONFIG.WS_URL);
         ws.current = socket;
 
+        // Connection timeout: if not connected within 10s, close and retry
+        const connectTimeout = setTimeout(() => {
+          if (socket.readyState !== WebSocket.OPEN) {
+            logger.warn('WS connection timeout (10s) — closing and retrying');
+            socket.close();
+          }
+        }, 10000);
+
         socket.onopen = () => {
+          clearTimeout(connectTimeout);
           logger.debug('WS Connected - Authenticating...');
           reconnectDelay = 1000; // Reset backoff on successful connect
 

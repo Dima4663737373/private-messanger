@@ -94,12 +94,21 @@ export function clearSessionKeys(publicKey?: string): void {
         }
       }
     }
-    // Also clean localStorage keys from previous version
+    // Clean ALL old localStorage keys from previous version
     try {
       if (publicKey) {
         localStorage.removeItem('ghost_ek_' + publicKey);
+        localStorage.removeItem('ghost_sk_' + publicKey);
+        localStorage.removeItem('ghost_pinned_' + publicKey);
+        localStorage.removeItem('ghost_muted_' + publicKey);
+        localStorage.removeItem('ghost_deleted_chats_' + publicKey);
+        localStorage.removeItem('ghost_disappear_' + publicKey);
+        localStorage.removeItem('ghost_msg_keys_' + publicKey);
+        console.log(`[Keys] Cleaned old localStorage keys for ${publicKey.slice(0, 14)}...`);
       }
-    } catch { /* ignore */ }
+    } catch (e) {
+      console.warn('[Keys] Failed to clean old localStorage:', e);
+    }
   } catch { /* ignore */ }
 }
 
