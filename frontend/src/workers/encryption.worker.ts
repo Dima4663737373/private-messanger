@@ -64,7 +64,7 @@ self.onmessage = (e: MessageEvent<WorkerMessage>) => {
       const text = textDecoder.decode(decrypted);
       self.postMessage({ type: 'DECRYPT_SUCCESS', id, result: text });
     }
-  } catch (error: any) {
+  } catch (error) {
     self.postMessage({ type: 'ERROR', id, error: error.message });
   }
 };

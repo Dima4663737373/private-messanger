@@ -1,5 +1,17 @@
-export const mapErrorToUserMessage = (error: any): string => {
-  const msg = typeof error === 'string' ? error : error?.message || 'Unknown error';
+/**
+ * Type-safe helper to extract error message from unknown error type
+ */
+export const getErrorMessage = (error: unknown): string => {
+  if (typeof error === 'string') return error;
+  if (error instanceof Error) return error.message;
+  if (error && typeof error === 'object' && 'message' in error && typeof error.message === 'string') {
+    return error.message;
+  }
+  return 'Unknown error';
+};
+
+export const mapErrorToUserMessage = (error: unknown): string => {
+  const msg = getErrorMessage(error);
 
   // Wallet / User actions
   if (msg.includes('User rejected') || msg.includes('user rejected') || msg.includes('User denied')) return 'Transaction cancelled by user';

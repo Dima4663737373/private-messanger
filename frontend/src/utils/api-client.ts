@@ -79,7 +79,7 @@ export async function safeBackendFetch<T>(
         status: res.status 
       };
 
-    } catch (e: any) {
+    } catch (e) {
       const isNetworkError = e.name === 'AbortError' || e.message.includes('Failed to fetch');
       
       if (isNetworkError && attempt < retries) {

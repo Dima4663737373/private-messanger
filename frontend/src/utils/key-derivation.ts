@@ -181,7 +181,7 @@ export async function getOrDeriveKeys(
       if (useCache) setCachedKeys(publicKey, derived);
       setSessionKeys(publicKey, derived);
       return derived;
-    } catch (e: any) {
+    } catch (e) {
       // User cancelled — don't fall through, propagate
       if (e?.message?.includes('cancel') || e?.message?.includes('denied') || e?.message?.includes('rejected')) {
         throw e;

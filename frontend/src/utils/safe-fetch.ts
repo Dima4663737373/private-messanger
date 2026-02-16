@@ -87,7 +87,7 @@ export async function aleoSafeFetchMapping(
 
         throw new Error(`HTTP Error ${response.status}`);
 
-      } catch (error: any) {
+      } catch (error) {
         lastError = error;
         
         // Don't retry on 404 (logic handled above, but double check)

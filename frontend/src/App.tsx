@@ -16,8 +16,7 @@ import ContactsView from './components/ContactsView';
 import SettingsView from './components/SettingsView';
 import NotificationsView from './components/NotificationsView';
 import { Toaster, toast } from 'react-hot-toast';
-import { mapErrorToUserMessage } from './utils/errors';
-import { TransactionProgress } from './components/ui/TransactionProgress';
+import { mapErrorToUserMessage, getErrorMessage } from './utils/errors';
 import { useSync } from './hooks/useSync';
 import { useContract } from './hooks/useContract';
 import { usePreferences } from './hooks/usePreferences';
@@ -139,9 +138,6 @@ const InnerApp: React.FC = () => {
   const [isSendingMessage, setIsSendingMessage] = useState(false);
   const [isConnecting, setIsConnecting] = useState(false);
   const [balance, setBalance] = useState<number | null>(null);
-
-  // Transaction Progress State
-  const [txStatus, setTxStatus] = useState<{ step: 'idle' | 'preparing' | 'signing' | 'broadcasting' | 'confirming' | 'confirmed' | 'failed', txId?: string, error?: string }>({ step: 'idle' });
 
   // Data State
   const [chats, setChats] = useState<Chat[]>([]);
@@ -801,7 +797,7 @@ const InnerApp: React.FC = () => {
                         WalletAdapterNetwork.TestnetBeta
                       );
                       toast.success('Wallet connected successfully');
-                   } catch (err: any) {
+                   } catch (err) {
                 logger.error("Connection failed:", err);
                 toast.error(mapErrorToUserMessage(err));
              } finally {
@@ -819,7 +815,7 @@ const InnerApp: React.FC = () => {
                 WalletAdapterNetwork.TestnetBeta
               );
               toast.success('Wallet connected successfully');
-      } catch (err: any) {
+      } catch (err) {
         logger.error("Connection failed:", err);
         toast.error(mapErrorToUserMessage(err));
       } finally {
@@ -887,7 +883,7 @@ const InnerApp: React.FC = () => {
       try {
         txId = await sendMessageOnChain(contact.address!, encryptedPayload, timestamp, attachmentCID);
         toast.dismiss('tx-approval');
-      } catch (e: any) {
+      } catch (e) {
         toast.dismiss('tx-approval');
         logger.error('On-chain transaction failed:', e?.message);
         toast.error('Transaction failed: ' + (e?.message || 'Unknown error'));
@@ -965,7 +961,7 @@ const InnerApp: React.FC = () => {
       toast.loading('Waiting for add contact transaction...', { id: 'add-contact-tx' });
       await addContactOnChain(address);
       toast.dismiss('add-contact-tx');
-    } catch (e: any) {
+    } catch (e) {
       toast.dismiss('add-contact-tx');
       toast.error('Transaction rejected');
       logger.error('Add contact on-chain failed:', e?.message);
@@ -994,7 +990,7 @@ const InnerApp: React.FC = () => {
       toast.loading('Waiting for update contact transaction...', { id: 'update-contact-tx' });
       await updateContactOnChain(id); // id is the address
       toast.dismiss('update-contact-tx');
-    } catch (e: any) {
+    } catch (e) {
       toast.dismiss('update-contact-tx');
       toast.error('Transaction rejected');
       logger.error('Update contact on-chain failed:', e?.message);
@@ -1015,7 +1011,7 @@ const InnerApp: React.FC = () => {
       toast.loading('Waiting for delete contact transaction...', { id: 'delete-contact-tx' });
       await deleteContactOnChain(id); // id is the address
       toast.dismiss('delete-contact-tx');
-    } catch (e: any) {
+    } catch (e) {
       toast.dismiss('delete-contact-tx');
       toast.error('Transaction rejected');
       logger.error('Delete contact on-chain failed:', e?.message);
@@ -1043,7 +1039,7 @@ const InnerApp: React.FC = () => {
 
       toast.success('Profile created on-chain');
       logger.debug('On-chain profile registered');
-    } catch (e: any) {
+    } catch (e) {
       toast.dismiss('profile-tx');
       logger.error("Failed to create profile", e);
       toast.error('Profile creation failed: ' + (e?.message || 'Unknown error'));
@@ -1071,7 +1067,7 @@ const InnerApp: React.FC = () => {
 
       toast.success('Profile updated on-chain');
       logger.debug('On-chain profile updated');
-    } catch (e: any) {
+    } catch (e) {
       toast.dismiss('profile-update-tx');
       logger.error("Failed to update profile", e);
       toast.error('Profile update failed: ' + (e?.message || 'Unknown error'));
@@ -1114,7 +1110,7 @@ const InnerApp: React.FC = () => {
             const fn = type === 'channel' ? 'create_channel' : 'create_group';
             await executeTransaction(fn, [nameHash, creatorHash]);
             toast.success(`On-chain ${type} proof recorded`);
-          } catch (e: any) {
+          } catch (e) {
             logger.warn(`On-chain ${type} proof failed (non-critical):`, e?.message);
           }
         })();
@@ -1138,7 +1134,7 @@ const InnerApp: React.FC = () => {
           const creatorHash = hashAddress(publicKey);
           const fn = room.type === 'channel' ? 'delete_channel' : 'delete_group';
           await executeTransaction(fn, [nameHash, creatorHash]);
-        } catch (e: any) {
+        } catch (e) {
           logger.warn('On-chain room deletion failed (non-critical):', e?.message);
         }
       })();
@@ -1226,7 +1222,7 @@ const InnerApp: React.FC = () => {
     try {
       await clearHistoryOnChain(recipientAddress);
       toast.dismiss('clear-dm-tx');
-    } catch (e: any) {
+    } catch (e) {
       toast.dismiss('clear-dm-tx');
       logger.error('Clear history cancelled:', e?.message);
       toast.error('Clear history cancelled');
@@ -1255,7 +1251,7 @@ const InnerApp: React.FC = () => {
     try {
       await deleteChatOnChain(recipientAddress);
       toast.dismiss('delete-chat-tx');
-    } catch (e: any) {
+    } catch (e) {
       toast.dismiss('delete-chat-tx');
       logger.error('Delete chat cancelled:', e?.message);
       toast.error('Delete chat cancelled');
@@ -1294,7 +1290,7 @@ const InnerApp: React.FC = () => {
       } else {
         toast.success('All conversations cleared');
       }
-    } catch (e: any) {
+    } catch (e) {
       logger.error('Clear all failed:', e?.message);
       toast.error('Failed to clear conversations');
     }
@@ -1368,7 +1364,7 @@ const InnerApp: React.FC = () => {
         toast.loading('Waiting for delete transaction approval...', { id: 'delete-tx' });
         await deleteMessageProof(msg.timestamp);
         toast.dismiss('delete-tx');
-      } catch (e: any) {
+      } catch (e) {
         toast.dismiss('delete-tx');
         toast.error('Transaction rejected');
         logger.error('Delete message on-chain failed:', e?.message);
@@ -1408,7 +1404,7 @@ const InnerApp: React.FC = () => {
         toast.loading('Waiting for edit transaction approval...', { id: 'edit-tx' });
         await editMessageProof(msg.timestamp);
         toast.dismiss('edit-tx');
-      } catch (e: any) {
+      } catch (e) {
         toast.dismiss('edit-tx');
         toast.error('Transaction rejected');
         logger.error('Edit message on-chain failed:', e?.message);
@@ -1569,17 +1565,6 @@ const InnerApp: React.FC = () => {
         }}
       />
       
-      {/* Global Transaction Progress Overlay */}
-      {txStatus.step !== 'idle' && (
-        <div className="fixed bottom-4 right-4 z-[100] w-80 shadow-2xl">
-          <TransactionProgress 
-            step={txStatus.step} 
-            txId={txStatus.txId} 
-            error={txStatus.error} 
-          />
-        </div>
-      )}
-
       {/* Profile View Overlay */}
       {viewingProfile && (
         <ProfileView 
@@ -1716,7 +1701,6 @@ const InnerApp: React.FC = () => {
             onUpdateProfile={handleUpdateProfile}
             isProcessing={isProcessing}
             initialData={myProfile}
-            error={txStatus.step === 'failed' ? txStatus.error : null}
             isWalletConnected={!!publicKey}
             publicKey={publicKey}
             balance={balance}

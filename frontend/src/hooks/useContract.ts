@@ -74,7 +74,7 @@ export function useContract() {
 
       logger.debug('Transaction response:', txId);
       return txId;
-    } catch (err: any) {
+    } catch (err) {
       const errorMsg = err?.message || 'Transaction failed';
       setError(errorMsg);
       throw err;

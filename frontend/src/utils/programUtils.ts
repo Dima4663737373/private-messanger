@@ -50,7 +50,7 @@ export async function checkProgramExistsV2(): Promise<ProgramStatus> {
                 error: `HTTP ${res.status}: ${res.statusText}`
             };
         }
-    } catch (error: any) {
+    } catch (error) {
         return {
             exists: false,
             error: error.message || String(error)

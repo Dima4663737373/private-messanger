@@ -48,7 +48,7 @@ export async function withWalletTimeout<T>(
             logger.debug(`[Wallet] Completed in ${(duration / 1000).toFixed(2)}s`);
             
             return result;
-        } catch (error: any) {
+        } catch (error) {
             lastError = error;
             const errorMsg = error?.message || String(error);
             

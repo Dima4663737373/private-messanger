@@ -375,7 +375,7 @@ const ChatArea: React.FC<ChatAreaProps> = ({
                   if (onUnpinMessage && pinnedMessages.some((p: any) => p.message_id === msg.id)) {
                     onUnpinMessage(msg.id);
                   }
-              } catch (e: any) {
+              } catch (e) {
                   toast.error("Failed to delete: " + e.message);
               }
           }
@@ -400,7 +400,7 @@ const ChatArea: React.FC<ChatAreaProps> = ({
               await onEditDMMessage(msg.id, editContent);
               setEditingMessageId(null);
               toast.success("Message edited");
-          } catch (e: any) {
+          } catch (e) {
               toast.error("Failed to edit: " + e.message);
           }
           return;

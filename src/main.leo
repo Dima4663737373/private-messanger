@@ -102,6 +102,11 @@ program ghost_msg_018.aleo {
         let computed_sender_hash: field = BHP256::hash_to_field(self.caller);
         assert_eq(computed_sender_hash, sender_hash);
 
+        // Validate timestamp bounds (prevent overflow/underflow, ensure reasonable range)
+        // Min: 1000000000000 (Sep 2001 in ms), Max: 253402300799000 (Dec 31, 9999 in ms)
+        assert(timestamp >= 1000000000000u64);
+        assert(timestamp <= 253402300799000u64);
+
         let sender_msg: Message = Message {
             owner: self.caller,
             sender_hash: sender_hash,

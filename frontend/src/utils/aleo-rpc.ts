@@ -64,12 +64,12 @@ export async function checkProgramExists(
           if (response.status === 404) {
             continue; // Try next path/endpoint
           }
-        } catch (pathError: any) {
+        } catch (pathError) {
           // Silently continue on network errors (404s are expected)
           continue;
         }
       }
-    } catch (error: any) {
+    } catch (error) {
       // Only log unexpected errors (not 404s)
       if (error?.message && !error.message.includes('404')) {
         logger.debug(`RPC ${endpoint} failed:`, error);
