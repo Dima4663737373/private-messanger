@@ -1,7 +1,7 @@
 import { hashAddress } from '../utils/aleo-utils';
 import { useEffect, useRef, useState } from 'react';
 import { Message, Room, PinnedMessage, RawMessage, RawRoom, RawRoomMessage } from '../types';
-import { getQueuedMessages, dequeueMessage } from '../utils/offline-queue';
+import { getQueuedMessages, dequeueMessage, enqueueMessage } from '../utils/offline-queue';
 import { fieldToString, fieldsToString } from '../utils/messageUtils';
 import { encryptMessage, KeyPair, encryptRoomMessage, decryptRoomMessage, generateRoomKey, encryptRoomKeyForMember, decryptRoomKey } from '../utils/crypto';
 import { getCachedKeys } from '../utils/key-derivation';
@@ -33,7 +33,7 @@ export function useSync(
 ) {
   const ws = useRef<WebSocket | null>(null);
   const [isConnected, setIsConnected] = useState(false);
-  const [typingUsers, setTypingUsers] = useState<Record<string, number>>({}); // dialogHash -> timestamp
+  const [typingUsers, setTypingUsers] = useState<Record<string, { ts: number; sender?: string }>>({}); // key -> { timestamp, sender? }
   const { decrypt, decryptAsSender } = useEncryptionWorker();
 
   // In-Memory Caches (bounded, cleared on refresh)
@@ -320,18 +320,17 @@ export function useSync(
                   try {
                     if (socket.readyState === WebSocket.OPEN) {
                       socket.send(JSON.stringify({
-                        type: 'DM',
-                        to: msg.recipientAddress,
-                        text: msg.encryptedPayload || '',
-                        textSelf: msg.encryptedPayloadSelf || '',
-                        tempId: msg.id,
+                        type: 'DM_MESSAGE',
+                        sender: address,
                         senderHash: msg.senderHash,
                         recipientHash: msg.recipientHash,
                         dialogHash: msg.dialogHash,
-                        replyToId: msg.replyToId,
-                        replyToText: msg.replyToText,
-                        replyToSender: msg.replyToSender,
-                        attachment: msg.attachmentCID || undefined
+                        encryptedPayload: msg.encryptedPayload || '',
+                        encryptedPayloadSelf: msg.encryptedPayloadSelf || '',
+                        timestamp: msg.timestamp,
+                        attachmentPart1: msg.attachmentCID || '',
+                        attachmentPart2: '',
+                        tempId: msg.id
                       }));
                       await dequeueMessage(msg.id);
                       logger.debug(`[OfflineQueue] Flushed message: ${msg.id}`);
@@ -366,12 +365,12 @@ export function useSync(
             // Typing indicator from another user
             if (data.type === 'TYPING') {
               const { dialogHash } = data.payload;
-              setTypingUsers(prev => ({ ...prev, [dialogHash]: Date.now() }));
+              setTypingUsers(prev => ({ ...prev, [dialogHash]: { ts: Date.now() } }));
               // Auto-clear after 3s
               setTimeout(() => {
                 setTypingUsers(prev => {
                   const copy = { ...prev };
-                  if (copy[dialogHash] && Date.now() - copy[dialogHash] > 2500) {
+                  if (copy[dialogHash] && Date.now() - copy[dialogHash].ts > 2500) {
                     delete copy[dialogHash];
                   }
                   return copy;
@@ -459,11 +458,11 @@ export function useSync(
 
             if (data.type === 'room_typing') {
               const key = `room:${data.payload.roomId}`;
-              setTypingUsers(prev => ({ ...prev, [key]: Date.now() }));
+              setTypingUsers(prev => ({ ...prev, [key]: { ts: Date.now(), sender: data.payload.sender } }));
               setTimeout(() => {
                 setTypingUsers(prev => {
                   const copy = { ...prev };
-                  if (copy[key] && Date.now() - copy[key] > 2500) delete copy[key];
+                  if (copy[key] && Date.now() - copy[key].ts > 2500) delete copy[key];
                   return copy;
                 });
               }, 3000);
@@ -714,14 +713,18 @@ export function useSync(
         const { data: rawMessages } = await safeBackendFetch<any[]>(`messages/${dialogHash}?${params.toString()}`);
         if (!rawMessages || !Array.isArray(rawMessages)) return [];
 
+        // Fetch reactions in batch for all messages
+        const messageIds = rawMessages.map((m: RawMessage) => m.id);
+        const allReactions = await fetchReactionsBatch(messageIds);
+
         const decryptedMessages = await Promise.all(rawMessages.map(async (rawMsg: RawMessage) => {
             let text = decryptionCache.current.get(rawMsg.id);
             if (!text) {
                  const payload = rawMsg.encrypted_payload || rawMsg.content_encrypted;
                  text = await decryptPayload(
-                     payload, 
-                     rawMsg.sender, 
-                     rawMsg.recipient, 
+                     payload,
+                     rawMsg.sender,
+                     rawMsg.recipient,
                      rawMsg.timestamp,
                      rawMsg.encrypted_payload_self
                  );
@@ -750,10 +753,11 @@ export function useSync(
               status: rawMsg.status,
               timestamp: rawMsg.timestamp,
               recipient: rawMsg.recipient,
-              attachment
+              attachment,
+              reactions: allReactions[rawMsg.id] || undefined
             };
         }));
-        
+
         return decryptedMessages;
       } catch (e) {
           logger.error('Fetch dialog messages failed:', e);
@@ -820,6 +824,16 @@ export function useSync(
 
   const fetchReactions = async (messageId: string): Promise<Record<string, string[]>> => {
     const { data } = await safeBackendFetch<Record<string, string[]>>(`reactions/${messageId}`);
+    return data || {};
+  };
+
+  /** Fetch reactions for multiple messages in a single request */
+  const fetchReactionsBatch = async (messageIds: string[]): Promise<Record<string, Record<string, string[]>>> => {
+    if (messageIds.length === 0) return {};
+    const { data } = await safeBackendFetch<Record<string, Record<string, string[]>>>('reactions/batch', {
+      method: 'POST',
+      body: { messageIds }
+    });
     return data || {};
   };
 
@@ -1027,10 +1041,28 @@ export function useSync(
     return { tempId, encryptedPayload, encryptedPayloadSelf, timestamp, senderHash, recipientHash, dialogHash };
   };
 
-  // Actually send the prepared message via WebSocket
+  // Actually send the prepared message via WebSocket (queues to offline queue on failure)
   const commitDMMessage = (prepared: NonNullable<Awaited<ReturnType<typeof prepareDMMessage>>>, attachmentCID?: string): boolean => {
+    const queueMsg = () => {
+      enqueueMessage({
+        id: prepared.tempId,
+        type: 'dm',
+        recipientAddress: '', // resolved by recipientHash on flush
+        text: '',
+        encryptedPayload: prepared.encryptedPayload,
+        encryptedPayloadSelf: prepared.encryptedPayloadSelf,
+        senderHash: prepared.senderHash,
+        recipientHash: prepared.recipientHash,
+        dialogHash: prepared.dialogHash,
+        timestamp: prepared.timestamp,
+        attachmentCID: attachmentCID || undefined
+      });
+      logger.info('[OfflineQueue] Message queued for later delivery');
+    };
+
     if (!ws.current || ws.current.readyState !== WebSocket.OPEN || !address) {
-      logger.error('Cannot send message: WebSocket not connected');
+      logger.warn('WebSocket not connected — queuing message offline');
+      queueMsg();
       return false;
     }
 
@@ -1050,7 +1082,8 @@ export function useSync(
       }));
       return true;
     } catch (e) {
-      logger.error('Failed to send WebSocket message:', e);
+      logger.error('Failed to send WebSocket message — queuing offline:', e);
+      queueMsg();
       return false;
     }
   };

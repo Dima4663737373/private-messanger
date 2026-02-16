@@ -89,6 +89,7 @@ interface ChatAreaProps {
   isLoading?: boolean;
   isSending?: boolean;
   isTyping?: boolean;
+  typingUserName?: string;
   onTyping?: () => void;
   onViewProfile?: (chat: Chat) => void;
   onReact?: (messageId: string, emoji: string) => void;
@@ -129,6 +130,7 @@ const ChatArea: React.FC<ChatAreaProps> = ({
   isLoading = false,
   isSending = false,
   isTyping = false,
+  typingUserName,
   onTyping,
   onViewProfile,
   onReact,
@@ -1063,7 +1065,7 @@ const ChatArea: React.FC<ChatAreaProps> = ({
             <span className="w-1.5 h-1.5 bg-[#FF8C00] rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
             <span className="w-1.5 h-1.5 bg-[#FF8C00] rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
           </span>
-          typing...
+          {typingUserName ? <><span className="font-medium text-[#666]">{typingUserName}</span> is typing...</> : 'typing...'}
         </div>
       )}
 

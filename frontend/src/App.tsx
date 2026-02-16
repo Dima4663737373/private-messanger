@@ -1632,6 +1632,9 @@ const InnerApp: React.FC = () => {
             isTyping={activeRoomId
               ? !!(typingUsers[`room:${activeRoomId}`])
               : !!(activeDialogHash && typingUsers[activeDialogHash])}
+            typingUserName={activeRoomId
+              ? (() => { const t = typingUsers[`room:${activeRoomId}`]; return t?.sender ? (memberNames[t.sender] || t.sender.slice(0, ADDRESS_DISPLAY.SHORT_PREFIX)) : undefined; })()
+              : undefined}
             onTyping={!userSettings.typingIndicators ? undefined : activeRoomId
               ? () => sendRoomTyping(activeRoomId!)
               : () => activeDialogHash && sendTyping(activeDialogHash)}

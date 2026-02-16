@@ -1003,6 +1003,32 @@ function isValidEmoji(str: string): boolean {
   return typeof str === 'string' && str.length >= 1 && str.length <= 8;
 }
 
+// POST /reactions/batch — get reactions for multiple messages at once
+app.post('/reactions/batch', async (req, res) => {
+  try {
+    const { messageIds } = req.body;
+    if (!Array.isArray(messageIds) || messageIds.length === 0) return res.json({});
+    // Limit to 200 message IDs per request
+    const ids = messageIds.slice(0, 200).filter((id: unknown) => typeof id === 'string' && id.length <= 300);
+    if (ids.length === 0) return res.json({});
+
+    const reactions = await Reaction.findAll({ where: { message_id: ids } });
+
+    // Group by messageId -> emoji -> [users]
+    const result: Record<string, Record<string, string[]>> = {};
+    for (const r of reactions) {
+      if (!result[r.message_id]) result[r.message_id] = {};
+      if (!result[r.message_id][r.emoji]) result[r.message_id][r.emoji] = [];
+      result[r.message_id][r.emoji].push(r.user_address);
+    }
+
+    res.json(result);
+  } catch (e) {
+    console.error('POST /reactions/batch error:', e);
+    res.status(500).json({ error: 'Failed to fetch reactions' });
+  }
+});
+
 // GET /reactions/:messageId — get reactions for a message
 app.get('/reactions/:messageId', async (req, res) => {
   try {
