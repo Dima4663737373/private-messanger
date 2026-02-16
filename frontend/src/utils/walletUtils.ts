@@ -1,6 +1,7 @@
 // Wallet utilities with timeout and retry logic (from tipzo)
 
 import { logger } from './logger';
+import { WalletAdapter, AleoTransaction } from '../types';
 
 const WALLET_TIMEOUT = 30000; // 30 seconds
 const MAX_RETRIES = 1; // No auto-retry — if user rejects, they can retry manually
@@ -81,8 +82,8 @@ export async function withWalletTimeout<T>(
  * Request transaction with timeout and retry
  */
 export async function requestTransactionWithRetry(
-    adapter: any,
-    transaction: any,
+    adapter: WalletAdapter,
+    transaction: AleoTransaction,
     options: WalletCallOptions = {}
 ): Promise<string> {
     return withWalletTimeout(

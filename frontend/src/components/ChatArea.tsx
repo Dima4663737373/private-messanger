@@ -2,7 +2,7 @@
 import React, { useState, useEffect, useRef, useLayoutEffect } from 'react';
 import { Search, MoreVertical, Paperclip, Send, Smile, Menu, Ghost, Shield, MessageSquare, Trash2, Edit2, X, Check, File as FileIcon, Download, Reply, Timer, Clock, Pin, Copy, Users, LogOut, Share2 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Chat, Message, DisappearTimer, DISAPPEAR_TIMERS, Room, AppView } from '../types';
+import { Chat, Message, DisappearTimer, DISAPPEAR_TIMERS, Room, AppView, PinnedMessage } from '../types';
 import { logger } from '../utils/logger';
 import Avatar from './Avatar';
 import { MessageStatus } from './ui/MessageStatus';
@@ -100,7 +100,7 @@ interface ChatAreaProps {
   onLeaveRoom?: () => void;
   onClearDM?: () => void;
   onDeleteChat?: () => void;
-  pinnedMessages?: any[];
+  pinnedMessages?: PinnedMessage[];
   onPinMessage?: (msgId: string, msgText: string) => void;
   onUnpinMessage?: (msgId: string) => void;
   onDeleteRoomMessage?: (msgId: string) => void;
@@ -358,7 +358,7 @@ const ChatArea: React.FC<ChatAreaProps> = ({
               // Clear reply-in-progress if replying to deleted message
               if (replyingTo?.id === msg.id) setReplyingTo(null);
               // Auto-unpin if pinned
-              if (onUnpinMessage && pinnedMessages.some((p: any) => p.message_id === msg.id)) {
+              if (onUnpinMessage && pinnedMessages.some((p: PinnedMessage) => p.message_id === msg.id)) {
                 onUnpinMessage(msg.id);
               }
           }
@@ -372,7 +372,7 @@ const ChatArea: React.FC<ChatAreaProps> = ({
                   // Clear reply-in-progress if replying to deleted message
                   if (replyingTo?.id === msg.id) setReplyingTo(null);
                   // Auto-unpin if pinned
-                  if (onUnpinMessage && pinnedMessages.some((p: any) => p.message_id === msg.id)) {
+                  if (onUnpinMessage && pinnedMessages.some((p: PinnedMessage) => p.message_id === msg.id)) {
                     onUnpinMessage(msg.id);
                   }
               } catch (e) {
@@ -986,16 +986,16 @@ const ChatArea: React.FC<ChatAreaProps> = ({
                             {onPinMessage && (
                               <button
                                 onClick={() => {
-                                  const isPinned = pinnedMessages.some((p: any) => p.message_id === msg.id);
+                                  const isPinned = pinnedMessages.some((p: PinnedMessage) => p.message_id === msg.id);
                                   if (isPinned && onUnpinMessage) {
                                     onUnpinMessage(msg.id);
                                   } else {
                                     onPinMessage(msg.id, msg.text);
                                   }
                                 }}
-                                title={pinnedMessages.some((p: any) => p.message_id === msg.id) ? 'Unpin' : 'Pin'}
+                                title={pinnedMessages.some((p: PinnedMessage) => p.message_id === msg.id) ? 'Unpin' : 'Pin'}
                                 className={`p-1.5 rounded-lg transition-colors ${
-                                  pinnedMessages.some((p: any) => p.message_id === msg.id)
+                                  pinnedMessages.some((p: PinnedMessage) => p.message_id === msg.id)
                                     ? 'text-[#FF8C00] bg-[#FFF3E0]'
                                     : 'text-[#888] hover:text-[#FF8C00] hover:bg-[#FFF3E0]'
                                 }`}

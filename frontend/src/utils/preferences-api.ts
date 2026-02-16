@@ -131,7 +131,7 @@ export async function updatePreferences(
  */
 export function createDebouncedUpdater(address: string, delay: number = PREFERENCES_DEBOUNCE) {
   let timeoutId: ReturnType<typeof setTimeout> | null = null;
-  let pendingUpdates: any = {};
+  let pendingUpdates: Partial<Parameters<typeof updatePreferences>[1]> = {};
 
   return (updates: Parameters<typeof updatePreferences>[1]) => {
     // Merge updates

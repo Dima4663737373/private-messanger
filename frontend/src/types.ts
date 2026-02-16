@@ -104,3 +104,124 @@ export interface Contact {
   unreadCount?: number;
   hideAvatar?: boolean;
 }
+
+// ═══════════════════════════════════════════════════════════
+// Backend API Response Types (replace 'any' with these)
+// ═══════════════════════════════════════════════════════════
+
+/** Raw message from backend database */
+export interface RawMessage {
+  id: string;
+  sender: string;
+  recipient: string;
+  encrypted_payload: string;
+  encrypted_payload_self?: string;
+  timestamp: number;
+  status: string;
+  sender_hash?: string;
+  recipient_hash?: string;
+  dialog_hash?: string;
+  attachment_part1?: string;
+  attachment_part2?: string;
+  content_encrypted?: string;
+  reply_to_id?: string;
+  reply_to_text?: string;
+  reply_to_sender?: string;
+  edited?: boolean;
+}
+
+/** Raw room from backend database */
+export interface RawRoom {
+  id: string;
+  name: string;
+  created_by: string;
+  is_private: boolean;
+  type: 'channel' | 'group';
+  memberCount?: number;
+  lastMessage?: string;
+  lastMessageTime?: string | number;
+}
+
+/** Raw room message from backend database */
+export interface RawRoomMessage {
+  id: string;
+  room_id: string;
+  sender: string;
+  sender_name?: string;
+  text: string;
+  timestamp: number;
+}
+
+/** Pinned message from backend */
+export interface PinnedMessage {
+  id: number;
+  context_id: string;
+  message_id: string;
+  pinned_by: string;
+  message_text?: string;
+}
+
+/** Network profile search result */
+export interface NetworkProfile {
+  address: string;
+  username: string;
+  bio?: string;
+  encryption_public_key?: string;
+  show_avatar?: boolean;
+  show_last_seen?: boolean;
+}
+
+/** Backend profile response */
+export interface ProfileResponse {
+  exists: boolean;
+  profile?: {
+    address_hash: string;
+    username?: string;
+    bio?: string;
+    encryption_public_key?: string;
+    show_avatar?: boolean;
+    show_last_seen?: boolean;
+  };
+}
+
+/** Online status response */
+export interface OnlineStatusResponse {
+  online: boolean;
+  lastSeen?: number;
+}
+
+/** Link preview response */
+export interface LinkPreviewResponse {
+  title?: string;
+  description?: string;
+  image?: string;
+  siteName?: string;
+  url: string;
+}
+
+/** Wallet adapter interface for Aleo transactions */
+export interface WalletAdapter {
+  requestTransaction: (transaction: AleoTransaction) => Promise<string>;
+  signMessage?: (message: Uint8Array) => Promise<Uint8Array>;
+  requestRecordPlaintexts?: (program: string) => Promise<RecordPlaintextsResult>;
+}
+
+/** Aleo transaction structure */
+export interface AleoTransaction {
+  address: string;
+  chainId: string;
+  fee: number;
+  feePrivate: boolean;
+  transitions: Array<{
+    program: string;
+    functionName: string;
+    inputs: string[];
+  }>;
+}
+
+/** Record plaintexts result */
+export interface RecordPlaintextsResult {
+  records?: Array<{
+    plaintext?: string;
+  }>;
+}

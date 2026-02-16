@@ -5,11 +5,11 @@ import { API_TIMEOUT } from '../constants';
 
 interface SafeFetchOptions {
   method?: string;
-  body?: any;
+  body?: Record<string, unknown> | unknown[];
   headers?: Record<string, string>;
   retries?: number;
   timeout?: number;
-  mockFallback?: any; // Value to return if backend is unreachable
+  mockFallback?: unknown;
 }
 
 export interface ApiResponse<T> {
@@ -92,7 +92,7 @@ export async function safeBackendFetch<T>(
 
         if (mockFallback !== undefined) {
           logger.info('Using mock fallback for', endpoint);
-          return { data: mockFallback, error: null, status: 200 };
+          return { data: mockFallback as T, error: null, status: 200 };
         }
 
         return { 

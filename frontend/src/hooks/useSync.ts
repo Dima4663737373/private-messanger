@@ -1,6 +1,7 @@
 import { hashAddress } from '../utils/aleo-utils';
 import { useEffect, useRef, useState } from 'react';
-import { Message, Room } from '../types';
+import { Message, Room, PinnedMessage, RawMessage, RawRoom, RawRoomMessage } from '../types';
+import { getQueuedMessages, dequeueMessage } from '../utils/offline-queue';
 import { fieldToString, fieldsToString } from '../utils/messageUtils';
 import { encryptMessage, KeyPair, encryptRoomMessage, decryptRoomMessage, generateRoomKey, encryptRoomKeyForMember, decryptRoomKey } from '../utils/crypto';
 import { getCachedKeys } from '../utils/key-derivation';
@@ -23,7 +24,7 @@ export function useSync(
   onRoomCreated?: (room: Room) => void,
   onRoomDeleted?: (roomId: string) => void,
   onDMCleared?: (dialogHash: string) => void,
-  onPinUpdate?: (contextId: string, pins: any[]) => void,
+  onPinUpdate?: (contextId: string, pins: PinnedMessage[]) => void,
   onRoomMessageDeleted?: (roomId: string, messageId: string) => void,
   onRoomMessageEdited?: (roomId: string, messageId: string, text: string) => void,
   onDMSent?: (tempId: string, realId: string) => void,
@@ -180,7 +181,7 @@ export function useSync(
     const { data: members } = await safeBackendFetch<any[]>(`rooms/${roomId}/members`);
     if (!members || !Array.isArray(members)) return null;
 
-    const keysPayload: any[] = [];
+    const keysPayload: Array<{ userAddress: string; encryptedRoomKey: string; nonce: string; senderPublicKey: string }> = [];
     for (const member of members) {
       if (!member.encryption_public_key) continue;
       const { encryptedRoomKey, nonce } = encryptRoomKeyForMember(
@@ -310,6 +311,37 @@ export function useSync(
                 logger.error("Failed to hash address for WS subscription:", e);
                 socket.send(JSON.stringify({ type: 'SUBSCRIBE', address }));
               }
+
+              // Step 4: Flush offline queue after reconnection
+              getQueuedMessages().then(async (queued) => {
+                if (queued.length === 0) return;
+                logger.info(`[OfflineQueue] Flushing ${queued.length} queued messages...`);
+                for (const msg of queued) {
+                  try {
+                    if (socket.readyState === WebSocket.OPEN) {
+                      socket.send(JSON.stringify({
+                        type: 'DM',
+                        to: msg.recipientAddress,
+                        text: msg.encryptedPayload || '',
+                        textSelf: msg.encryptedPayloadSelf || '',
+                        tempId: msg.id,
+                        senderHash: msg.senderHash,
+                        recipientHash: msg.recipientHash,
+                        dialogHash: msg.dialogHash,
+                        replyToId: msg.replyToId,
+                        replyToText: msg.replyToText,
+                        replyToSender: msg.replyToSender,
+                        attachment: msg.attachmentCID || undefined
+                      }));
+                      await dequeueMessage(msg.id);
+                      logger.debug(`[OfflineQueue] Flushed message: ${msg.id}`);
+                    }
+                  } catch (err) {
+                    logger.error('[OfflineQueue] Failed to flush message:', err);
+                  }
+                }
+              }).catch(err => logger.error('[OfflineQueue] Flush error:', err));
+
               return;
             }
 
@@ -593,7 +625,7 @@ export function useSync(
     if (!rawMessages || !Array.isArray(rawMessages)) return [];
     
     // Async Map for Decryption
-    const decryptedMessages = await Promise.all(rawMessages.map(async (rawMsg: any) => {
+    const decryptedMessages = await Promise.all(rawMessages.map(async (rawMsg: RawMessage) => {
         let text = decryptionCache.current.get(rawMsg.id);
         
         if (!text) {
@@ -648,7 +680,7 @@ export function useSync(
         if (!rawDialogs || !Array.isArray(rawDialogs)) return [];
 
         // Decrypt the last message of each dialog to show previews
-        const decryptedDialogs = await Promise.all(rawDialogs.map(async (rawMsg: any) => {
+        const decryptedDialogs = await Promise.all(rawDialogs.map(async (rawMsg: RawMessage) => {
              let text = decryptionCache.current.get(rawMsg.id);
              if (!text) {
                  const payload = rawMsg.encrypted_payload || rawMsg.content_encrypted;
@@ -682,7 +714,7 @@ export function useSync(
         const { data: rawMessages } = await safeBackendFetch<any[]>(`messages/${dialogHash}?${params.toString()}`);
         if (!rawMessages || !Array.isArray(rawMessages)) return [];
 
-        const decryptedMessages = await Promise.all(rawMessages.map(async (rawMsg: any) => {
+        const decryptedMessages = await Promise.all(rawMessages.map(async (rawMsg: RawMessage) => {
             let text = decryptionCache.current.get(rawMsg.id);
             if (!text) {
                  const payload = rawMsg.encrypted_payload || rawMsg.content_encrypted;
@@ -817,7 +849,7 @@ export function useSync(
     if (type === 'group' && address) params.append('address', address);
     const { data } = await safeBackendFetch<any[]>(`rooms?${params.toString()}`);
     if (!data || !Array.isArray(data)) return [];
-    return data.map((r: any) => ({
+    return data.map((r: RawRoom) => ({
       id: r.id, name: r.name, createdBy: r.created_by,
       isPrivate: r.is_private, type: r.type, memberCount: r.memberCount || 0,
       lastMessage: r.lastMessage || undefined,
@@ -882,7 +914,7 @@ export function useSync(
     const { data } = await safeBackendFetch<any[]>(`rooms/${roomId}/messages?limit=${limit}&offset=${offset}`);
     if (!data || !Array.isArray(data)) return [];
     // Decrypt all room messages
-    return Promise.all(data.map(async (m: any) => {
+    return Promise.all(data.map(async (m: RawRoomMessage) => {
       const decryptedText = await decryptRoomText(roomId, m.text);
       return {
         id: m.id,

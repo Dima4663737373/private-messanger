@@ -2,14 +2,14 @@ const isDev = import.meta.env.DEV;
 
 export const logger = {
   // Production - always show
-  error: (...args: any[]) => console.error(...args),
-  warn: (...args: any[]) => console.warn(...args),
+  error: (...args: unknown[]) => console.error(...args),
+  warn: (...args: unknown[]) => console.warn(...args),
   
   // Development only
-  info: (...args: any[]) => {
+  info: (...args: unknown[]) => {
     if (isDev) console.log(...args);
   },
-  debug: (...args: any[]) => {
+  debug: (...args: unknown[]) => {
     if (isDev) console.debug(...args);
   },
   

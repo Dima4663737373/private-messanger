@@ -17,11 +17,8 @@ export interface ExecuteTransactionOptions {
   maxRetries?: number;
 }
 
-interface WalletAdapter {
-  requestTransaction: (transaction: any) => Promise<string>;
-  signMessage?: (message: Uint8Array) => Promise<Uint8Array>;
-  requestRecordPlaintexts?: (program: string) => Promise<any>;
-}
+// WalletAdapter interface imported from types
+import { WalletAdapter } from '../types';
 
 export function useContract() {
   const { wallet, publicKey } = useWallet();

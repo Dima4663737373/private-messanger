@@ -1,6 +1,6 @@
 
 import React, { useState } from 'react';
-import { Contact } from '../types';
+import { Contact, NetworkProfile } from '../types';
 import { Plus, UserPlus, X, Search, MessageSquare, Check, UserX, Globe, Info, Pencil, Trash2 } from 'lucide-react';
 import Avatar from './Avatar';
 import { EmptyState } from './ui/EmptyState';
@@ -13,8 +13,8 @@ interface ContactsViewProps {
   onEditContact?: (id: string, newName: string) => void;
   onDeleteContact?: (id: string) => void;
   onSelectContact: (id: string) => void;
-  onSearchNetwork?: (query: string) => Promise<any[]>;
-  onViewProfile?: (contact: Contact | any) => void;
+  onSearchNetwork?: (query: string) => Promise<NetworkProfile[]>;
+  onViewProfile?: (contact: Contact | NetworkProfile) => void;
 }
 
 const ContactsView: React.FC<ContactsViewProps> = ({ contacts, onAddContact, onEditContact, onDeleteContact, onSelectContact, onSearchNetwork, onViewProfile }) => {
@@ -22,7 +22,7 @@ const ContactsView: React.FC<ContactsViewProps> = ({ contacts, onAddContact, onE
   const [newAddress, setNewAddress] = useState('');
   const [newName, setNewName] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
-  const [networkResults, setNetworkResults] = useState<any[]>([]);
+  const [networkResults, setNetworkResults] = useState<NetworkProfile[]>([]);
   const [isSearchingNetwork, setIsSearchingNetwork] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editName, setEditName] = useState('');
@@ -215,7 +215,7 @@ const ContactsView: React.FC<ContactsViewProps> = ({ contacts, onAddContact, onE
                  )}
 
                  {/* Network Results */}
-                 {networkResults.map((profile: any) => {
+                 {networkResults.map((profile: NetworkProfile) => {
                   const added = isContactAdded(profile.address);
                   if (filteredContacts.some(c => c.address === profile.address)) return null;
 

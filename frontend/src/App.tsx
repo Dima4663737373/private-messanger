@@ -7,7 +7,7 @@ import Sidebar from './components/Sidebar';
 import ChatArea from './components/ChatArea';
 import LandingPage from './components/LandingPage';
 import Preloader from './components/Preloader';
-import { AppView, Chat, Message, Contact, DisappearTimer, DISAPPEAR_TIMERS, Room, RoomType, ChatContextAction, AppNotification } from './types';
+import { AppView, Chat, Message, Contact, DisappearTimer, DISAPPEAR_TIMERS, Room, RoomType, ChatContextAction, AppNotification, PinnedMessage, NetworkProfile } from './types';
 import { uploadFileToIPFS } from './utils/ipfs';
 import { hashAddress } from './utils/aleo-utils';
 import { getAccountBalance } from './utils/aleo-rpc';
@@ -143,7 +143,7 @@ const InnerApp: React.FC = () => {
   const [chats, setChats] = useState<Chat[]>([]);
   const [histories, setHistories] = useState<Record<string, Message[]>>({});
   const [myProfile, setMyProfile] = useState<{username?: string, bio?: string} | null>(null);
-  const [viewingProfile, setViewingProfile] = useState<Contact | any | null>(null);
+  const [viewingProfile, setViewingProfile] = useState<Contact | NetworkProfile | null>(null);
 
   // Room State (Channels & Groups)
   const [channels, setChannels] = useState<Room[]>([]);
@@ -411,7 +411,7 @@ const InnerApp: React.FC = () => {
     });
   }, []);
 
-  const handlePinUpdate = React.useCallback((contextId: string, pins: any[]) => {
+  const handlePinUpdate = React.useCallback((contextId: string, pins: PinnedMessage[]) => {
     setPinnedMessages(prev => ({ ...prev, [contextId]: pins }));
   }, []);
 

@@ -2,6 +2,7 @@
 
 import { API_CONFIG } from '../config';
 import { ALEO_RPC_ENDPOINTS, ALEO_EXPLORER_URLS } from '../constants';
+import { getErrorMessage } from './errors';
 
 export const PROGRAM_ID = API_CONFIG.PROGRAM_ID;
 
@@ -53,7 +54,7 @@ export async function checkProgramExistsV2(): Promise<ProgramStatus> {
     } catch (error) {
         return {
             exists: false,
-            error: error.message || String(error)
+            error: getErrorMessage(error)
         };
     }
 }

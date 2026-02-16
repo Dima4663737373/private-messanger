@@ -3,6 +3,15 @@
 import { logger } from './logger';
 import { ALEO_EXPLORER_URLS } from '../constants';
 
+/** Wallet instance with optional transaction query methods */
+interface WalletInstance {
+  getTransaction?: (uuid: string) => Promise<{ transactionId?: string; id?: string }>;
+  getTransactions?: () => Promise<Array<{ uuid?: string; id?: string; transactionUuid?: string; transactionId?: string; txId?: string }>>;
+  adapter?: {
+    getTransaction?: (uuid: string) => Promise<{ transactionId?: string }>;
+  };
+}
+
 /**
  * Checks if this is real transaction ID (starts with at1)
  */
@@ -24,7 +33,7 @@ export function isWalletUuid(txId: string): boolean {
  * Attempts to get real TX ID from wallet
  */
 export async function getRealTransactionId(
-  wallet: any,
+  wallet: WalletInstance | null,
   transactionUuid: string,
   maxAttempts: number = 30,
   delayMs: number = 1000
@@ -66,7 +75,7 @@ export async function getRealTransactionId(
         try {
           const transactions = await wallet.getTransactions();
           if (Array.isArray(transactions)) {
-            const found = transactions.find((tx: any) => {
+            const found = transactions.find((tx) => {
               const txUuid = tx.uuid || tx.id || tx.transactionUuid;
               return txUuid === transactionUuid;
             });
