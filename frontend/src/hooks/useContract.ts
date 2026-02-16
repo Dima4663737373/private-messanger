@@ -69,10 +69,11 @@ export function useContract() {
         maxRetries: options.maxRetries ?? 1,
       });
 
-      logger.debug('Transaction response:', txId);
+      console.log(`%c✅ ${functionName}%c — ${txId}`, 'color:#10B981;font-weight:bold', 'color:#888');
       return txId;
     } catch (err) {
       const errorMsg = err?.message || 'Transaction failed';
+      console.log(`%c❌ ${functionName}%c — ${errorMsg}`, 'color:#EF4444;font-weight:bold', 'color:#888');
       setError(errorMsg);
       throw err;
     } finally {
