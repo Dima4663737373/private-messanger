@@ -1,18 +1,22 @@
 import { Sequelize, DataTypes, Model } from 'sequelize';
 import path from 'path';
 
-// SQLCipher encryption: set DB_ENCRYPTION_KEY env var to enable
-// If not set, falls back to unencrypted sqlite3
+// SQLCipher encryption: REQUIRED — set DB_ENCRYPTION_KEY env var
 const DB_ENCRYPTION_KEY = process.env.DB_ENCRYPTION_KEY;
 
 let dialectModule: any;
 if (DB_ENCRYPTION_KEY) {
   try {
     dialectModule = require('@journeyapps/sqlcipher');
-    console.log('[DB] SQLCipher module loaded — encryption will be enabled');
-  } catch {
-    console.warn('[DB] DB_ENCRYPTION_KEY set but @journeyapps/sqlcipher not installed — running unencrypted');
+    console.log('[DB] SQLCipher module loaded — encryption enabled');
+  } catch (err) {
+    console.error('[DB] FATAL: DB_ENCRYPTION_KEY is set but @journeyapps/sqlcipher package is not installed!');
+    console.error('[DB] Database MUST be encrypted in production. Install: npm install @journeyapps/sqlcipher');
+    throw new Error('SQLCipher module required but not installed');
   }
+} else {
+  console.warn('[DB] WARNING: DB_ENCRYPTION_KEY not set — database will be UNENCRYPTED');
+  console.warn('[DB] This is ONLY acceptable in development. Set DB_ENCRYPTION_KEY in production!');
 }
 
 const sequelize = new Sequelize({

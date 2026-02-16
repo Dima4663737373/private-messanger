@@ -481,8 +481,11 @@ wss.on('connection', (ws: any) => {
 
   ws.on('close', () => {
     pendingChallenges.delete(ws);
-    // Invalidate session token on disconnect (optional - comment out to keep sessions alive across reconnects)
-    // if (ws.sessionToken) sessions.delete(ws.sessionToken);
+    // Security: invalidate session on disconnect to prevent stolen tokens
+    if (ws.sessionToken) {
+      sessions.delete(ws.sessionToken);
+      console.log(`[WS] Session invalidated for ${ws.authenticatedAddress?.slice(0, 14)}... on disconnect`);
+    }
   });
 });
 
@@ -785,10 +788,17 @@ app.post('/profiles', requireAuth, profileWriteLimiter, async (req: any, res) =>
     const data: any = { address };
 
     if (typeof name === 'string' && name.length > 0) {
-      data.username = name.slice(0, 100);
+      // Validate username: alphanumeric, dash, underscore only (prevent XSS)
+      const sanitizedName = name.replace(/[^a-zA-Z0-9_\- ]/g, '').trim().slice(0, 50);
+      if (sanitizedName.length === 0) {
+        return res.status(400).json({ error: 'Username contains invalid characters' });
+      }
+      data.username = sanitizedName;
     }
     if (typeof bio === 'string' && bio.length > 0) {
-      data.bio = bio.slice(0, 500);
+      // Sanitize bio: strip HTML tags, limit length
+      const sanitizedBio = bio.replace(/<[^>]*>/g, '').trim().slice(0, 500);
+      data.bio = sanitizedBio;
     }
     if (typeof txId === 'string' && txId.length > 0) {
       data.tx_id = txId.slice(0, 200);
@@ -832,6 +842,16 @@ app.post('/profiles', requireAuth, profileWriteLimiter, async (req: any, res) =>
     console.error('POST /profiles error:', e);
     res.status(500).json({ error: 'Profile update failed' });
   }
+});
+
+// --- Logout Endpoint ---
+app.post('/logout', requireAuth, (req: any, res) => {
+  const token = req.headers.authorization?.slice(7);
+  if (token && sessions.has(token)) {
+    sessions.delete(token);
+    console.log(`[Auth] Session invalidated for ${req.authenticatedAddress?.slice(0, 14)}... (logout)`);
+  }
+  res.json({ success: true });
 });
 
 // --- User Preferences ---
@@ -1007,7 +1027,13 @@ app.post('/reactions', requireFullAuth, reactionLimiter, async (req: any, res) =
       defaults: { message_id: messageId.slice(0, 300), user_address: userAddress.slice(0, 100), emoji: emoji.slice(0, 8) }
     });
 
-    // Broadcast reaction to subscribed WebSocket clients
+    // Get message to find sender/recipient
+    const message = await Message.findByPk(messageId);
+    if (!message) {
+      return res.status(404).json({ error: 'Message not found' });
+    }
+
+    // Broadcast reaction only to clients subscribed to this message's dialog
     const allReactions = await Reaction.findAll({ where: { message_id: messageId } });
     const grouped: Record<string, string[]> = {};
     for (const r of allReactions) {
@@ -1017,7 +1043,11 @@ app.post('/reactions', requireFullAuth, reactionLimiter, async (req: any, res) =
 
     wss.clients.forEach((client: any) => {
       if (client.readyState === WebSocket.OPEN) {
-        client.send(JSON.stringify({ type: 'REACTION_UPDATE', payload: { messageId, reactions: grouped } }));
+        const subHash = client.subscribedHash;
+        // Only send to clients subscribed to sender or recipient hash
+        if (subHash && (subHash === message.sender_hash || subHash === message.recipient_hash)) {
+          client.send(JSON.stringify({ type: 'REACTION_UPDATE', payload: { messageId, reactions: grouped } }));
+        }
       }
     });
 
@@ -1039,7 +1069,13 @@ app.delete('/reactions', requireFullAuth, reactionLimiter, async (req: any, res)
       where: { message_id: messageId.slice(0, 300), user_address: userAddress.slice(0, 100), emoji: emoji.slice(0, 8) }
     });
 
-    // Broadcast updated reactions
+    // Get message to find sender/recipient
+    const message = await Message.findByPk(messageId);
+    if (!message) {
+      return res.status(404).json({ error: 'Message not found' });
+    }
+
+    // Broadcast updated reactions only to relevant clients
     const allReactions = await Reaction.findAll({ where: { message_id: messageId } });
     const grouped: Record<string, string[]> = {};
     for (const r of allReactions) {
@@ -1049,7 +1085,11 @@ app.delete('/reactions', requireFullAuth, reactionLimiter, async (req: any, res)
 
     wss.clients.forEach((client: any) => {
       if (client.readyState === WebSocket.OPEN) {
-        client.send(JSON.stringify({ type: 'REACTION_UPDATE', payload: { messageId, reactions: grouped } }));
+        const subHash = client.subscribedHash;
+        // Only send to clients subscribed to sender or recipient hash
+        if (subHash && (subHash === message.sender_hash || subHash === message.recipient_hash)) {
+          client.send(JSON.stringify({ type: 'REACTION_UPDATE', payload: { messageId, reactions: grouped } }));
+        }
       }
     });
 

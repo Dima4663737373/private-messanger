@@ -871,7 +871,10 @@ const InnerApp: React.FC = () => {
       }
 
       // 3. Wallet approved → send off-chain via WebSocket
-      commitDMMessage(prepared, attachmentCID);
+      const sent = commitDMMessage(prepared, attachmentCID);
+      if (!sent) {
+        throw new Error('Failed to send message — WebSocket not connected');
+      }
 
       // 4. Show message in UI
       const newMessage: Message = {
@@ -1877,20 +1880,33 @@ const InnerApp: React.FC = () => {
   );
 };
 
-// @ts-ignore - TypeScript has issues with class components due to useDefineForClassFields
-class ErrorBoundary extends React.Component<{ children: React.ReactNode }, { hasError: boolean; error: Error | null }> {
-  constructor(props: { children: React.ReactNode }) {
-    super(props);
-    // @ts-ignore
-    this.state = { hasError: false, error: null };
-  }
+interface ErrorBoundaryState {
+  hasError: boolean;
+  error: Error | null;
+}
 
-  static getDerivedStateFromError(error: Error) {
+class ErrorBoundary extends React.Component<{ children: React.ReactNode }, ErrorBoundaryState> {
+  state: ErrorBoundaryState = { hasError: false, error: null };
+
+  static getDerivedStateFromError(error: Error): ErrorBoundaryState {
     return { hasError: true, error };
   }
 
+  componentDidMount() {
+    // Catch unhandled promise rejections
+    window.addEventListener('unhandledrejection', (event: PromiseRejectionEvent) => {
+      logger.error('Unhandled promise rejection:', event.reason);
+      // @ts-ignore - setState exists on Component instance
+      this.setState({
+        hasError: true,
+        error: event.reason instanceof Error ? event.reason : new Error(String(event.reason))
+      });
+      event.preventDefault();
+    });
+  }
+
   render() {
-    // @ts-ignore
+    // @ts-ignore - state exists on Component instance
     if (this.state.hasError) {
       return (
         <div className="min-h-screen bg-[#0A0A0A] flex items-center justify-center p-8">
@@ -1911,7 +1927,7 @@ class ErrorBoundary extends React.Component<{ children: React.ReactNode }, { has
         </div>
       );
     }
-    // @ts-ignore
+    // @ts-ignore - props exists on Component instance
     return this.props.children;
   }
 }

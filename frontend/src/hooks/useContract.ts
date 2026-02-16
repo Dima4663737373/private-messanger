@@ -17,9 +17,15 @@ export interface ExecuteTransactionOptions {
   maxRetries?: number;
 }
 
+interface WalletAdapter {
+  requestTransaction: (transaction: any) => Promise<string>;
+  signMessage?: (message: Uint8Array) => Promise<Uint8Array>;
+  requestRecordPlaintexts?: (program: string) => Promise<any>;
+}
+
 export function useContract() {
   const { wallet, publicKey } = useWallet();
-  const adapter = wallet?.adapter as any;
+  const adapter = wallet?.adapter as WalletAdapter | undefined;
   const network = WalletAdapterNetwork.TestnetBeta;
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);

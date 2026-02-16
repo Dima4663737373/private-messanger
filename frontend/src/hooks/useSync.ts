@@ -987,22 +987,31 @@ export function useSync(
   };
 
   // Actually send the prepared message via WebSocket
-  const commitDMMessage = (prepared: NonNullable<Awaited<ReturnType<typeof prepareDMMessage>>>, attachmentCID?: string) => {
-    if (!ws.current || ws.current.readyState !== WebSocket.OPEN || !address) return;
+  const commitDMMessage = (prepared: NonNullable<Awaited<ReturnType<typeof prepareDMMessage>>>, attachmentCID?: string): boolean => {
+    if (!ws.current || ws.current.readyState !== WebSocket.OPEN || !address) {
+      logger.error('Cannot send message: WebSocket not connected');
+      return false;
+    }
 
-    ws.current.send(JSON.stringify({
-      type: 'DM_MESSAGE',
-      sender: address,
-      senderHash: prepared.senderHash,
-      recipientHash: prepared.recipientHash,
-      dialogHash: prepared.dialogHash,
-      encryptedPayload: prepared.encryptedPayload,
-      encryptedPayloadSelf: prepared.encryptedPayloadSelf,
-      timestamp: prepared.timestamp,
-      attachmentPart1: attachmentCID || '',
-      attachmentPart2: '',
-      tempId: prepared.tempId
-    }));
+    try {
+      ws.current.send(JSON.stringify({
+        type: 'DM_MESSAGE',
+        sender: address,
+        senderHash: prepared.senderHash,
+        recipientHash: prepared.recipientHash,
+        dialogHash: prepared.dialogHash,
+        encryptedPayload: prepared.encryptedPayload,
+        encryptedPayloadSelf: prepared.encryptedPayloadSelf,
+        timestamp: prepared.timestamp,
+        attachmentPart1: attachmentCID || '',
+        attachmentPart2: '',
+        tempId: prepared.tempId
+      }));
+      return true;
+    } catch (e) {
+      logger.error('Failed to send WebSocket message:', e);
+      return false;
+    }
   };
 
   // Legacy combined function (prepare + send in one call)

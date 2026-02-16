@@ -9,6 +9,7 @@ import { MessageStatus } from './ui/MessageStatus';
 import { MessageSkeleton } from './ui/Skeleton';
 import { EmptyState } from './ui/EmptyState';
 import { toast } from 'react-hot-toast';
+import DOMPurify from 'dompurify';
 
 const QUICK_EMOJIS = ['👍', '❤️', '😂', '😮', '😢', '🔥'];
 
@@ -225,16 +226,19 @@ const ChatArea: React.FC<ChatAreaProps> = ({
 
   // Render message text with clickable URLs and optional search highlighting
   const renderMessageText = (text: string, isSearchMatch: boolean) => {
+    // Sanitize input first
+    const sanitized = DOMPurify.sanitize(text, { ALLOWED_TAGS: [], KEEP_CONTENT: true });
+
     // Split text by URLs
-    const urlParts = text.split(URL_REGEX);
-    const urls = text.match(URL_REGEX) || [];
+    const urlParts = sanitized.split(URL_REGEX);
+    const urls = sanitized.match(URL_REGEX) || [];
     if (urls.length === 0) {
       // No URLs — just highlight search if needed
-      if (!isSearchMatch || !searchQuery.trim()) return text;
+      if (!isSearchMatch || !searchQuery.trim()) return sanitized;
       const q = searchQuery.trim();
       const regex = new RegExp(`(${q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`, 'gi');
-      const parts = text.split(regex);
-      if (parts.length === 1) return text;
+      const parts = sanitized.split(regex);
+      if (parts.length === 1) return sanitized;
       return parts.map((part, i) =>
         regex.test(part)
           ? <mark key={i} className="bg-[#FF8C00]/40 text-inherit rounded-sm px-0.5">{part}</mark>
@@ -246,8 +250,10 @@ const ChatArea: React.FC<ChatAreaProps> = ({
     urlParts.forEach((part, i) => {
       if (part) elements.push(<React.Fragment key={`t${i}`}>{part}</React.Fragment>);
       if (i < urls.length) {
+        // Sanitize URL to prevent javascript: protocol
+        const safeUrl = urls[i].match(/^https?:\/\//) ? urls[i] : '#';
         elements.push(
-          <a key={`u${i}`} href={urls[i]} target="_blank" rel="noreferrer" className="text-[#3B82F6] underline break-all hover:text-[#2563EB]">
+          <a key={`u${i}`} href={safeUrl} target="_blank" rel="noreferrer" className="text-[#3B82F6] underline break-all hover:text-[#2563EB]">
             {urls[i]}
           </a>
         );
