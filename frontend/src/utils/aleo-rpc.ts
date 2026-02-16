@@ -5,6 +5,7 @@ import { PROGRAM_ID } from '../deployed_program';
 import { logger } from './logger';
 import { aleoSafeFetchMapping } from './safe-fetch';
 import { API_CONFIG } from '../config';
+import { ALEO_RPC_ENDPOINTS, TX_POLL_INTERVAL } from '../constants';
 
 const API_BASE = API_CONFIG.EXPLORER_BASE;
 
@@ -24,9 +25,8 @@ export async function checkProgramExists(
   // Try configured endpoint first, then fallbacks
   const endpointsToTry = [
     API_BASE,
-    'https://api.explorer.aleo.org/v1',
+    ...ALEO_RPC_ENDPOINTS,
     'https://vm.aleo.org/api',
-    'https://api.explorer.provable.com/v1',
     'https://api.explorer.provable.com/v2',
   ];
 
@@ -110,7 +110,7 @@ export async function getMappingValue(
 export async function waitForProgram(
   programId: string = PROGRAM_ID,
   maxAttempts: number = 30,
-  delayMs: number = 10000
+  delayMs: number = TX_POLL_INTERVAL
 ): Promise<boolean> {
   for (let i = 0; i < maxAttempts; i++) {
     logger.debug(`Checking program (attempt ${i + 1}/${maxAttempts})...`);

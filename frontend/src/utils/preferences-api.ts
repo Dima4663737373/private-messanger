@@ -10,6 +10,7 @@
 
 import { safeBackendFetch } from './api-client';
 import { waitForToken } from './auth-store';
+import { PREFERENCES_DEBOUNCE } from '../constants';
 
 export interface UserSettings {
   // Privacy
@@ -127,7 +128,7 @@ export async function updatePreferences(
  *   const debouncedUpdate = createDebouncedUpdater(publicKey);
  *   debouncedUpdate({ pinnedChats: [...] });
  */
-export function createDebouncedUpdater(address: string, delay: number = 1000) {
+export function createDebouncedUpdater(address: string, delay: number = PREFERENCES_DEBOUNCE) {
   let timeoutId: ReturnType<typeof setTimeout> | null = null;
   let pendingUpdates: any = {};
 

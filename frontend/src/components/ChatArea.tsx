@@ -10,6 +10,7 @@ import { MessageSkeleton } from './ui/Skeleton';
 import { EmptyState } from './ui/EmptyState';
 import { toast } from 'react-hot-toast';
 import DOMPurify from 'dompurify';
+import { IPFS_GATEWAY_URL, ADDRESS_DISPLAY, MESSAGE_PREVIEW } from '../constants';
 
 const QUICK_EMOJIS = ['👍', '❤️', '😂', '😮', '😢', '🔥'];
 
@@ -168,7 +169,7 @@ const ChatArea: React.FC<ChatAreaProps> = ({
 
   // Helper: resolve address to display name
   const resolveName = (addr: string) =>
-    addr === currentUserId ? 'You' : (memberNames[addr] || `${addr.slice(0, 10)}...${addr.slice(-6)}`);
+    addr === currentUserId ? 'You' : (memberNames[addr] || `${addr.slice(0, ADDRESS_DISPLAY.FULL_SHORT)}...${addr.slice(-ADDRESS_DISPLAY.SHORT_SUFFIX)}`);
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
 
@@ -494,7 +495,7 @@ const ChatArea: React.FC<ChatAreaProps> = ({
                   : contactLastSeen
                     ? `Last seen ${timeAgo(contactLastSeen)}`
                     : activeChat.address
-                      ? `${activeChat.address.slice(0, 14)}...${activeChat.address.slice(-6)}`
+                      ? `${activeChat.address.slice(0, 14)}...${activeChat.address.slice(-ADDRESS_DISPLAY.SHORT_SUFFIX)}`
                       : activeChat.id}
             </p>
           </div>
@@ -720,7 +721,7 @@ const ChatArea: React.FC<ChatAreaProps> = ({
               ) : (
                 roomMembers.map((addr) => {
                   const name = resolveName(addr);
-                  const initials = memberNames[addr] ? memberNames[addr].slice(0, 2).toUpperCase() : addr.slice(-2).toUpperCase();
+                  const initials = memberNames[addr] ? memberNames[addr].slice(0, ADDRESS_DISPLAY.INITIALS).toUpperCase() : addr.slice(-ADDRESS_DISPLAY.INITIALS).toUpperCase();
                   return (
                   <div key={addr} className="flex items-center gap-3 px-5 py-2.5 hover:bg-[#FAFAFA] transition-colors">
                     <div className="w-8 h-8 rounded-full bg-[#0A0A0A] flex items-center justify-center text-[#FF8C00] text-xs font-bold shrink-0">
@@ -779,7 +780,7 @@ const ChatArea: React.FC<ChatAreaProps> = ({
           <p className="text-xs text-[#666] truncate flex-1">
             <span className="font-bold text-[#FF8C00]">{pinnedMessages.length} pinned</span>
             {' — '}
-            {pinnedMessages[0]?.message_text?.slice(0, 60) || 'message'}
+            {pinnedMessages[0]?.message_text?.slice(0, MESSAGE_PREVIEW.NOTIFICATION) || 'message'}
           </p>
           {onUnpinMessage && (
             <button
@@ -874,7 +875,7 @@ const ChatArea: React.FC<ChatAreaProps> = ({
                             }}
                           >
                             <p className={`text-[10px] font-bold ${msg.isMine ? 'text-[#FF8C00]/80' : 'text-[#FF8C00]'}`}>
-                              {msg.replyToSender === 'me' || msg.replyToSender === currentUserId ? 'You' : (memberNames[msg.replyToSender || ''] || activeChat?.name || msg.replyToSender?.slice(0, 8) || 'User')}
+                              {msg.replyToSender === 'me' || msg.replyToSender === currentUserId ? 'You' : (memberNames[msg.replyToSender || ''] || activeChat?.name || msg.replyToSender?.slice(0, ADDRESS_DISPLAY.MEDIUM) || 'User')}
                             </p>
                             <p className={`text-xs truncate max-w-[200px] ${msg.replyToText === 'Message deleted' ? 'italic opacity-50' : ''} ${msg.isMine ? 'text-white/50' : 'text-[#999]'}`}>
                               {msg.replyToText}
@@ -886,10 +887,10 @@ const ChatArea: React.FC<ChatAreaProps> = ({
                             <div className="mb-2">
                                 {msg.attachment.type === 'image' && msg.attachment.cid !== 'pending...' ? (
                                     <img
-                                        src={msg.attachment.cid.startsWith('Qm') ? `https://ipfs.io/ipfs/${msg.attachment.cid}` : msg.attachment.cid}
+                                        src={msg.attachment.cid.startsWith('Qm') ? `${IPFS_GATEWAY_URL}${msg.attachment.cid}` : msg.attachment.cid}
                                         alt="attachment"
                                         className="rounded-lg max-w-full h-auto max-h-[200px] cursor-pointer hover:opacity-90"
-                                        onClick={() => window.open(msg.attachment?.cid.startsWith('Qm') ? `https://ipfs.io/ipfs/${msg.attachment?.cid}` : msg.attachment?.cid, '_blank')}
+                                        onClick={() => window.open(msg.attachment?.cid.startsWith('Qm') ? `${IPFS_GATEWAY_URL}${msg.attachment?.cid}` : msg.attachment?.cid, '_blank')}
                                     />
                                 ) : (
                                     <div className={`flex items-center gap-3 p-2 rounded-lg ${msg.isMine ? 'bg-white/10' : 'bg-black/5'}`}>
@@ -902,7 +903,7 @@ const ChatArea: React.FC<ChatAreaProps> = ({
                                         </div>
                                         {msg.attachment.cid !== 'pending...' && (
                                             <a
-                                                href={msg.attachment.cid.startsWith('Qm') ? `https://ipfs.io/ipfs/${msg.attachment.cid}` : '#'}
+                                                href={msg.attachment.cid.startsWith('Qm') ? `${IPFS_GATEWAY_URL}${msg.attachment.cid}` : '#'}
                                                 target="_blank"
                                                 rel="noreferrer"
                                                 className={`p-2 rounded-lg transition-colors ml-2 ${msg.isMine ? 'hover:bg-white/20' : 'hover:bg-black/10'}`}
@@ -916,7 +917,7 @@ const ChatArea: React.FC<ChatAreaProps> = ({
                         )}
                         {roomChat && !msg.isMine && (msg.senderId || msg.senderHash) && (
                           <p className="text-[11px] font-bold text-[#FF8C00] mb-1">
-                            {memberNames[msg.senderId || ''] || msg.senderHash || msg.senderId?.slice(0, 10)}
+                            {memberNames[msg.senderId || ''] || msg.senderHash || msg.senderId?.slice(0, ADDRESS_DISPLAY.FULL_SHORT)}
                           </p>
                         )}
                         <p className="text-[15px] leading-relaxed">{renderMessageText(msg.text, isSearchMatch)}</p>
@@ -1077,7 +1078,7 @@ const ChatArea: React.FC<ChatAreaProps> = ({
                 <p className="text-xs font-bold text-[#FF8C00]">
                   {replyingTo.sender === 'me' || replyingTo.sender === currentUserId
                     ? 'Replying to yourself'
-                    : `Replying to ${memberNames[replyingTo.sender] || activeChat?.name || replyingTo.sender.slice(0, 10) + '...'}`}
+                    : `Replying to ${memberNames[replyingTo.sender] || activeChat?.name || replyingTo.sender.slice(0, ADDRESS_DISPLAY.FULL_SHORT) + '...'}`}
                 </p>
                 <p className="text-xs text-[#999] truncate max-w-[300px]">{replyingTo.text}</p>
               </div>

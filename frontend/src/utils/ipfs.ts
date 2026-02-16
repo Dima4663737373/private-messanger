@@ -1,4 +1,5 @@
 import { logger } from './logger';
+import { IPFS_UPLOAD_RETRY_DELAY } from '../constants';
 
 export async function uploadFileToIPFS(file: File): Promise<string> {
   const PINATA_JWT = import.meta.env.VITE_PINATA_JWT;
@@ -35,7 +36,7 @@ export async function uploadFileToIPFS(file: File): Promise<string> {
   }
 
   logger.info("Mock IPFS Upload (dev):", file.name);
-  await new Promise(resolve => setTimeout(resolve, 500));
+  await new Promise(resolve => setTimeout(resolve, IPFS_UPLOAD_RETRY_DELAY));
   const mockCID = "Qm" + Array.from(crypto.getRandomValues(new Uint8Array(12)), b => b.toString(36)).join('').slice(0, 26);
   return mockCID;
 }

@@ -14,6 +14,7 @@
 import nacl from 'tweetnacl';
 import { encodeBase64, decodeBase64, decodeUTF8 } from 'tweetnacl-util';
 import { generateKeyPair } from './crypto';
+import { KEY_CACHE_TTL } from '../constants';
 
 export interface EncryptionKeyPair {
   publicKey: string;  // Base64-encoded
@@ -21,8 +22,6 @@ export interface EncryptionKeyPair {
 }
 
 // --- Memory Cache with TTL ---
-
-const KEY_CACHE_TTL = 4 * 60 * 60 * 1000; // 4 hours
 
 interface CachedEntry {
   keys: EncryptionKeyPair;

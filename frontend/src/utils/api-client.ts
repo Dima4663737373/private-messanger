@@ -1,6 +1,7 @@
 import { API_CONFIG } from '../config';
 import { logger } from './logger';
 import { getSessionToken } from './auth-store';
+import { API_TIMEOUT } from '../constants';
 
 interface SafeFetchOptions {
   method?: string;
@@ -26,12 +27,12 @@ export async function safeBackendFetch<T>(
   endpoint: string, 
   options: SafeFetchOptions = {}
 ): Promise<ApiResponse<T>> {
-  const { 
-    method = 'GET', 
-    body, 
-    headers = {}, 
-    retries = 1, 
-    timeout = 5000,
+  const {
+    method = 'GET',
+    body,
+    headers = {},
+    retries = 1,
+    timeout = API_TIMEOUT,
     mockFallback
   } = options;
 

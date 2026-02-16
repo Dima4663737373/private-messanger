@@ -29,15 +29,22 @@ import { safeBackendFetch } from './utils/api-client';
 import { playNotificationSound } from './utils/notification-sound';
 // lucide icons removed - FAB is now in Sidebar
 import ProfileView from './components/ProfileView';
+import {
+  UI_AVATARS_BASE_URL,
+  ADDRESS_DISPLAY,
+  MESSAGE_PREVIEW,
+  MAX_FILE_SIZE,
+  MAX_FILENAME_LENGTH
+} from './constants';
 
-const GENERIC_AVATAR = 'https://ui-avatars.com/api/?name=?&background=888&color=fff';
+const GENERIC_AVATAR = `${UI_AVATARS_BASE_URL}?name=?&background=888&color=fff`;
 
 const mapContactToChat = (contact: Contact, isActive: boolean): Chat => ({
   id: contact.id,
   name: contact.name,
   avatar: contact.hideAvatar
     ? GENERIC_AVATAR
-    : `https://ui-avatars.com/api/?name=${encodeURIComponent(contact.name)}&background=random&color=fff`,
+    : `${UI_AVATARS_BASE_URL}?name=${encodeURIComponent(contact.name)}&background=random&color=fff`,
   status: 'offline',
   lastMessage: contact.lastMessage || 'No messages yet',
   time: contact.lastMessageTime ? new Date(contact.lastMessageTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '',
@@ -166,7 +173,7 @@ const InnerApp: React.FC = () => {
 
   const pushNotification = React.useCallback((type: AppNotification['type'], title: string, body: string, chatId?: string) => {
     const notif: AppNotification = {
-      id: `notif_${Date.now()}_${Array.from(crypto.getRandomValues(new Uint8Array(4)), b => b.toString(36)).join('').slice(0, 6)}`,
+      id: `notif_${Date.now()}_${Array.from(crypto.getRandomValues(new Uint8Array(4)), b => b.toString(36)).join('').slice(0, ADDRESS_DISPLAY.SHORT_PREFIX)}`,
       type,
       title,
       body,
@@ -174,7 +181,7 @@ const InnerApp: React.FC = () => {
       read: false,
       chatId,
     };
-    setNotifications(prev => [notif, ...prev].slice(0, 200)); // Keep max 200
+    setNotifications(prev => [notif, ...prev].slice(0, MESSAGE_PREVIEW.MAX_NOTIFICATIONS));
   }, []);
 
   // SYNC
@@ -205,7 +212,7 @@ const InnerApp: React.FC = () => {
       // Push to notification center for incoming messages
       if (!msg.isMine) {
         const preview = settingsRef.current.notifPreview
-          ? (msg.text.length > 80 ? msg.text.slice(0, 80) + '...' : msg.text)
+          ? (msg.text.length > MESSAGE_PREVIEW.CHAT_LIST ? msg.text.slice(0, MESSAGE_PREVIEW.CHAT_LIST) + '...' : msg.text)
           : 'New encrypted message';
         pushNotification('message', 'New message', preview, counterpartyAddress);
       }
@@ -213,7 +220,7 @@ const InnerApp: React.FC = () => {
       // Browser Notification when tab is not focused
       if (!msg.isMine && document.hidden && Notification.permission === 'granted') {
         const body = settingsRef.current.notifPreview
-          ? (msg.text.length > 60 ? msg.text.slice(0, 60) + '...' : msg.text)
+          ? (msg.text.length > MESSAGE_PREVIEW.NOTIFICATION ? msg.text.slice(0, MESSAGE_PREVIEW.NOTIFICATION) + '...' : msg.text)
           : 'New encrypted message';
         new Notification('Ghost Messenger', {
           body,
@@ -234,7 +241,7 @@ const InnerApp: React.FC = () => {
         // Create new contact
         const newContact: Contact = {
           id: counterpartyAddress,
-          name: `User ${counterpartyAddress.slice(0, 6)}...`,
+          name: `User ${counterpartyAddress.slice(0, ADDRESS_DISPLAY.SHORT_PREFIX)}...`,
           address: counterpartyAddress,
           dialogHash: msg.dialogHash,
           description: 'Discovered from network',
@@ -471,7 +478,7 @@ const InnerApp: React.FC = () => {
     setContacts(prev => prev.map(c => {
       if (c.address !== addr) return c;
       const updates: Partial<Contact> = {};
-      if (username) { updates.name = username; updates.initials = username.slice(0, 2).toUpperCase(); }
+      if (username) { updates.name = username; updates.initials = username.slice(0, ADDRESS_DISPLAY.INITIALS).toUpperCase(); }
       if (typeof showAvatar === 'boolean') { updates.hideAvatar = !showAvatar; }
       return { ...c, ...updates };
     }));
@@ -552,7 +559,7 @@ const InnerApp: React.FC = () => {
           address: sc.address,
           description: 'Saved contact',
           context: 'Saved',
-          initials: sc.name.slice(0, 2).toUpperCase(),
+          initials: sc.name.slice(0, ADDRESS_DISPLAY.INITIALS).toUpperCase(),
           unreadCount: 0
         }));
         setContacts(restored);
@@ -579,18 +586,18 @@ const InnerApp: React.FC = () => {
           const counterpartyAddress = isMine ? dialogMsg.recipient : dialogMsg.sender;
 
           let finalAddress = counterpartyAddress;
-          let displayName = `User ${counterpartyAddress.slice(0, 6)}...`;
+          let displayName = `User ${counterpartyAddress.slice(0, ADDRESS_DISPLAY.SHORT_PREFIX)}...`;
 
           // If recipient is 'unknown', try to resolve from recipientHash
           if (counterpartyAddress === 'unknown' && isMine && dialogMsg.recipient_hash) {
             const { data: hashProfile } = await safeBackendFetch<any>(`profiles/hash/${dialogMsg.recipient_hash}`);
             if (hashProfile?.exists && hashProfile.profile?.address) {
               finalAddress = hashProfile.profile.address;
-              displayName = hashProfile.profile.username || `User ${finalAddress.slice(0, 6)}...`;
+              displayName = hashProfile.profile.username || `User ${finalAddress.slice(0, ADDRESS_DISPLAY.SHORT_PREFIX)}...`;
             } else {
               // Use dialog hash as fallback ID so chat is visible
               finalAddress = dialogMsg.dialog_hash || `hash:${dialogMsg.recipient_hash}`;
-              displayName = `User ${dialogMsg.recipient_hash.slice(0, 8)}...`;
+              displayName = `User ${dialogMsg.recipient_hash.slice(0, ADDRESS_DISPLAY.MEDIUM)}...`;
             }
           }
 
@@ -661,7 +668,7 @@ const InnerApp: React.FC = () => {
           const isMine = dialogMsg.sender === publicKey;
           if (!isMine && dialogMsg.timestamp > oneDayAgo) {
             const preview = dialogMsg.text && dialogMsg.text !== 'Encrypted Message'
-              ? (dialogMsg.text.length > 80 ? dialogMsg.text.slice(0, 80) + '...' : dialogMsg.text)
+              ? (dialogMsg.text.length > 80 ? dialogMsg.text.slice(0, MESSAGE_PREVIEW.CHAT_LIST) + '...' : dialogMsg.text)
               : 'New encrypted message';
             const senderAddr = dialogMsg.sender;
             pushNotification('message', 'Message received', preview, senderAddr);
@@ -850,14 +857,13 @@ const InnerApp: React.FC = () => {
       let attachmentCID: string | undefined;
       if (file) {
         // Validate file size (max 100MB)
-        const MAX_FILE_SIZE = 100 * 1024 * 1024;
         if (file.size > MAX_FILE_SIZE) {
           toast.error(`File too large: ${(file.size / 1024 / 1024).toFixed(1)}MB (max 100MB)`);
           return;
         }
         // Validate file name length
-        if (file.name.length > 255) {
-          toast.error('File name too long (max 255 characters)');
+        if (file.name.length > MAX_FILENAME_LENGTH) {
+          toast.error(`File name too long (max ${MAX_FILENAME_LENGTH} characters)`);
           return;
         }
         toast.loading("Uploading attachment to IPFS...", { id: "ipfs-upload" });
@@ -932,7 +938,7 @@ const InnerApp: React.FC = () => {
       if (txId) {
         logger.debug('On-chain message txId:', txId);
         toast.success('Message sent');
-        pushNotification('transaction', 'Transaction confirmed', `Message sent on-chain (${txId.slice(0, 12)}...)`);
+        pushNotification('transaction', 'Transaction confirmed', `Message sent on-chain (${txId.slice(0, ADDRESS_DISPLAY.TX_ID)}...)`);
       }
     } catch (error) {
       logger.error("Failed to send message", error);
@@ -972,7 +978,7 @@ const InnerApp: React.FC = () => {
       address,
       description: 'Added via contacts',
       context: 'Manual add',
-      initials: name.slice(0, 2).toUpperCase(),
+      initials: name.slice(0, ADDRESS_DISPLAY.INITIALS).toUpperCase(),
       unreadCount: 0
     };
 
@@ -996,7 +1002,7 @@ const InnerApp: React.FC = () => {
     }
 
     setContacts(prev =>
-      prev.map(c => c.id === id ? { ...c, name: newName, initials: newName.slice(0, 2).toUpperCase() } : c)
+      prev.map(c => c.id === id ? { ...c, name: newName, initials: newName.slice(0, ADDRESS_DISPLAY.INITIALS).toUpperCase() } : c)
     );
     toast.success('Contact renamed');
   };
@@ -1810,11 +1816,11 @@ const InnerApp: React.FC = () => {
                       className="w-full flex items-center gap-3 p-2 rounded-xl hover:bg-[#2A2A2A] transition-colors text-left"
                     >
                       <div className="w-8 h-8 bg-[#2A2A2A] rounded-full flex items-center justify-center text-xs text-[#FF8C00] font-bold shrink-0">
-                        {c.initials || c.name.slice(0, 2).toUpperCase()}
+                        {c.initials || c.name.slice(0, ADDRESS_DISPLAY.INITIALS).toUpperCase()}
                       </div>
                       <div className="min-w-0">
                         <p className="text-white text-sm font-medium truncate">{c.name}</p>
-                        <p className="text-[#666] text-xs font-mono truncate">{c.address ? `${c.address.slice(0, 10)}...` : ''}</p>
+                        <p className="text-[#666] text-xs font-mono truncate">{c.address ? `${c.address.slice(0, ADDRESS_DISPLAY.FULL_SHORT)}...` : ''}</p>
                       </div>
                     </button>
                   ))}
@@ -1838,7 +1844,7 @@ const InnerApp: React.FC = () => {
               onChange={e => setNewMsgName(e.target.value)}
               onKeyDown={e => {
                 if (e.key === 'Enter' && newMsgAddress.startsWith('aleo1') && newMsgAddress.length >= 60) {
-                  const name = newMsgName.trim() || `User ${newMsgAddress.slice(0, 6)}...`;
+                  const name = newMsgName.trim() || `User ${newMsgAddress.slice(0, ADDRESS_DISPLAY.SHORT_PREFIX)}...`;
                   if (!contacts.some(c => c.address === newMsgAddress)) {
                     handleAddContact(newMsgAddress, name);
                   }
@@ -1857,7 +1863,7 @@ const InnerApp: React.FC = () => {
               <button
                 onClick={() => {
                   if (newMsgAddress.startsWith('aleo1') && newMsgAddress.length >= 60) {
-                    const name = newMsgName.trim() || `User ${newMsgAddress.slice(0, 6)}...`;
+                    const name = newMsgName.trim() || `User ${newMsgAddress.slice(0, ADDRESS_DISPLAY.SHORT_PREFIX)}...`;
                     if (!contacts.some(c => c.address === newMsgAddress)) {
                       handleAddContact(newMsgAddress, name);
                     }

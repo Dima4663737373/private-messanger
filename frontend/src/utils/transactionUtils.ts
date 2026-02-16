@@ -1,6 +1,7 @@
 // Utilities for checking transaction status and getting real TX ID
 
 import { logger } from './logger';
+import { ALEO_EXPLORER_URLS } from '../constants';
 
 /**
  * Checks if this is real transaction ID (starts with at1)
@@ -116,12 +117,12 @@ export async function getRealTransactionId(
 /**
  * Gets URL to view transaction in explorer
  */
-export function getTransactionExplorerUrl(txId: string, network: string = 'testnet'): string {
+export function getTransactionExplorerUrl(txId: string, network: 'testnet' | 'mainnet' = 'testnet'): string {
   if (!txId) return '';
-  
+
   if (isRealTransactionId(txId)) {
-    return `https://${network}.aleoscan.io/transaction/${txId}`;
+    return `${ALEO_EXPLORER_URLS[network]}/transaction/${txId}`;
   }
-  
+
   return '';
 }
