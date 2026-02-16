@@ -1686,6 +1686,14 @@ const InnerApp: React.FC = () => {
             }}
             onSearchNetwork={searchProfiles}
             onViewProfile={setViewingProfile}
+            onMessageUser={(address, name) => {
+              const existing = contacts.find(c => c.address === address);
+              if (!existing) {
+                handleAddContact(address, name);
+              }
+              setActiveChatId(address);
+              setCurrentView('chats');
+            }}
           />
         )}
 

@@ -391,6 +391,8 @@ const ChatArea: React.FC<ChatAreaProps> = ({
   };
 
   const submitEdit = async (msg: Message) => {
+      // Don't submit if text is empty or unchanged
+      if (!editContent.trim() || editContent.trim() === msg.text) return;
       if (roomChat && onEditRoomMessage) {
           onEditRoomMessage(msg.id, editContent);
           setEditingMessageId(null);
@@ -856,7 +858,7 @@ const ChatArea: React.FC<ChatAreaProps> = ({
                         />
                         <div className="flex justify-end gap-2 mt-1">
                             <button onClick={cancelEdit} className="p-1 hover:bg-white/10 rounded"><X size={14} /></button>
-                            <button onClick={() => submitEdit(msg)} className="p-1 hover:bg-white/10 rounded text-[#10B981]"><Check size={14} /></button>
+                            <button onClick={() => submitEdit(msg)} disabled={!editContent.trim() || editContent.trim() === msg.text} className="p-1 hover:bg-white/10 rounded text-[#10B981] disabled:opacity-30 disabled:cursor-not-allowed"><Check size={14} /></button>
                         </div>
                     </div>
                 ) : (

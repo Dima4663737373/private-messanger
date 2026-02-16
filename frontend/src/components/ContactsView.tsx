@@ -15,9 +15,10 @@ interface ContactsViewProps {
   onSelectContact: (id: string) => void;
   onSearchNetwork?: (query: string) => Promise<NetworkProfile[]>;
   onViewProfile?: (contact: Contact | NetworkProfile) => void;
+  onMessageUser?: (address: string, name: string) => void;
 }
 
-const ContactsView: React.FC<ContactsViewProps> = ({ contacts, onAddContact, onEditContact, onDeleteContact, onSelectContact, onSearchNetwork, onViewProfile }) => {
+const ContactsView: React.FC<ContactsViewProps> = ({ contacts, onAddContact, onEditContact, onDeleteContact, onSelectContact, onSearchNetwork, onViewProfile, onMessageUser }) => {
   const [isAdding, setIsAdding] = useState(false);
   const [newAddress, setNewAddress] = useState('');
   const [newName, setNewName] = useState('');
@@ -200,17 +201,27 @@ const ContactsView: React.FC<ContactsViewProps> = ({ contacts, onAddContact, onE
                           <p className="text-[#777] font-mono text-xs mt-1">{searchQuery.slice(0, 10)}...{searchQuery.slice(-5)}</p>
                         </div>
                       </div>
-                      <button 
-                        onClick={() => {
-                          // Open manual add modal with pre-filled address
-                          setNewAddress(searchQuery);
-                          setNewName(''); 
-                          setIsAdding(true);
-                        }}
-                        className="bg-[#0A0A0A] text-white p-3 rounded-xl hover:bg-[#FF8C00] hover:text-black transition-colors"
-                      >
-                        <UserPlus size={20} />
-                      </button>
+                      <div className="flex gap-2">
+                        {onMessageUser && (
+                          <button
+                            onClick={() => onMessageUser(searchQuery, 'Unknown User')}
+                            className="bg-[#FF8C00] text-black p-3 rounded-xl hover:bg-[#FF6B00] transition-colors btn-press"
+                            title="Send message"
+                          >
+                            <MessageSquare size={20} />
+                          </button>
+                        )}
+                        <button
+                          onClick={() => {
+                            setNewAddress(searchQuery);
+                            setNewName('');
+                            setIsAdding(true);
+                          }}
+                          className="bg-[#0A0A0A] text-white p-3 rounded-xl hover:bg-[#FF8C00] hover:text-black transition-colors"
+                        >
+                          <UserPlus size={20} />
+                        </button>
+                      </div>
                     </div>
                  )}
 
@@ -242,7 +253,16 @@ const ContactsView: React.FC<ContactsViewProps> = ({ contacts, onAddContact, onE
                           <Info size={20} />
                         </button>
                       )}
-                      <button 
+                      {onMessageUser && (
+                        <button
+                          onClick={() => onMessageUser(profile.address, profile.username || 'Unknown')}
+                          className="p-3 bg-[#FF8C00] text-black rounded-xl hover:bg-[#FF6B00] transition-colors btn-press"
+                          title="Send message"
+                        >
+                          <MessageSquare size={20} />
+                        </button>
+                      )}
+                      <button
                         onClick={() => {
                           if (!added) {
                             onAddContact(profile.address, profile.username);
@@ -251,8 +271,8 @@ const ContactsView: React.FC<ContactsViewProps> = ({ contacts, onAddContact, onE
                         }}
                         disabled={added}
                         className={`p-3 rounded-xl transition-colors ${
-                            added 
-                            ? 'bg-[#E5E5E5] text-[#999] cursor-default' 
+                            added
+                            ? 'bg-[#E5E5E5] text-[#999] cursor-default'
                             : 'bg-[#0A0A0A] text-white hover:bg-[#FF8C00] hover:text-black'
                         }`}
                       >
@@ -305,7 +325,8 @@ const ContactsView: React.FC<ContactsViewProps> = ({ contacts, onAddContact, onE
                   onChange={(e) => setEditName(e.target.value)}
                   autoFocus
                   onKeyDown={(e) => {
-                    if (e.key === 'Enter' && editName.trim()) {
+                    const originalName = contacts.find(c => c.id === editingId)?.name || '';
+                    if (e.key === 'Enter' && editName.trim() && editName.trim() !== originalName) {
                       onEditContact(editingId, editName.trim());
                       setEditingId(null);
                     }
@@ -318,14 +339,15 @@ const ContactsView: React.FC<ContactsViewProps> = ({ contacts, onAddContact, onE
 
               <button
                 onClick={() => {
-                  if (editName.trim()) {
+                  const originalName = contacts.find(c => c.id === editingId)?.name || '';
+                  if (editName.trim() && editName.trim() !== originalName) {
                     onEditContact(editingId, editName.trim());
                     setEditingId(null);
-                  } else {
+                  } else if (!editName.trim()) {
                     toast.error('Name cannot be empty');
                   }
                 }}
-                disabled={!editName.trim()}
+                disabled={!editName.trim() || editName.trim() === (contacts.find(c => c.id === editingId)?.name || '')}
                 className="w-full bg-[#0A0A0A] text-white py-4 rounded-xl font-bold hover:bg-[#FF8C00] hover:text-black transition-all disabled:opacity-50 disabled:cursor-not-allowed mt-4 btn-press hover:shadow-lg hover:shadow-[#FF8C00]/20"
               >
                 Save
