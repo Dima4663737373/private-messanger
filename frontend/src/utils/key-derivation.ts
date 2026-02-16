@@ -15,6 +15,7 @@ import nacl from 'tweetnacl';
 import { encodeBase64, decodeBase64, decodeUTF8 } from 'tweetnacl-util';
 import { generateKeyPair } from './crypto';
 import { KEY_CACHE_TTL } from '../constants';
+import { logger } from './logger';
 
 export interface EncryptionKeyPair {
   publicKey: string;  // Base64-encoded
@@ -103,10 +104,10 @@ export function clearSessionKeys(publicKey?: string): void {
         localStorage.removeItem('ghost_deleted_chats_' + publicKey);
         localStorage.removeItem('ghost_disappear_' + publicKey);
         localStorage.removeItem('ghost_msg_keys_' + publicKey);
-        console.log(`[Keys] Cleaned old localStorage keys for ${publicKey.slice(0, 14)}...`);
+        logger.debug(`[Keys] Cleaned old localStorage keys for ${publicKey.slice(0, 14)}...`);
       }
     } catch (e) {
-      console.warn('[Keys] Failed to clean old localStorage:', e);
+      logger.warn('[Keys] Failed to clean old localStorage:', e);
     }
   } catch { /* ignore */ }
 }
@@ -185,7 +186,7 @@ export async function getOrDeriveKeys(
       if (e?.message?.includes('cancel') || e?.message?.includes('denied') || e?.message?.includes('rejected')) {
         throw e;
       }
-      console.warn('signMessage derivation failed:', e?.message);
+      logger.warn('signMessage derivation failed:', e?.message);
     }
   }
 

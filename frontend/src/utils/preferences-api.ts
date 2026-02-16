@@ -11,6 +11,7 @@
 import { safeBackendFetch } from './api-client';
 import { waitForToken } from './auth-store';
 import { PREFERENCES_DEBOUNCE } from '../constants';
+import { logger } from './logger';
 
 export interface UserSettings {
   // Privacy
@@ -107,7 +108,7 @@ export async function updatePreferences(
   try {
     await waitForToken();
   } catch {
-    console.error('updatePreferences: auth token not available');
+    logger.error('updatePreferences: auth token not available');
     return false;
   }
   const { error } = await safeBackendFetch(`/preferences/${address}`, {
@@ -115,7 +116,7 @@ export async function updatePreferences(
     body: updates,
   });
   if (error) {
-    console.error('updatePreferences error:', error);
+    logger.error('updatePreferences error:', error);
     return false;
   }
   return true;
