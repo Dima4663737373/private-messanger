@@ -303,6 +303,34 @@ export function useSync(
                 setSessionToken(data.token);
               }
               setIsConnected(true);
+
+              // Step 2c: If session is limited (requiresProfile), auto-register profile
+              // to upgrade the session to full access
+              if (data.requiresProfile) {
+                logger.info('Limited session — auto-registering profile to upgrade...');
+                const keys = getCachedKeys(address);
+                if (keys?.publicKey) {
+                  let addrHash = '';
+                  try { addrHash = hashAddress(address); } catch { /* ignore */ }
+                  safeBackendFetch('profiles', {
+                    method: 'POST',
+                    body: {
+                      address,
+                      encryptionPublicKey: keys.publicKey,
+                      addressHash: addrHash,
+                    }
+                  }).then(res => {
+                    if (res.error) {
+                      logger.warn('Auto profile registration failed:', res.error);
+                    } else {
+                      logger.info('Session upgraded to full access');
+                    }
+                  }).catch(e => logger.error('Auto profile registration error:', e));
+                } else {
+                  logger.warn('No encryption keys cached — cannot upgrade session');
+                }
+              }
+
               // Step 3: Subscribe to channels after successful auth
               try {
                 const addressHash = hashAddress(address);

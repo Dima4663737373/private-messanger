@@ -1051,8 +1051,8 @@ app.get('/reactions/:messageId', async (req, res) => {
   }
 });
 
-// POST /reactions — add a reaction (requires full auth)
-app.post('/reactions', requireFullAuth, reactionLimiter, async (req: any, res) => {
+// POST /reactions — add a reaction
+app.post('/reactions', requireAuth, reactionLimiter, async (req: any, res) => {
   try {
     const userAddress = req.authenticatedAddress; // Use authenticated address
     const { messageId, emoji } = req.body;
@@ -1095,8 +1095,8 @@ app.post('/reactions', requireFullAuth, reactionLimiter, async (req: any, res) =
   }
 });
 
-// DELETE /reactions — remove a reaction (requires full auth)
-app.delete('/reactions', requireFullAuth, reactionLimiter, async (req: any, res) => {
+// DELETE /reactions — remove a reaction
+app.delete('/reactions', requireAuth, reactionLimiter, async (req: any, res) => {
   try {
     const userAddress = req.authenticatedAddress; // Use authenticated address
     const { messageId, emoji } = req.body;
@@ -1150,8 +1150,8 @@ app.get('/status', async (_req, res) => {
 
 // --- DM Message Delete / Edit ---
 
-// DELETE /messages/:id — delete a DM message off-chain (requires full auth)
-app.delete('/messages/:id', requireFullAuth, async (req: any, res) => {
+// DELETE /messages/:id — delete a DM message off-chain
+app.delete('/messages/:id', requireAuth, async (req: any, res) => {
   try {
     const { id } = req.params;
     const address = req.authenticatedAddress; // Use authenticated address
@@ -1180,8 +1180,8 @@ app.delete('/messages/:id', requireFullAuth, async (req: any, res) => {
   }
 });
 
-// POST /messages/:id/edit — edit a DM message off-chain (requires full auth)
-app.post('/messages/:id/edit', requireFullAuth, async (req: any, res) => {
+// POST /messages/:id/edit — edit a DM message off-chain
+app.post('/messages/:id/edit', requireAuth, async (req: any, res) => {
   try {
     const { id } = req.params;
     const address = req.authenticatedAddress; // Use authenticated address
@@ -1588,8 +1588,8 @@ app.get('/pins/:contextId', async (req, res) => {
   }
 });
 
-// POST /pins — pin a message (requires full auth)
-app.post('/pins', requireFullAuth, async (req: any, res) => {
+// POST /pins — pin a message
+app.post('/pins', requireAuth, async (req: any, res) => {
   try {
     const pinnedBy = req.authenticatedAddress; // Use authenticated address
     const { contextId, messageId, messageText } = req.body;
@@ -1616,8 +1616,8 @@ app.post('/pins', requireFullAuth, async (req: any, res) => {
   }
 });
 
-// DELETE /pins — unpin a message (requires full auth)
-app.delete('/pins', requireFullAuth, async (req: any, res) => {
+// DELETE /pins — unpin a message
+app.delete('/pins', requireAuth, async (req: any, res) => {
   try {
     const { contextId, messageId } = req.body;
     if (!contextId || !messageId) return res.status(400).json({ error: 'Missing fields' });
