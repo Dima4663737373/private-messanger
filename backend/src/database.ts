@@ -10,18 +10,19 @@ let usingSQLite = false;
 
 if (DATABASE_URL) {
   // PostgreSQL — persistent storage (Railway, Supabase, etc.)
+  // Railway internal network (.railway.internal) and localhost don't use SSL
+  const noSSL = DATABASE_URL.includes('localhost') || DATABASE_URL.includes('.railway.internal');
   sequelize = new Sequelize(DATABASE_URL, {
     dialect: 'postgres',
     logging: false,
-    dialectOptions: {
-      ssl: DATABASE_URL.includes('localhost') ? false : {
-        require: true,
-        rejectUnauthorized: false,
+    ...(noSSL ? {} : {
+      dialectOptions: {
+        ssl: { require: true, rejectUnauthorized: false },
       },
-    },
+    }),
     pool: { max: 10, min: 2, acquire: 30000, idle: 10000 },
   });
-  console.log('[DB] Using PostgreSQL (persistent storage)');
+  console.log(`[DB] Using PostgreSQL (persistent storage, SSL: ${!noSSL})`);
 } else {
   // SQLite — local development only
   usingSQLite = true;

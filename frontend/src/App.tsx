@@ -26,7 +26,6 @@ import { generateKeyPair } from './utils/crypto';
 import { fetchPreferences, updatePreferences } from './utils/preferences-api';
 import { safeBackendFetch } from './utils/api-client';
 import { playNotificationSound } from './utils/notification-sound';
-import { getAllCachedHistories, cacheMessages, clearCachedMessages } from './utils/message-cache';
 // lucide icons removed - FAB is now in Sidebar
 import ProfileView from './components/ProfileView';
 import {
@@ -143,24 +142,7 @@ const InnerApp: React.FC = () => {
   // Data State
   const [chats, setChats] = useState<Chat[]>([]);
   const [histories, setHistories] = useState<Record<string, Message[]>>({});
-  const [myProfile, setMyProfileRaw] = useState<{username?: string, bio?: string} | null>(null);
-  const setMyProfile = React.useCallback((profile: {username?: string, bio?: string} | null) => {
-    setMyProfileRaw(profile);
-    try {
-      if (publicKey && profile) {
-        sessionStorage.setItem('ghost_profile_' + publicKey, JSON.stringify(profile));
-      }
-    } catch { /* ignore */ }
-  }, [publicKey]);
-
-  // Restore cached profile when wallet connects (instant display before backend sync)
-  useEffect(() => {
-    if (!publicKey || myProfile) return;
-    try {
-      const cached = sessionStorage.getItem('ghost_profile_' + publicKey);
-      if (cached) setMyProfileRaw(JSON.parse(cached));
-    } catch { /* ignore */ }
-  }, [publicKey, myProfile]);
+  const [myProfile, setMyProfile] = useState<{username?: string, bio?: string} | null>(null);
   const [viewingProfile, setViewingProfile] = useState<Contact | NetworkProfile | null>(null);
 
   // Room State (Channels & Groups)
@@ -722,38 +704,6 @@ const InnerApp: React.FC = () => {
     return () => clearTimeout(timer);
   }, []);
 
-  // Load cached message histories from IndexedDB on startup (instant display)
-  useEffect(() => {
-    if (!publicKey) return;
-    getAllCachedHistories().then(cached => {
-      if (Object.keys(cached).length > 0) {
-        setHistories(prev => {
-          // Only fill chats that are still empty (don't overwrite fresh data)
-          const merged = { ...cached };
-          for (const chatId in prev) {
-            if (prev[chatId].length > 0) merged[chatId] = prev[chatId];
-          }
-          return merged;
-        });
-        logger.debug(`[Cache] Restored ${Object.keys(cached).length} chat histories from IndexedDB`);
-      }
-    });
-  }, [publicKey]);
-
-  // Persist histories to IndexedDB whenever they change (debounced)
-  const historiesCacheTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  useEffect(() => {
-    if (!publicKey) return;
-    if (historiesCacheTimer.current) clearTimeout(historiesCacheTimer.current);
-    historiesCacheTimer.current = setTimeout(() => {
-      for (const chatId in histories) {
-        if (histories[chatId].length > 0) {
-          cacheMessages(chatId, histories[chatId]);
-        }
-      }
-    }, 2000);
-    return () => { if (historiesCacheTimer.current) clearTimeout(historiesCacheTimer.current); };
-  }, [histories, publicKey]);
 
   // Request notification permission on wallet connect
   useEffect(() => {
@@ -812,21 +762,14 @@ const InnerApp: React.FC = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeChatId, activeRoomId]);
 
-  // Load messages when active chat changes (merge backend + cache)
+  // Load messages when active chat changes
   useEffect(() => {
     if (!activeChatId || !publicKey || !activeDialogHash) return;
 
     fetchDialogMessages(activeDialogHash, { limit: 100 }).then(msgs => {
       if (msgs && msgs.length > 0) {
         const sorted = msgs.sort((a, b) => a.timestamp - b.timestamp);
-        setHistories(prev => {
-          // Merge: backend messages take priority, but keep cached messages not on backend
-          const cached = prev[activeChatId] || [];
-          const backendIds = new Set(sorted.map(m => m.id));
-          const uniqueCached = cached.filter(m => !backendIds.has(m.id));
-          const merged = [...uniqueCached, ...sorted].sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
-          return { ...prev, [activeChatId]: merged };
-        });
+        setHistories(prev => ({ ...prev, [activeChatId]: sorted }));
         // Send read receipts for unread messages from counterparty (if readReceipts enabled)
         if (settingsRef.current.readReceipts) {
           const unreadIds = sorted.filter(m => !m.isMine && m.status !== 'read').map(m => m.id);
@@ -1296,9 +1239,8 @@ const InnerApp: React.FC = () => {
       try { await clearDMHistory(contact.dialogHash); } catch {}
     }
 
-    // 3. Clear local state (messages + sidebar preview) + IndexedDB cache
+    // 3. Clear local state (messages + sidebar preview)
     setHistories(prev => ({ ...prev, [activeChatId!]: [] }));
-    clearCachedMessages(activeChatId!);
     setContacts(prev => prev.map(c =>
       c.id === activeChatId ? { ...c, lastMessage: '', lastMessageTime: undefined } : c
     ));
@@ -1329,7 +1271,6 @@ const InnerApp: React.FC = () => {
       delete next[chatId];
       return next;
     });
-    clearCachedMessages(chatId);
     // Close chat if it was active
     if (activeChatId === chatId) setActiveChatId(null);
     // Mark as deleted in backend preferences
@@ -1348,7 +1289,6 @@ const InnerApp: React.FC = () => {
       }
       setContacts([]);
       setHistories({});
-      clearCachedMessages();
       setActiveChatId(null);
       if (failed > 0) {
         toast.success(`Conversations cleared (${failed} failed)`);
