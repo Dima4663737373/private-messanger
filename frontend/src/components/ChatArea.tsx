@@ -149,6 +149,7 @@ interface ChatAreaProps {
   onForwardMessage?: (toAddress: string, text: string, originalSender: string) => void;
   // Block user
   isBlocked?: boolean;
+  isBlockedByUser?: boolean; // This user blocked me
   onBlockUser?: () => void;
   onUnblockUser?: () => void;
   // Chat appearance settings
@@ -201,6 +202,7 @@ const ChatArea: React.FC<ChatAreaProps> = ({
   forwardContacts = [],
   onForwardMessage,
   isBlocked = false,
+  isBlockedByUser = false,
   onBlockUser,
   onUnblockUser,
   fontSize = 'medium',
@@ -1435,6 +1437,14 @@ const ChatArea: React.FC<ChatAreaProps> = ({
           </div>
         )}
 
+        {/* Blocked BY User Banner */}
+        {isBlockedByUser && !isBlocked && !roomChat && (
+          <div className="mb-3 flex items-center gap-3 px-4 py-3 bg-[#FFF3E0] border border-[#FFB74D] rounded-xl">
+            <Lock size={16} className="text-[#FF8C00] shrink-0" />
+            <span className="text-sm text-[#E65100] font-medium">This user has blocked you. You cannot send messages.</span>
+          </div>
+        )}
+
         {/* Reply Bar */}
         {replyingTo && (
           <div className="mb-2 p-3 bg-[#FAFAFA] border border-[#E5E5E5] rounded-xl flex items-center justify-between animate-fade-in">
@@ -1514,8 +1524,8 @@ const ChatArea: React.FC<ChatAreaProps> = ({
               }}
               onSelect={() => handleInputSelect('main')}
               onKeyDown={handleKeyDown}
-              placeholder={isBlocked && !roomChat ? "User blocked" : isSending ? "Encrypting & sending..." : roomChat ? `Message #${roomChat.name}...` : "Type an encrypted message..."}
-              disabled={isSending || (isBlocked && !roomChat)}
+              placeholder={isBlocked && !roomChat ? "User blocked" : isBlockedByUser && !roomChat ? "You are blocked by this user" : isSending ? "Encrypting & sending..." : roomChat ? `Message #${roomChat.name}...` : "Type an encrypted message..."}
+              disabled={isSending || ((isBlocked || isBlockedByUser) && !roomChat)}
               maxLength={MAX_MESSAGE_LENGTH}
               rows={1}
               className="w-full bg-transparent border-none focus:ring-0 placeholder-opacity-50 px-2 py-2 font-medium disabled:opacity-50 disabled:cursor-not-allowed resize-none overflow-hidden"
@@ -1647,7 +1657,7 @@ const ChatArea: React.FC<ChatAreaProps> = ({
           <button
             aria-label="Send message"
             onClick={handleSend}
-            disabled={!input.trim() || isSending || (isBlocked && !roomChat) || isRecording}
+            disabled={!input.trim() || isSending || ((isBlocked || isBlockedByUser) && !roomChat) || isRecording}
             className="w-10 h-10 flex items-center justify-center bg-[#0A0A0A] text-white rounded-xl hover:bg-[#FF8C00] hover:text-black transition-all disabled:opacity-50 disabled:cursor-not-allowed btn-press hover:shadow-lg hover:shadow-[#FF8C00]/20"
           >
             {isSending ? <div className="w-4 h-4 border-2 border-white/60 border-t-transparent rounded-full animate-spin" /> : <Send size={18} />}

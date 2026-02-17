@@ -682,16 +682,24 @@ wss.on('connection', (ws: any, req: any) => {
           status: 'confirmed'
         };
 
-        // Check if recipient has blocked the sender (suppress real-time delivery)
+        // Check if recipient has blocked the sender
         let recipientBlocked = false;
+        // Check if sender has been blocked by recipient
+        let senderBlockedByRecipient = false;
         if (resolvedRecipient !== 'unknown') {
           try {
             const recipientPrefs = await UserPreferences.findByPk(resolvedRecipient);
             if (recipientPrefs?.blocked_users) {
               const blockedList: string[] = JSON.parse(recipientPrefs.blocked_users || '[]');
               recipientBlocked = blockedList.includes(sender);
+              senderBlockedByRecipient = recipientBlocked;
             }
           } catch { /* non-critical */ }
+        }
+
+        // Notify sender if they are blocked by recipient
+        if (senderBlockedByRecipient) {
+          ws.send(JSON.stringify({ type: 'blocked_by_user', payload: { address: resolvedRecipient } }));
         }
 
         // Broadcast to recipient (and sender's other sessions)
@@ -1389,6 +1397,40 @@ app.get('/preferences/:address', requireAuth, preferencesLimiter, async (req: an
   }
 });
 
+// GET /blocked-by/:address — check which users have blocked this address
+app.get('/blocked-by/:address', requireAuth, async (req: any, res) => {
+  try {
+    const address = req.params.address as string;
+    if (address !== req.authenticatedAddress) {
+      return res.status(403).json({ error: 'Can only check your own block status' });
+    }
+
+    // Find all preferences where blocked_users contains this address
+    const allPrefs = await UserPreferences.findAll({
+      attributes: ['address', 'blocked_users'],
+      where: sequelize.where(
+        sequelize.col('blocked_users'),
+        { [Op.like]: `%${address}%` }
+      )
+    });
+
+    const blockedBy: string[] = [];
+    for (const pref of allPrefs) {
+      try {
+        const list: string[] = JSON.parse(pref.blocked_users || '[]');
+        if (list.includes(address)) {
+          blockedBy.push(pref.address);
+        }
+      } catch { /* skip malformed */ }
+    }
+
+    res.json({ blockedBy });
+  } catch (e) {
+    console.error('GET /blocked-by error:', e);
+    res.status(500).json({ error: 'Failed to check block status' });
+  }
+});
+
 // POST /preferences/:address — update user preferences (requires auth + ownership)
 app.post('/preferences/:address', requireAuth, preferencesLimiter, async (req: any, res) => {
   try {
@@ -1457,7 +1499,38 @@ app.post('/preferences/:address', requireAuth, preferencesLimiter, async (req: a
       data.migrated = !!migrated;
     }
 
+    // Detect block/unblock changes to notify affected users
+    let previousBlocked: string[] = [];
+    if (blockedUsers !== undefined) {
+      try {
+        const existing = await UserPreferences.findByPk(address);
+        if (existing?.blocked_users) {
+          previousBlocked = JSON.parse(existing.blocked_users || '[]');
+        }
+      } catch { /* non-critical */ }
+    }
+
     await UserPreferences.upsert(data);
+
+    // Notify newly blocked/unblocked users via WebSocket
+    if (blockedUsers !== undefined) {
+      const newBlocked: string[] = JSON.parse(data.blocked_users);
+      const justBlocked = newBlocked.filter(a => !previousBlocked.includes(a));
+      const justUnblocked = previousBlocked.filter(a => !newBlocked.includes(a));
+
+      wss.clients.forEach((client: any) => {
+        if (client.readyState !== WebSocket.OPEN) return;
+        const clientAddr = client.authenticatedAddress;
+        if (!clientAddr) return;
+
+        if (justBlocked.includes(clientAddr)) {
+          client.send(JSON.stringify({ type: 'blocked_by_user', payload: { address } }));
+        }
+        if (justUnblocked.includes(clientAddr)) {
+          client.send(JSON.stringify({ type: 'unblocked_by_user', payload: { address } }));
+        }
+      });
+    }
 
     res.json({ success: true });
   } catch (e) {

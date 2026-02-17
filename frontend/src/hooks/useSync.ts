@@ -35,6 +35,7 @@ export function useSync(
   const ws = useRef<WebSocket | null>(null);
   const [isConnected, setIsConnected] = useState(false);
   const [typingUsers, setTypingUsers] = useState<Record<string, { ts: number; sender?: string }>>({}); // key -> { timestamp, sender? }
+  const [blockedByUsers, setBlockedByUsers] = useState<string[]>([]); // addresses of users who blocked me
   const { decrypt, decryptAsSender } = useEncryptionWorker();
   const sessionSecretRef = useRef<string | null>(null);
 
@@ -422,6 +423,11 @@ export function useSync(
                 socket.send(JSON.stringify({ type: 'SUBSCRIBE', address }));
               }
 
+              // Step 3b: Fetch who blocked me
+              safeBackendFetch<{ blockedBy: string[] }>(`blocked-by/${address}`)
+                .then(res => { if (res.data?.blockedBy) setBlockedByUsers(res.data.blockedBy); })
+                .catch(() => {});
+
               // Step 4: Flush offline queue after reconnection
               getQueuedMessages().then(async (queued) => {
                 if (queued.length === 0) return;
@@ -612,6 +618,20 @@ export function useSync(
                        callbacksRef.current.onProfileUpdated(data.payload.address, data.payload.username, data.payload.showAvatar, data.payload.avatarCid);
                      }
                  }
+            }
+            else if (data.type === 'blocked_by_user') {
+              const blockerAddr = data.payload?.address;
+              if (blockerAddr) {
+                setBlockedByUsers(prev => prev.includes(blockerAddr) ? prev : [...prev, blockerAddr]);
+                toast('A user has blocked you', { icon: '🚫' });
+              }
+            }
+            else if (data.type === 'unblocked_by_user') {
+              const unblockerAddr = data.payload?.address;
+              if (unblockerAddr) {
+                setBlockedByUsers(prev => prev.filter(a => a !== unblockerAddr));
+                toast('A user has unblocked you', { icon: '✅' });
+              }
             }
             else if (data.type === 'message_deleted') {
                  if (onMessageDeleted) onMessageDeleted(data.payload.id);
@@ -1445,6 +1465,8 @@ export function useSync(
     // Online status
     fetchOnlineStatus,
     // Link preview
-    fetchLinkPreview
+    fetchLinkPreview,
+    // Blocked by
+    blockedByUsers
   };
 }

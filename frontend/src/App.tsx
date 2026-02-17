@@ -511,7 +511,7 @@ const InnerApp: React.FC = () => {
   }, []);
 
   // Wait for encryption keys to be derived before connecting WS — prevents limited sessions on new devices
-  const { isConnected: isSyncConnected, typingUsers, notifyProfileUpdate, searchProfiles, fetchMessages, fetchDialogs, fetchDialogMessages, syncProfile, cacheDecryptedMessage, sendTyping, sendReadReceipt, addReaction, removeReaction, fetchRooms, createRoom, deleteRoom: deleteRoomApi, renameRoom: renameRoomApi, joinRoom, leaveRoom, fetchRoomInfo, fetchRoomMessages, sendRoomMessage, subscribeRoom, sendRoomTyping, clearDMHistory, deleteRoomMessage, editRoomMessage, prepareDMMessage, commitDMMessage, sendDMMessage, deleteDMMessage, editDMMessage, fetchPins, pinMessage, unpinMessage, fetchOnlineStatus, fetchLinkPreview } = useSync(keysReady ? publicKey : null, handleNewMessage, handleMessageDeleted, handleMessageUpdated, handleReactionUpdate, handleRoomMessage, handleRoomCreated, handleRoomDeleted, handleDMCleared, handlePinUpdate, handleRoomMessageDeleted, handleRoomMessageEdited, handleDMSent, handleReadReceipt, handleProfileUpdated);
+  const { isConnected: isSyncConnected, typingUsers, notifyProfileUpdate, searchProfiles, fetchMessages, fetchDialogs, fetchDialogMessages, syncProfile, cacheDecryptedMessage, sendTyping, sendReadReceipt, addReaction, removeReaction, fetchRooms, createRoom, deleteRoom: deleteRoomApi, renameRoom: renameRoomApi, joinRoom, leaveRoom, fetchRoomInfo, fetchRoomMessages, sendRoomMessage, subscribeRoom, sendRoomTyping, clearDMHistory, deleteRoomMessage, editRoomMessage, prepareDMMessage, commitDMMessage, sendDMMessage, deleteDMMessage, editDMMessage, fetchPins, pinMessage, unpinMessage, fetchOnlineStatus, fetchLinkPreview, blockedByUsers } = useSync(keysReady ? publicKey : null, handleNewMessage, handleMessageDeleted, handleMessageUpdated, handleReactionUpdate, handleRoomMessage, handleRoomCreated, handleRoomDeleted, handleDMCleared, handlePinUpdate, handleRoomMessageDeleted, handleRoomMessageEdited, handleDMSent, handleReadReceipt, handleProfileUpdated);
 
   // Keep refs in sync for use inside memoized callbacks
   activeChatIdRef.current = activeChatId;
@@ -1841,6 +1841,7 @@ const InnerApp: React.FC = () => {
             linkPreviews={userSettings.linkPreviews}
             fetchLinkPreview={fetchLinkPreview}
             isBlocked={!activeRoomId && activeChatId ? blockedUsers.includes(activeChatId) : false}
+            isBlockedByUser={!activeRoomId && activeChatId ? blockedByUsers.includes(activeChatId) : false}
             onBlockUser={!activeRoomId && activeChatId ? () => { blockUser(activeChatId!); toast.success('User blocked'); } : undefined}
             onUnblockUser={!activeRoomId && activeChatId ? () => { unblockUser(activeChatId!); toast.success('User unblocked'); } : undefined}
             forwardContacts={contacts.filter(c => c.address?.startsWith('aleo1')).map(c => ({ id: c.id, name: c.name, address: c.address || '' }))}
