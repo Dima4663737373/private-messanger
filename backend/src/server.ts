@@ -433,7 +433,7 @@ wss.on('connection', (ws: any) => {
 
       // DM message — off-chain encrypted direct message (enforce sender = authenticated user)
       if (data.type === 'DM_MESSAGE') {
-        const { senderHash, recipientHash, dialogHash, encryptedPayload, encryptedPayloadSelf, timestamp, attachmentPart1, attachmentPart2, tempId } = data;
+        const { senderHash, recipientHash, dialogHash, encryptedPayload, encryptedPayloadSelf, timestamp, attachmentPart1, attachmentPart2, tempId, replyToId, replyToText, replyToSender } = data;
         const sender = ws.authenticatedAddress; // Use authenticated address, not client-provided
         if (!sender || !senderHash || !recipientHash || !dialogHash || !encryptedPayload || !timestamp) {
           ws.send(JSON.stringify({ type: 'error', message: 'Missing required DM fields' }));
@@ -474,6 +474,9 @@ wss.on('connection', (ws: any) => {
             status: 'confirmed',
             attachment_part1: (attachmentPart1 || '').slice(0, 500),
             attachment_part2: (attachmentPart2 || '').slice(0, 500),
+            reply_to_id: (replyToId || '').slice(0, 300),
+            reply_to_text: (replyToText || '').slice(0, 5000),
+            reply_to_sender: (replyToSender || '').slice(0, 100),
           }
         });
 
@@ -486,6 +489,9 @@ wss.on('connection', (ws: any) => {
           timestamp,
           attachmentPart1: attachmentPart1 || '',
           attachmentPart2: attachmentPart2 || '',
+          replyToId: replyToId || '',
+          replyToText: replyToText || '',
+          replyToSender: replyToSender || '',
           status: 'confirmed'
         };
 

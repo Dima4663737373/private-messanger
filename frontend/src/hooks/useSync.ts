@@ -598,7 +598,10 @@ export function useSync(
                 attachment,
                 senderHash: rawMsg.senderHash,
                 recipientHash: rawMsg.recipientHash,
-                dialogHash: rawMsg.dialogHash
+                dialogHash: rawMsg.dialogHash,
+                replyToId: rawMsg.replyToId || rawMsg.reply_to_id || undefined,
+                replyToText: rawMsg.replyToText || rawMsg.reply_to_text || undefined,
+                replyToSender: rawMsg.replyToSender || rawMsg.reply_to_sender || undefined
               };
               
               onNewMessage(msg);
@@ -791,7 +794,10 @@ export function useSync(
               timestamp: rawMsg.timestamp,
               recipient: rawMsg.recipient,
               attachment,
-              reactions: allReactions[rawMsg.id] || undefined
+              reactions: allReactions[rawMsg.id] || undefined,
+              replyToId: rawMsg.reply_to_id || undefined,
+              replyToText: rawMsg.reply_to_text || undefined,
+              replyToSender: rawMsg.reply_to_sender || undefined
             };
           } catch (e) {
             logger.error(`Failed to decrypt message ${rawMsg.id}:`, e);
@@ -1056,7 +1062,7 @@ export function useSync(
   // --- Off-chain DM API ---
 
   // Prepare encrypted payload without sending (for wallet-first flow)
-  const prepareDMMessage = async (recipientAddress: string, text: string, attachmentCID?: string): Promise<{ tempId: string; encryptedPayload: string; encryptedPayloadSelf: string; timestamp: number; senderHash: string; recipientHash: string; dialogHash: string } | null> => {
+  const prepareDMMessage = async (recipientAddress: string, text: string, attachmentCID?: string, replyTo?: { id: string; text: string; sender: string }): Promise<{ tempId: string; encryptedPayload: string; encryptedPayloadSelf: string; timestamp: number; senderHash: string; recipientHash: string; dialogHash: string; replyToId?: string; replyToText?: string; replyToSender?: string } | null> => {
     if (!ws.current || ws.current.readyState !== WebSocket.OPEN || !address) return null;
 
     const myKeys = getCachedKeys(address);
@@ -1090,7 +1096,7 @@ export function useSync(
     const tempId = `temp_${Date.now()}_${Array.from(crypto.getRandomValues(new Uint8Array(6)), b => b.toString(36)).join('').slice(0, 8)}`;
     const timestamp = Date.now();
 
-    return { tempId, encryptedPayload, encryptedPayloadSelf, timestamp, senderHash, recipientHash, dialogHash };
+    return { tempId, encryptedPayload, encryptedPayloadSelf, timestamp, senderHash, recipientHash, dialogHash, replyToId: replyTo?.id, replyToText: replyTo?.text, replyToSender: replyTo?.sender };
   };
 
   // Actually send the prepared message via WebSocket (queues to offline queue on failure)
@@ -1130,7 +1136,10 @@ export function useSync(
         timestamp: prepared.timestamp,
         attachmentPart1: attachmentCID || '',
         attachmentPart2: '',
-        tempId: prepared.tempId
+        tempId: prepared.tempId,
+        replyToId: prepared.replyToId || '',
+        replyToText: prepared.replyToText || '',
+        replyToSender: prepared.replyToSender || ''
       }));
       return true;
     } catch (e) {

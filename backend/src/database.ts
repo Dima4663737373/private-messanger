@@ -108,6 +108,9 @@ export class Message extends Model {
   declare dialog_hash: string;
   declare attachment_part1: string;
   declare attachment_part2: string;
+  declare reply_to_id: string;
+  declare reply_to_text: string;
+  declare reply_to_sender: string;
 }
 
 Message.init({
@@ -171,7 +174,19 @@ Message.init({
     type: DataTypes.STRING,
     allowNull: true,
   },
-}, { 
+  reply_to_id: {
+    type: DataTypes.STRING,
+    allowNull: true,
+  },
+  reply_to_text: {
+    type: DataTypes.TEXT,
+    allowNull: true,
+  },
+  reply_to_sender: {
+    type: DataTypes.STRING,
+    allowNull: true,
+  },
+}, {
   sequelize,
   modelName: 'Message',
   indexes: [

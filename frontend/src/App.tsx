@@ -875,7 +875,7 @@ const InnerApp: React.FC = () => {
       }
 
       // 1. Prepare encrypted payload (NO WebSocket send yet)
-      const prepared = await prepareDMMessage(contact.address, text, attachmentCID);
+      const prepared = await prepareDMMessage(contact.address, text, attachmentCID, replyTo);
 
       if (!prepared) {
         toast.error('Not connected to server. Please wait and try again.');
