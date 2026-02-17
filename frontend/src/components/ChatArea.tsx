@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect, useRef, useLayoutEffect } from 'react';
-import { Search, MoreVertical, Paperclip, Send, Smile, Menu, Ghost, Shield, MessageSquare, Trash2, Edit2, X, Check, File as FileIcon, Download, Reply, Timer, Clock, Pin, Copy, Users, LogOut, Share2 } from 'lucide-react';
+import { Search, MoreVertical, Paperclip, Send, Smile, Menu, Ghost, Shield, MessageSquare, Trash2, Edit2, X, Check, File as FileIcon, Download, Reply, Timer, Clock, Pin, Copy, Users, LogOut, Share2, Bold, Italic, Strikethrough, Underline } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Chat, Message, DisappearTimer, DISAPPEAR_TIMERS, Room, AppView, PinnedMessage } from '../types';
 import { logger } from '../utils/logger';
@@ -188,6 +188,10 @@ const ChatArea: React.FC<ChatAreaProps> = ({
   const mainInputRef = useRef<HTMLInputElement>(null);
   const emojiPickerContainerRef = useRef<HTMLDivElement>(null);
 
+  // Floating format toolbar state
+  const [showFormatBar, setShowFormatBar] = useState(false);
+  const formatBarRef = useRef<HTMLDivElement>(null);
+
   // Room info panel
   const [showRoomInfo, setShowRoomInfo] = useState(false);
 
@@ -287,6 +291,9 @@ const ChatArea: React.FC<ChatAreaProps> = ({
       if (emojiPickerContainerRef.current && !emojiPickerContainerRef.current.contains(event.target as Node)) {
         setShowInputEmojiPicker(false);
       }
+      if (formatBarRef.current && !formatBarRef.current.contains(event.target as Node) && event.target !== mainInputRef.current) {
+        setShowFormatBar(false);
+      }
     };
     document.addEventListener("mousedown", handleClickOutside);
     return () => document.removeEventListener("mousedown", handleClickOutside);
@@ -361,6 +368,34 @@ const ChatArea: React.FC<ChatAreaProps> = ({
       e.preventDefault();
       handleSend();
     }
+  };
+
+  // Check if text is selected in input → show/hide format bar
+  const handleInputSelect = () => {
+    const el = mainInputRef.current;
+    if (!el) return;
+    const start = el.selectionStart ?? 0;
+    const end = el.selectionEnd ?? 0;
+    setShowFormatBar(start !== end);
+  };
+
+  // Wrap selected text with formatting markers
+  const applyFormat = (prefix: string, suffix: string) => {
+    const el = mainInputRef.current;
+    if (!el) return;
+    const start = el.selectionStart ?? 0;
+    const end = el.selectionEnd ?? 0;
+    if (start === end) return;
+    const selected = input.slice(start, end);
+    const newValue = input.slice(0, start) + prefix + selected + suffix + input.slice(end);
+    setInput(newValue);
+    setShowFormatBar(false);
+    // Restore cursor after the formatted text
+    requestAnimationFrame(() => {
+      el.focus();
+      const pos = start + prefix.length + selected.length + suffix.length;
+      el.setSelectionRange(pos, pos);
+    });
   };
 
   const handleDelete = async (msg: Message) => {
@@ -1148,26 +1183,56 @@ const ChatArea: React.FC<ChatAreaProps> = ({
           >
             <Paperclip size={20} />
           </button>
-          <input
-            ref={mainInputRef}
-            type="text"
-            value={input}
-            onChange={(e) => {
-              setInput(e.target.value);
-              // Debounced typing indicator
-              if (onTyping && e.target.value) {
-                if (!typingTimeoutRef.current) {
-                  onTyping();
+          <div className="relative flex-1">
+            <input
+              ref={mainInputRef}
+              type="text"
+              value={input}
+              onChange={(e) => {
+                setInput(e.target.value);
+                setShowFormatBar(false);
+                // Debounced typing indicator
+                if (onTyping && e.target.value) {
+                  if (!typingTimeoutRef.current) {
+                    onTyping();
+                  }
+                  if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
+                  typingTimeoutRef.current = setTimeout(() => { typingTimeoutRef.current = null; }, 2000);
                 }
-                if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
-                typingTimeoutRef.current = setTimeout(() => { typingTimeoutRef.current = null; }, 2000);
-              }
-            }}
-            onKeyDown={handleKeyDown}
-            placeholder={isSending ? "Encrypting & sending..." : roomChat ? `Message #${roomChat.name}...` : "Type an encrypted message..."}
-            disabled={isSending}
-            className="flex-1 bg-transparent border-none focus:ring-0 text-[#0A0A0A] placeholder-[#999] px-2 font-medium disabled:opacity-50 disabled:cursor-not-allowed"
-          />
+              }}
+              onSelect={handleInputSelect}
+              onKeyDown={handleKeyDown}
+              placeholder={isSending ? "Encrypting & sending..." : roomChat ? `Message #${roomChat.name}...` : "Type an encrypted message..."}
+              disabled={isSending}
+              className="w-full bg-transparent border-none focus:ring-0 text-[#0A0A0A] placeholder-[#999] px-2 font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+            />
+            {/* Floating format toolbar */}
+            <AnimatePresence>
+              {showFormatBar && (
+                <motion.div
+                  ref={formatBarRef}
+                  initial={{ opacity: 0, y: 4, scale: 0.95 }}
+                  animate={{ opacity: 1, y: 0, scale: 1 }}
+                  exit={{ opacity: 0, y: 4, scale: 0.95 }}
+                  transition={{ duration: 0.12 }}
+                  className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 flex items-center gap-0.5 bg-[#0A0A0A] rounded-lg px-1 py-1 shadow-xl shadow-black/30 border border-[#2A2A2A] z-50"
+                >
+                  <button onClick={() => applyFormat('*', '*')} className="w-8 h-8 flex items-center justify-center text-white/70 hover:text-[#FF8C00] hover:bg-white/10 rounded-md transition-colors" title="Bold">
+                    <Bold size={15} />
+                  </button>
+                  <button onClick={() => applyFormat('_', '_')} className="w-8 h-8 flex items-center justify-center text-white/70 hover:text-[#FF8C00] hover:bg-white/10 rounded-md transition-colors" title="Italic">
+                    <Italic size={15} />
+                  </button>
+                  <button onClick={() => applyFormat('~', '~')} className="w-8 h-8 flex items-center justify-center text-white/70 hover:text-[#FF8C00] hover:bg-white/10 rounded-md transition-colors" title="Strikethrough">
+                    <Strikethrough size={15} />
+                  </button>
+                  <button onClick={() => applyFormat('__', '__')} className="w-8 h-8 flex items-center justify-center text-white/70 hover:text-[#FF8C00] hover:bg-white/10 rounded-md transition-colors" title="Underline">
+                    <Underline size={15} />
+                  </button>
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </div>
           <div className="relative" ref={emojiPickerContainerRef}>
             <button
               aria-label="Emoji"
@@ -1221,13 +1286,6 @@ const ChatArea: React.FC<ChatAreaProps> = ({
           >
             {isSending ? <div className="w-4 h-4 border-2 border-white/60 border-t-transparent rounded-full animate-spin" /> : <Send size={18} />}
           </button>
-        </div>
-        {/* Formatting hint */}
-        <div className="px-4 pb-1 flex gap-3 text-[10px] text-[#999] select-none">
-          <span><strong>*bold*</strong></span>
-          <span><em>_italic_</em></span>
-          <span><s>~strike~</s></span>
-          <span><u>__underline__</u></span>
         </div>
       </div>
     </div>
