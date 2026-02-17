@@ -717,7 +717,7 @@ const ChatArea: React.FC<ChatAreaProps> = ({
         <div className="absolute top-0 right-0 p-8 opacity-5 select-none pointer-events-none">
            <Ghost size={400} />
         </div>
-        <button onClick={onToggleSidebar} className="lg:hidden absolute top-5 left-5 p-3 bg-black rounded-xl text-[#FF8C00]">
+        <button onClick={onToggleSidebar} className="lg:hidden absolute top-5 left-5 p-3 bg-black rounded-xl text-[#FF8C00] btn-press">
           <Menu size={24} />
         </button>
         <div className="w-24 h-24 bg-white border border-[#E5E5E5] rounded-[32px] flex items-center justify-center mb-8 shadow-xl">
@@ -736,7 +736,7 @@ const ChatArea: React.FC<ChatAreaProps> = ({
       {/* Chat Header */}
       <header className="px-8 py-5 border-b flex items-center justify-between z-10 backdrop-blur-xl bg-opacity-90" style={{ backgroundColor: themeColors.headerBg, borderColor: themeColors.theirBorder, color: themeColors.headerText, backdropFilter: 'blur(20px)', WebkitBackdropFilter: 'blur(20px)' }}>
         <div className="flex items-center gap-4">
-          <button onClick={onToggleSidebar} className="lg:hidden p-2 hover:bg-[#F5F5F5] rounded-lg mr-2">
+          <button onClick={onToggleSidebar} className="lg:hidden p-2 hover:bg-[#F5F5F5] rounded-lg mr-2 btn-press">
             <Menu size={20} className="text-[#666]" />
           </button>
           {roomChat ? (
@@ -925,14 +925,14 @@ const ChatArea: React.FC<ChatAreaProps> = ({
             <div className="flex gap-1 shrink-0">
               <button
                 onClick={() => setSearchIndex(prev => (prev < searchMatchIds.length - 1 ? prev + 1 : 0))}
-                className="w-7 h-7 flex items-center justify-center rounded-lg text-[#666] hover:bg-[#F5F5F5] text-xs"
+                className="w-7 h-7 flex items-center justify-center rounded-lg text-[#666] hover:bg-[#F5F5F5] text-xs btn-icon"
                 title="Previous"
               >
                 ↑
               </button>
               <button
                 onClick={() => setSearchIndex(prev => (prev > 0 ? prev - 1 : searchMatchIds.length - 1))}
-                className="w-7 h-7 flex items-center justify-center rounded-lg text-[#666] hover:bg-[#F5F5F5] text-xs"
+                className="w-7 h-7 flex items-center justify-center rounded-lg text-[#666] hover:bg-[#F5F5F5] text-xs btn-icon"
                 title="Next"
               >
                 ↓
@@ -941,7 +941,7 @@ const ChatArea: React.FC<ChatAreaProps> = ({
           )}
           <button
             onClick={() => { setIsSearchOpen(false); setSearchQuery(''); setSearchMatchIds([]); }}
-            className="p-1.5 text-[#999] hover:text-[#333] rounded-lg hover:bg-[#F5F5F5]"
+            className="p-1.5 text-[#999] hover:text-[#333] rounded-lg hover:bg-[#F5F5F5] btn-icon"
           >
             <X size={16} />
           </button>
@@ -961,7 +961,7 @@ const ChatArea: React.FC<ChatAreaProps> = ({
               <h3 className="font-bold text-[#0A0A0A] text-base">
                 {roomChat.type === 'channel' ? 'Channel' : 'Group'} Info
               </h3>
-              <button onClick={() => setShowRoomInfo(false)} className="p-1.5 hover:bg-[#F5F5F5] rounded-lg text-[#666]">
+              <button onClick={() => setShowRoomInfo(false)} className="p-1.5 hover:bg-[#F5F5F5] rounded-lg text-[#666] btn-icon">
                 <X size={18} />
               </button>
             </div>
@@ -1074,7 +1074,7 @@ const ChatArea: React.FC<ChatAreaProps> = ({
           {onUnpinMessage && (
             <button
               onClick={() => onUnpinMessage(pinnedMessages[0]?.message_id)}
-              className="text-[#999] hover:text-red-500 shrink-0"
+              className="text-[#999] hover:text-red-500 shrink-0 btn-icon"
             >
               <X size={12} />
             </button>
@@ -1156,10 +1156,10 @@ const ChatArea: React.FC<ChatAreaProps> = ({
                         {/* Format toolbar for edit input */}
                         {showFormatBar && formatTarget === 'edit' && (
                           <div ref={formatBarRef} className="absolute -top-10 left-0 flex items-center gap-1 bg-[#1A1A2E] border border-white/10 rounded-lg px-1 py-1 shadow-lg z-50">
-                            <button onClick={() => applyFormat('*', '*')} className="w-7 h-7 flex items-center justify-center text-white/70 hover:text-[#FF8C00] hover:bg-white/10 rounded-md transition-colors" title="Bold"><Bold size={13} /></button>
-                            <button onClick={() => applyFormat('_', '_')} className="w-7 h-7 flex items-center justify-center text-white/70 hover:text-[#FF8C00] hover:bg-white/10 rounded-md transition-colors" title="Italic"><Italic size={13} /></button>
-                            <button onClick={() => applyFormat('~', '~')} className="w-7 h-7 flex items-center justify-center text-white/70 hover:text-[#FF8C00] hover:bg-white/10 rounded-md transition-colors" title="Strikethrough"><Strikethrough size={13} /></button>
-                            <button onClick={() => applyFormat('__', '__')} className="w-7 h-7 flex items-center justify-center text-white/70 hover:text-[#FF8C00] hover:bg-white/10 rounded-md transition-colors" title="Underline"><Underline size={13} /></button>
+                            <button onClick={() => applyFormat('*', '*')} className="w-7 h-7 flex items-center justify-center text-white/70 hover:text-[#FF8C00] hover:bg-white/10 rounded-md transition-colors btn-toolbar" title="Bold"><Bold size={13} /></button>
+                            <button onClick={() => applyFormat('_', '_')} className="w-7 h-7 flex items-center justify-center text-white/70 hover:text-[#FF8C00] hover:bg-white/10 rounded-md transition-colors btn-toolbar" title="Italic"><Italic size={13} /></button>
+                            <button onClick={() => applyFormat('~', '~')} className="w-7 h-7 flex items-center justify-center text-white/70 hover:text-[#FF8C00] hover:bg-white/10 rounded-md transition-colors btn-toolbar" title="Strikethrough"><Strikethrough size={13} /></button>
+                            <button onClick={() => applyFormat('__', '__')} className="w-7 h-7 flex items-center justify-center text-white/70 hover:text-[#FF8C00] hover:bg-white/10 rounded-md transition-colors btn-toolbar" title="Underline"><Underline size={13} /></button>
                           </div>
                         )}
                         {/* Formatting preview */}
@@ -1167,8 +1167,8 @@ const ChatArea: React.FC<ChatAreaProps> = ({
                           <div className="text-xs opacity-60 px-1">{applyFormatting(editContent)}</div>
                         )}
                         <div className="flex justify-end gap-2 mt-1">
-                            <button onClick={cancelEdit} className="p-1 hover:bg-white/10 rounded"><X size={14} /></button>
-                            <button onClick={() => submitEdit(msg)} disabled={!editContent.trim() || editContent.trim() === msg.text} className="p-1 hover:bg-white/10 rounded text-[#10B981] disabled:opacity-30 disabled:cursor-not-allowed"><Check size={14} /></button>
+                            <button onClick={cancelEdit} className="p-1 hover:bg-white/10 rounded btn-icon"><X size={14} /></button>
+                            <button onClick={() => submitEdit(msg)} disabled={!editContent.trim() || editContent.trim() === msg.text} className="p-1 hover:bg-white/10 rounded text-[#10B981] disabled:opacity-30 disabled:cursor-not-allowed btn-icon"><Check size={14} /></button>
                         </div>
                     </div>
                 ) : (
@@ -1428,7 +1428,7 @@ const ChatArea: React.FC<ChatAreaProps> = ({
             </div>
             <button
               onClick={() => onUnblockUser?.()}
-              className="text-xs font-bold text-red-500 hover:text-red-700 px-3 py-1 border border-red-300 rounded-lg hover:bg-red-100 transition-colors"
+              className="text-xs font-bold text-red-500 hover:text-red-700 px-3 py-1 border border-red-300 rounded-lg hover:bg-red-100 transition-colors btn-press"
             >
               Unblock
             </button>
@@ -1449,7 +1449,7 @@ const ChatArea: React.FC<ChatAreaProps> = ({
                 <p className="text-xs text-[#999] truncate max-w-[300px]">{replyingTo.text}</p>
               </div>
             </div>
-            <button onClick={() => setReplyingTo(null)} className="p-1 hover:bg-[#E5E5E5] rounded-full text-[#999]">
+            <button onClick={() => setReplyingTo(null)} className="p-1 hover:bg-[#E5E5E5] rounded-full text-[#999] btn-icon">
               <X size={14} />
             </button>
           </div>
@@ -1476,7 +1476,7 @@ const ChatArea: React.FC<ChatAreaProps> = ({
             </div>
             <button 
               onClick={() => setSelectedFile(null)}
-              className="p-1 hover:bg-gray-200 rounded-full text-gray-500"
+              className="p-1 hover:bg-gray-200 rounded-full text-gray-500 btn-icon"
             >
               <X size={16} />
             </button>
@@ -1537,16 +1537,16 @@ const ChatArea: React.FC<ChatAreaProps> = ({
                   transition={{ duration: 0.12 }}
                   className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 flex items-center gap-0.5 bg-[#0A0A0A] rounded-lg px-1 py-1 shadow-xl shadow-black/30 border border-[#2A2A2A] z-50"
                 >
-                  <button onClick={() => applyFormat('*', '*')} className="w-8 h-8 flex items-center justify-center text-white/70 hover:text-[#FF8C00] hover:bg-white/10 rounded-md transition-colors" title="Bold">
+                  <button onClick={() => applyFormat('*', '*')} className="w-8 h-8 flex items-center justify-center text-white/70 hover:text-[#FF8C00] hover:bg-white/10 rounded-md transition-colors btn-toolbar" title="Bold">
                     <Bold size={15} />
                   </button>
-                  <button onClick={() => applyFormat('_', '_')} className="w-8 h-8 flex items-center justify-center text-white/70 hover:text-[#FF8C00] hover:bg-white/10 rounded-md transition-colors" title="Italic">
+                  <button onClick={() => applyFormat('_', '_')} className="w-8 h-8 flex items-center justify-center text-white/70 hover:text-[#FF8C00] hover:bg-white/10 rounded-md transition-colors btn-toolbar" title="Italic">
                     <Italic size={15} />
                   </button>
-                  <button onClick={() => applyFormat('~', '~')} className="w-8 h-8 flex items-center justify-center text-white/70 hover:text-[#FF8C00] hover:bg-white/10 rounded-md transition-colors" title="Strikethrough">
+                  <button onClick={() => applyFormat('~', '~')} className="w-8 h-8 flex items-center justify-center text-white/70 hover:text-[#FF8C00] hover:bg-white/10 rounded-md transition-colors btn-toolbar" title="Strikethrough">
                     <Strikethrough size={15} />
                   </button>
-                  <button onClick={() => applyFormat('__', '__')} className="w-8 h-8 flex items-center justify-center text-white/70 hover:text-[#FF8C00] hover:bg-white/10 rounded-md transition-colors" title="Underline">
+                  <button onClick={() => applyFormat('__', '__')} className="w-8 h-8 flex items-center justify-center text-white/70 hover:text-[#FF8C00] hover:bg-white/10 rounded-md transition-colors btn-toolbar" title="Underline">
                     <Underline size={15} />
                   </button>
                 </motion.div>
@@ -1608,7 +1608,7 @@ const ChatArea: React.FC<ChatAreaProps> = ({
               <button
                 aria-label="Cancel recording"
                 onClick={cancelRecording}
-                className="w-10 h-10 flex items-center justify-center text-red-500 hover:bg-red-50 rounded-xl transition-colors"
+                className="w-10 h-10 flex items-center justify-center text-red-500 hover:bg-red-50 rounded-xl transition-colors btn-icon"
                 title="Cancel"
               >
                 <X size={20} />
@@ -1675,7 +1675,7 @@ const ChatArea: React.FC<ChatAreaProps> = ({
               <div className="p-4 border-b border-[#E5E5E5]">
                 <div className="flex items-center justify-between mb-3">
                   <h3 className="text-[#0A0A0A] font-bold text-sm">Forward message</h3>
-                  <button onClick={() => { setForwardingMsg(null); setForwardSearch(''); }} className="p-1 hover:bg-[#F5F5F5] rounded-lg">
+                  <button onClick={() => { setForwardingMsg(null); setForwardSearch(''); }} className="p-1 hover:bg-[#F5F5F5] rounded-lg btn-icon">
                     <X size={16} className="text-[#888]" />
                   </button>
                 </div>
@@ -1708,7 +1708,7 @@ const ChatArea: React.FC<ChatAreaProps> = ({
                         setForwardingMsg(null);
                         setForwardSearch('');
                       }}
-                      className="w-full flex items-center gap-3 px-4 py-3 hover:bg-[#F8F8F8] transition-colors text-left"
+                      className="w-full flex items-center gap-3 px-4 py-3 hover:bg-[#F8F8F8] transition-colors text-left btn-press"
                     >
                       <div className="w-8 h-8 rounded-full bg-[#FF8C00]/10 flex items-center justify-center text-[#FF8C00] text-xs font-bold">
                         {c.name.slice(0, 2).toUpperCase()}
@@ -1752,7 +1752,7 @@ const ChatArea: React.FC<ChatAreaProps> = ({
               <div className="p-4 border-b border-[#E5E5E5]">
                 <div className="flex items-center justify-between">
                   <h3 className="text-[#0A0A0A] font-bold text-sm">Edit History</h3>
-                  <button onClick={() => setEditHistoryMsgId(null)} className="p-1 hover:bg-[#F5F5F5] rounded-lg">
+                  <button onClick={() => setEditHistoryMsgId(null)} className="p-1 hover:bg-[#F5F5F5] rounded-lg btn-icon">
                     <X size={16} className="text-[#888]" />
                   </button>
                 </div>
