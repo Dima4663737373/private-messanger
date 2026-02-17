@@ -10,7 +10,9 @@ import { MessageSkeleton } from './ui/Skeleton';
 import { EmptyState } from './ui/EmptyState';
 import { toast } from 'react-hot-toast';
 import DOMPurify from 'dompurify';
+import EmojiPicker, { Theme } from 'emoji-picker-react';
 import { IPFS_GATEWAY_URL, ADDRESS_DISPLAY, MESSAGE_PREVIEW } from '../constants';
+import { applyFormatting } from '../utils/formatText';
 
 const QUICK_EMOJIS = ['👍', '❤️', '😂', '😮', '😢', '🔥'];
 
@@ -178,8 +180,13 @@ const ChatArea: React.FC<ChatAreaProps> = ({
   // Reply state
   const [replyingTo, setReplyingTo] = useState<{ id: string; text: string; sender: string } | null>(null);
 
-  // Emoji picker state
+  // Emoji picker state (for message reactions)
   const [emojiPickerMsgId, setEmojiPickerMsgId] = useState<string | null>(null);
+
+  // Input emoji picker state
+  const [showInputEmojiPicker, setShowInputEmojiPicker] = useState(false);
+  const mainInputRef = useRef<HTMLInputElement>(null);
+  const emojiPickerContainerRef = useRef<HTMLDivElement>(null);
 
   // Room info panel
   const [showRoomInfo, setShowRoomInfo] = useState(false);
@@ -227,7 +234,7 @@ const ChatArea: React.FC<ChatAreaProps> = ({
     }
   }, [searchIndex, searchMatchIds]);
 
-  // Render message text with clickable URLs and optional search highlighting
+  // Render message text with formatting, clickable URLs and optional search highlighting
   const renderMessageText = (text: string, isSearchMatch: boolean) => {
     // Sanitize input first
     const sanitized = DOMPurify.sanitize(text, { ALLOWED_TAGS: [], KEEP_CONTENT: true });
@@ -236,22 +243,22 @@ const ChatArea: React.FC<ChatAreaProps> = ({
     const urlParts = sanitized.split(URL_REGEX);
     const urls = sanitized.match(URL_REGEX) || [];
     if (urls.length === 0) {
-      // No URLs — just highlight search if needed
-      if (!isSearchMatch || !searchQuery.trim()) return sanitized;
+      // No URLs — apply formatting + highlight search if needed
+      if (!isSearchMatch || !searchQuery.trim()) return <>{applyFormatting(sanitized)}</>;
       const q = searchQuery.trim();
       const regex = new RegExp(`(${q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`, 'gi');
       const parts = sanitized.split(regex);
-      if (parts.length === 1) return sanitized;
+      if (parts.length === 1) return <>{applyFormatting(sanitized)}</>;
       return parts.map((part, i) =>
         regex.test(part)
           ? <mark key={i} className="bg-[#FF8C00]/40 text-inherit rounded-sm px-0.5">{part}</mark>
-          : part
+          : <React.Fragment key={i}>{applyFormatting(part)}</React.Fragment>
       );
     }
-    // Interleave text parts and URL links
+    // Interleave text parts (formatted) and URL links
     const elements: React.ReactNode[] = [];
     urlParts.forEach((part, i) => {
-      if (part) elements.push(<React.Fragment key={`t${i}`}>{part}</React.Fragment>);
+      if (part) elements.push(<React.Fragment key={`t${i}`}>{applyFormatting(part)}</React.Fragment>);
       if (i < urls.length) {
         // Sanitize URL to prevent javascript: protocol
         const safeUrl = urls[i].match(/^https?:\/\//) ? urls[i] : '#';
@@ -271,11 +278,14 @@ const ChatArea: React.FC<ChatAreaProps> = ({
     return match ? match[0] : null;
   };
 
-  // Close menu when clicking outside
+  // Close menu / emoji picker when clicking outside
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
       if (menuRef.current && !menuRef.current.contains(event.target as Node)) {
         setIsMenuOpen(false);
+      }
+      if (emojiPickerContainerRef.current && !emojiPickerContainerRef.current.contains(event.target as Node)) {
+        setShowInputEmojiPicker(false);
       }
     };
     document.addEventListener("mousedown", handleClickOutside);
@@ -856,6 +866,10 @@ const ChatArea: React.FC<ChatAreaProps> = ({
                             className="w-full bg-transparent border-b border-white/20 outline-none pb-1 text-sm"
                             autoFocus
                         />
+                        {/* Formatting preview */}
+                        {/[*_~]/.test(editContent) && (
+                          <div className="text-xs opacity-60 px-1">{applyFormatting(editContent)}</div>
+                        )}
                         <div className="flex justify-end gap-2 mt-1">
                             <button onClick={cancelEdit} className="p-1 hover:bg-white/10 rounded"><X size={14} /></button>
                             <button onClick={() => submitEdit(msg)} disabled={!editContent.trim() || editContent.trim() === msg.text} className="p-1 hover:bg-white/10 rounded text-[#10B981] disabled:opacity-30 disabled:cursor-not-allowed"><Check size={14} /></button>
@@ -1135,6 +1149,7 @@ const ChatArea: React.FC<ChatAreaProps> = ({
             <Paperclip size={20} />
           </button>
           <input
+            ref={mainInputRef}
             type="text"
             value={input}
             onChange={(e) => {
@@ -1153,9 +1168,51 @@ const ChatArea: React.FC<ChatAreaProps> = ({
             disabled={isSending}
             className="flex-1 bg-transparent border-none focus:ring-0 text-[#0A0A0A] placeholder-[#999] px-2 font-medium disabled:opacity-50 disabled:cursor-not-allowed"
           />
-          <button aria-label="Emoji" className="w-10 h-10 flex items-center justify-center text-[#666] hover:text-[#0A0A0A] rounded-xl hover:bg-[#E5E5E5] btn-icon">
-            <Smile size={20} />
-          </button>
+          <div className="relative" ref={emojiPickerContainerRef}>
+            <button
+              aria-label="Emoji"
+              onClick={() => setShowInputEmojiPicker(prev => !prev)}
+              className={`w-10 h-10 flex items-center justify-center rounded-xl btn-icon transition-colors ${showInputEmojiPicker ? 'text-[#FF8C00] bg-[#FFF3E0]' : 'text-[#666] hover:text-[#0A0A0A] hover:bg-[#E5E5E5]'}`}
+            >
+              <Smile size={20} />
+            </button>
+            <AnimatePresence>
+              {showInputEmojiPicker && (
+                <motion.div
+                  initial={{ opacity: 0, y: 10, scale: 0.95 }}
+                  animate={{ opacity: 1, y: 0, scale: 1 }}
+                  exit={{ opacity: 0, y: 10, scale: 0.95 }}
+                  transition={{ duration: 0.15 }}
+                  className="absolute bottom-12 right-0 z-50 shadow-2xl rounded-xl overflow-hidden"
+                >
+                  <EmojiPicker
+                    theme={Theme.DARK}
+                    width={320}
+                    height={400}
+                    searchPlaceHolder="Search emoji..."
+                    onEmojiClick={(emojiData) => {
+                      const el = mainInputRef.current;
+                      if (el) {
+                        const start = el.selectionStart ?? input.length;
+                        const end = el.selectionEnd ?? input.length;
+                        const newValue = input.slice(0, start) + emojiData.emoji + input.slice(end);
+                        setInput(newValue);
+                        // Restore cursor after emoji
+                        requestAnimationFrame(() => {
+                          el.focus();
+                          const pos = start + emojiData.emoji.length;
+                          el.setSelectionRange(pos, pos);
+                        });
+                      } else {
+                        setInput(prev => prev + emojiData.emoji);
+                      }
+                      setShowInputEmojiPicker(false);
+                    }}
+                  />
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </div>
           <button
             aria-label="Send message"
             onClick={handleSend}
@@ -1164,6 +1221,13 @@ const ChatArea: React.FC<ChatAreaProps> = ({
           >
             {isSending ? <div className="w-4 h-4 border-2 border-white/60 border-t-transparent rounded-full animate-spin" /> : <Send size={18} />}
           </button>
+        </div>
+        {/* Formatting hint */}
+        <div className="px-4 pb-1 flex gap-3 text-[10px] text-[#999] select-none">
+          <span><strong>*bold*</strong></span>
+          <span><em>_italic_</em></span>
+          <span><s>~strike~</s></span>
+          <span><u>__underline__</u></span>
         </div>
       </div>
     </div>

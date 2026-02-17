@@ -1,30 +1,54 @@
 import { Sequelize, DataTypes, Model } from 'sequelize';
 import path from 'path';
 
-// SQLCipher encryption: REQUIRED — set DB_ENCRYPTION_KEY env var
-const DB_ENCRYPTION_KEY = process.env.DB_ENCRYPTION_KEY;
+// ── Database Configuration ──────────────────────
+// Priority: DATABASE_URL (PostgreSQL) > SQLite (local dev)
+const DATABASE_URL = process.env.DATABASE_URL;
 
-let dialectModule: any;
-if (DB_ENCRYPTION_KEY) {
-  try {
-    dialectModule = require('@journeyapps/sqlcipher');
-    console.log('[DB] SQLCipher module loaded — encryption enabled');
-  } catch (err) {
-    console.error('[DB] FATAL: DB_ENCRYPTION_KEY is set but @journeyapps/sqlcipher package is not installed!');
-    console.error('[DB] Database MUST be encrypted in production. Install: npm install @journeyapps/sqlcipher');
-    throw new Error('SQLCipher module required but not installed');
-  }
+let sequelize: Sequelize;
+let usingSQLite = false;
+
+if (DATABASE_URL) {
+  // PostgreSQL — persistent storage (Railway, Supabase, etc.)
+  sequelize = new Sequelize(DATABASE_URL, {
+    dialect: 'postgres',
+    logging: false,
+    dialectOptions: {
+      ssl: DATABASE_URL.includes('localhost') ? false : {
+        require: true,
+        rejectUnauthorized: false,
+      },
+    },
+    pool: { max: 10, min: 2, acquire: 30000, idle: 10000 },
+  });
+  console.log('[DB] Using PostgreSQL (persistent storage)');
 } else {
-  console.warn('[DB] WARNING: DB_ENCRYPTION_KEY not set — database will be UNENCRYPTED');
-  console.warn('[DB] This is ONLY acceptable in development. Set DB_ENCRYPTION_KEY in production!');
-}
+  // SQLite — local development only
+  usingSQLite = true;
+  const DB_ENCRYPTION_KEY = process.env.DB_ENCRYPTION_KEY;
 
-const sequelize = new Sequelize({
-  dialect: 'sqlite',
-  storage: path.join(__dirname, '../database.sqlite'),
-  logging: false,
-  ...(dialectModule ? { dialectModule } : {}),
-});
+  let dialectModule: any;
+  if (DB_ENCRYPTION_KEY) {
+    try {
+      dialectModule = require('@journeyapps/sqlcipher');
+      console.log('[DB] SQLCipher module loaded — encryption enabled');
+    } catch (err) {
+      console.error('[DB] FATAL: DB_ENCRYPTION_KEY is set but @journeyapps/sqlcipher package is not installed!');
+      throw new Error('SQLCipher module required but not installed');
+    }
+  } else {
+    console.warn('[DB] WARNING: Using SQLite without encryption (local dev only)');
+    console.warn('[DB] Set DATABASE_URL for persistent PostgreSQL in production!');
+  }
+
+  sequelize = new Sequelize({
+    dialect: 'sqlite',
+    storage: path.join(__dirname, '../database.sqlite'),
+    logging: false,
+    ...(dialectModule ? { dialectModule } : {}),
+  });
+  console.log('[DB] Using SQLite (local development)');
+}
 
 export class SyncStatus extends Model {
   declare id: number;
@@ -406,11 +430,15 @@ UserPreferences.init({
 });
 
 export const initDB = async () => {
-  // Apply SQLCipher encryption key before any other DB operations
-  if (DB_ENCRYPTION_KEY && dialectModule) {
-    await sequelize.query(`PRAGMA key = '${DB_ENCRYPTION_KEY.replace(/'/g, "''")}'`);
+  // Apply SQLCipher encryption key before any other DB operations (SQLite only)
+  if (usingSQLite && process.env.DB_ENCRYPTION_KEY) {
+    await sequelize.query(`PRAGMA key = '${process.env.DB_ENCRYPTION_KEY.replace(/'/g, "''")}'`);
     console.log('[DB] SQLCipher PRAGMA key applied');
   }
+
+  // Test connection (important for PostgreSQL)
+  await sequelize.authenticate();
+  console.log('[DB] Connection established successfully');
 
   await sequelize.sync({ alter: true });
   const status = await SyncStatus.findOne();
