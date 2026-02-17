@@ -622,7 +622,7 @@ const InnerApp: React.FC = () => {
             initials: 'UK',
             unreadCount: 0,
             lastMessage: previewText,
-            lastMessageTime: new Date(dialogMsg.timestamp)
+            lastMessageTime: new Date(Number(dialogMsg.timestamp))
           });
 
           // Fetch profile for aleo addresses
@@ -674,7 +674,7 @@ const InnerApp: React.FC = () => {
         const oneDayAgo = Date.now() - 86_400_000;
         for (const dialogMsg of dialogs) {
           const isMine = dialogMsg.sender === publicKey;
-          if (!isMine && dialogMsg.timestamp > oneDayAgo) {
+          if (!isMine && Number(dialogMsg.timestamp) > oneDayAgo) {
             const preview = dialogMsg.text && dialogMsg.text !== 'Encrypted Message'
               ? (dialogMsg.text.length > 80 ? dialogMsg.text.slice(0, MESSAGE_PREVIEW.CHAT_LIST) + '...' : dialogMsg.text)
               : 'New encrypted message';
@@ -1393,7 +1393,7 @@ const InnerApp: React.FC = () => {
         const lastMsg = remaining.length > 0 ? remaining[remaining.length - 1] : null;
         setContacts(pc => pc.map(c =>
           c.id === activeChatId
-            ? { ...c, lastMessage: lastMsg?.text || '', lastMessageTime: lastMsg ? new Date(lastMsg.timestamp) : undefined }
+            ? { ...c, lastMessage: lastMsg?.text || '', lastMessageTime: lastMsg ? new Date(Number(lastMsg.timestamp)) : undefined }
             : c
         ));
         return { ...prev, [activeChatId!]: remaining };

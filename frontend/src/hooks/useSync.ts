@@ -423,11 +423,11 @@ export function useSync(
                 callbacksRef.current.onRoomMessage(roomId, {
                   id,
                   text: decryptedText,
-                  time: new Date(timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+                  time: new Date(Number(timestamp)).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
                   senderId: sender === address ? 'me' : sender,
                   isMine: sender === address,
                   status: 'sent',
-                  timestamp,
+                  timestamp: Number(timestamp),
                   senderHash: senderName || sender?.slice(0, 10)
                 });
               }
@@ -602,12 +602,12 @@ export function useSync(
               const msg: Message & { recipient: string } = {
                 id: rawMsg.id,
                 text: text || "Decryption Failed",
-                time: new Date(rawMsg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+                time: new Date(Number(rawMsg.timestamp)).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
                 senderId: rawMsg.sender === address ? 'me' : rawMsg.sender,
                 isMine: rawMsg.sender === address,
                 status: data.payload.status || 'included',
                 recipient: rawMsg.recipient,
-                timestamp: rawMsg.timestamp,
+                timestamp: Number(rawMsg.timestamp),
                 attachment,
                 senderHash: rawMsg.senderHash,
                 recipientHash: rawMsg.recipientHash,
@@ -699,11 +699,11 @@ export function useSync(
         return {
           id: rawMsg.id,
           text: text,
-          time: new Date(rawMsg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+          time: new Date(Number(rawMsg.timestamp)).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
           senderId: rawMsg.sender === address ? 'me' : rawMsg.sender,
           isMine: rawMsg.sender === address,
           status: rawMsg.status,
-          timestamp: rawMsg.timestamp,
+          timestamp: Number(rawMsg.timestamp),
           recipient: rawMsg.recipient,
           attachment
         };
@@ -804,11 +804,11 @@ export function useSync(
             return {
               id: rawMsg.id,
               text: text,
-              time: new Date(rawMsg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+              time: new Date(Number(rawMsg.timestamp)).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
               senderId: rawMsg.sender === address ? 'me' : rawMsg.sender,
               isMine: rawMsg.sender === address,
               status: rawMsg.status,
-              timestamp: rawMsg.timestamp,
+              timestamp: Number(rawMsg.timestamp),
               recipient: rawMsg.recipient,
               attachment,
               reactions: allReactions[rawMsg.id] || undefined,
