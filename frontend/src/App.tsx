@@ -130,9 +130,20 @@ const InnerApp: React.FC = () => {
   const activeChatIdRef = useRef<string | null>(null);
   const sendReadReceiptRef = useRef<(dialogHash: string, messageIds: string[]) => void>(() => {});
 
-  const [activeChatId, setActiveChatId] = useState<string | null>(null);
+  // Parse URL hash to restore navigation state on page reload
+  const parseHash = (): { chatId: string | null; roomId: string | null; view: AppView } => {
+    const hash = window.location.hash.slice(1); // remove #
+    if (hash.startsWith('chat/')) return { chatId: hash.slice(5), roomId: null, view: 'chats' };
+    if (hash.startsWith('room/')) return { roomId: hash.slice(5), chatId: null, view: 'chats' };
+    const viewMap: Record<string, AppView> = { channels: 'channels', groups: 'groups', settings: 'settings', contacts: 'contacts', notifications: 'notifications' };
+    if (viewMap[hash]) return { chatId: null, roomId: null, view: viewMap[hash] };
+    return { chatId: null, roomId: null, view: 'chats' };
+  };
+  const initialHash = useRef(parseHash());
+
+  const [activeChatId, setActiveChatId] = useState<string | null>(initialHash.current.chatId);
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
-  const [currentView, setCurrentView] = useState<AppView>('chats');
+  const [currentView, setCurrentView] = useState<AppView>(initialHash.current.view);
   const [isInitializing, setIsInitializing] = useState(true);
   const [isProcessing, setIsProcessing] = useState(false);
   const [isSendingMessage, setIsSendingMessage] = useState(false);
@@ -148,7 +159,7 @@ const InnerApp: React.FC = () => {
   // Room State (Channels & Groups)
   const [channels, setChannels] = useState<Room[]>([]);
   const [groups, setGroups] = useState<Room[]>([]);
-  const [activeRoomId, setActiveRoomId] = useState<string | null>(null);
+  const [activeRoomId, setActiveRoomId] = useState<string | null>(initialHash.current.roomId);
   const [roomHistories, setRoomHistories] = useState<Record<string, Message[]>>({});
   const [roomMembers, setRoomMembers] = useState<string[]>([]);
 
@@ -710,6 +721,21 @@ const InnerApp: React.FC = () => {
     return () => clearTimeout(timer);
   }, []);
 
+  // Sync URL hash with navigation state (enables page reload persistence + deep links)
+  useEffect(() => {
+    let hash = '';
+    if (activeRoomId) {
+      hash = `room/${activeRoomId}`;
+    } else if (activeChatId) {
+      hash = `chat/${activeChatId}`;
+    } else if (currentView !== 'chats') {
+      hash = currentView;
+    }
+    const newHash = hash ? `#${hash}` : '';
+    if (window.location.hash !== newHash) {
+      window.history.replaceState(null, '', newHash || window.location.pathname);
+    }
+  }, [activeChatId, activeRoomId, currentView]);
 
   // Request notification permission on wallet connect
   useEffect(() => {
