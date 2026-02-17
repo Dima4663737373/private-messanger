@@ -560,13 +560,18 @@ export function useSync(
               }
 
               const rawMsg = data.payload;
-              
+
+              // Cache sender's encryption key from payload (avoids extra REST call)
+              if (rawMsg.senderEncryptionKey && rawMsg.sender && rawMsg.sender !== address) {
+                cacheSet(keyCache.current, rawMsg.sender, rawMsg.senderEncryptionKey, MAX_KEY_CACHE_SIZE);
+              }
+
               let text = decryptionCache.current.get(rawMsg.id);
               if (!text) {
                  text = await decryptPayload(
-                     rawMsg.encryptedPayload || rawMsg.content_encrypted, 
-                     rawMsg.sender, 
-                     rawMsg.recipient, 
+                     rawMsg.encryptedPayload || rawMsg.content_encrypted,
+                     rawMsg.sender,
+                     rawMsg.recipient,
                      rawMsg.timestamp,
                      rawMsg.encryptedPayloadSelf || rawMsg.encrypted_payload_self
                  );
@@ -755,6 +760,10 @@ export function useSync(
           logger.error('Failed to fetch reactions batch:', e);
           return {} as Record<string, Record<string, string[]>>;
         });
+
+        // Pre-fetch counterparty encryption key to avoid N+1 REST calls during decrypt
+        const senders = new Set(rawMessages.map((m: RawMessage) => m.sender === address ? m.recipient : m.sender).filter(a => a && a !== 'unknown'));
+        await Promise.all([...senders].map(addr => getSenderKey(addr)));
 
         const decryptedMessages = (await Promise.all(rawMessages.map(async (rawMsg: RawMessage) => {
           try {

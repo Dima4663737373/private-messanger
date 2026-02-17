@@ -482,6 +482,9 @@ wss.on('connection', (ws: any) => {
 
         const realId = created ? msgId : msg.id;
 
+        // Fetch sender's encryption public key so recipient can decrypt without extra REST call
+        const senderProfile = await Profile.findByPk(sender);
+
         const messagePayload = {
           id: realId, dialogHash, recipientHash, senderHash,
           sender, recipient: resolvedRecipient,
@@ -492,6 +495,7 @@ wss.on('connection', (ws: any) => {
           replyToId: replyToId || '',
           replyToText: replyToText || '',
           replyToSender: replyToSender || '',
+          senderEncryptionKey: senderProfile?.encryption_public_key || '',
           status: 'confirmed'
         };
 
