@@ -32,10 +32,12 @@ const ContactsView: React.FC<ContactsViewProps> = ({ contacts, onAddContact, onE
   // Debounce network search
   React.useEffect(() => {
     const timer = setTimeout(async () => {
-      if (searchQuery.length > 2 && onSearchNetwork) {
+      // Strip @ prefix for username search (e.g. "@alice" → "alice")
+      const query = searchQuery.startsWith('@') ? searchQuery.slice(1) : searchQuery;
+      if (query.length > 2 && onSearchNetwork) {
         setIsSearchingNetwork(true);
         try {
-          const results = await onSearchNetwork(searchQuery);
+          const results = await onSearchNetwork(query);
           setNetworkResults(results);
         } catch {
           // Silently ignore search errors during typing (debounce may cause stale requests)
@@ -50,8 +52,9 @@ const ContactsView: React.FC<ContactsViewProps> = ({ contacts, onAddContact, onE
     return () => clearTimeout(timer);
   }, [searchQuery, onSearchNetwork]);
 
-  const filteredContacts = contacts.filter(c => 
-    c.name.toLowerCase().includes(searchQuery.toLowerCase()) || 
+  const searchTerm = searchQuery.startsWith('@') ? searchQuery.slice(1) : searchQuery;
+  const filteredContacts = contacts.filter(c =>
+    c.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
     (c.address && c.address.includes(searchQuery))
   );
 

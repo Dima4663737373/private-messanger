@@ -1,8 +1,9 @@
-import React, { useState } from 'react';
-import { X, MessageSquare, Shield, Copy, UserPlus, Lock, Fingerprint, ExternalLink } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { X, MessageSquare, Copy, UserPlus } from 'lucide-react';
 import Avatar from './Avatar';
 import { Contact } from '../types';
 import { toast } from 'react-hot-toast';
+import { safeBackendFetch } from '../utils/api-client';
 
 interface ProfileViewProps {
   contact: Contact | any;
@@ -22,6 +23,18 @@ const ProfileView: React.FC<ProfileViewProps> = ({
   const [copied, setCopied] = useState(false);
   const [msgLoading, setMsgLoading] = useState(false);
   const [addLoading, setAddLoading] = useState(false);
+  const [fetchedBio, setFetchedBio] = useState<string | null>(null);
+
+  // Fetch real bio from backend profile if not already available
+  useEffect(() => {
+    const addr = contact.address || contact.id;
+    if (!addr || contact.bio) return;
+    safeBackendFetch<any>(`profiles/${addr}`).then(({ data }) => {
+      if (data?.exists && data.profile?.bio) {
+        setFetchedBio(data.profile.bio);
+      }
+    }).catch(() => {});
+  }, [contact.address, contact.id, contact.bio]);
 
   const handleCopyAddress = async () => {
     try {
@@ -55,7 +68,7 @@ const ProfileView: React.FC<ProfileViewProps> = ({
   };
 
   const displayName = contact.name || contact.username || 'Unknown User';
-  const displayBio = contact.description || contact.bio || '';
+  const displayBio = contact.bio || fetchedBio || '';
   const displayAddress = contact.address || '';
   const username = displayName.replace(/\s+/g, '').toLowerCase();
 
@@ -174,27 +187,6 @@ const ProfileView: React.FC<ProfileViewProps> = ({
                 <p className="text-[#888] font-mono text-[11px] break-all leading-relaxed">{displayAddress}</p>
               </button>
 
-              {/* Encryption Badge */}
-              <div className="p-3.5 bg-[#111] rounded-xl border border-[#1A1A1A] flex items-start gap-3">
-                <div className="w-8 h-8 rounded-lg bg-[#10B981]/10 flex items-center justify-center shrink-0 mt-0.5">
-                  <Lock size={14} className="text-[#10B981]" />
-                </div>
-                <div className="min-w-0">
-                  <p className="text-white text-sm font-medium">End-to-End Encrypted</p>
-                  <p className="text-[#555] text-xs mt-0.5">NaCl Curve25519 + Salsa20/Poly1305</p>
-                </div>
-              </div>
-
-              {/* Blockchain Badge */}
-              <div className="p-3.5 bg-[#111] rounded-xl border border-[#1A1A1A] flex items-start gap-3">
-                <div className="w-8 h-8 rounded-lg bg-[#FF8C00]/10 flex items-center justify-center shrink-0 mt-0.5">
-                  <Fingerprint size={14} className="text-[#FF8C00]" />
-                </div>
-                <div className="min-w-0">
-                  <p className="text-white text-sm font-medium">Aleo Blockchain</p>
-                  <p className="text-[#555] text-xs mt-0.5">Zero-knowledge proof identity</p>
-                </div>
-              </div>
 
             </div>
           </div>
