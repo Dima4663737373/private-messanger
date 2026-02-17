@@ -1653,15 +1653,6 @@ const ChatArea: React.FC<ChatAreaProps> = ({
             {isSending ? <div className="w-4 h-4 border-2 border-white/60 border-t-transparent rounded-full animate-spin" /> : <Send size={18} />}
           </button>
         </div>
-
-        {/* Formatting Hint */}
-        <div className="px-2 pt-2 text-[10px] text-[var(--text-tertiary)] font-mono flex items-center gap-3">
-          <span className="opacity-60">Format:</span>
-          <span className="hover:text-[var(--accent-primary)] transition-colors cursor-default">*bold*</span>
-          <span className="hover:text-[var(--accent-primary)] transition-colors cursor-default">_italic_</span>
-          <span className="hover:text-[var(--accent-primary)] transition-colors cursor-default">~strikethrough~</span>
-          <span className="hover:text-[var(--accent-primary)] transition-colors cursor-default">__underline__</span>
-        </div>
       </div>
 
       {/* Forward Message Modal */}
