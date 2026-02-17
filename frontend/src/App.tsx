@@ -143,7 +143,24 @@ const InnerApp: React.FC = () => {
   // Data State
   const [chats, setChats] = useState<Chat[]>([]);
   const [histories, setHistories] = useState<Record<string, Message[]>>({});
-  const [myProfile, setMyProfile] = useState<{username?: string, bio?: string} | null>(null);
+  const [myProfile, setMyProfileRaw] = useState<{username?: string, bio?: string} | null>(null);
+  const setMyProfile = React.useCallback((profile: {username?: string, bio?: string} | null) => {
+    setMyProfileRaw(profile);
+    try {
+      if (publicKey && profile) {
+        sessionStorage.setItem('ghost_profile_' + publicKey, JSON.stringify(profile));
+      }
+    } catch { /* ignore */ }
+  }, [publicKey]);
+
+  // Restore cached profile when wallet connects (instant display before backend sync)
+  useEffect(() => {
+    if (!publicKey || myProfile) return;
+    try {
+      const cached = sessionStorage.getItem('ghost_profile_' + publicKey);
+      if (cached) setMyProfileRaw(JSON.parse(cached));
+    } catch { /* ignore */ }
+  }, [publicKey, myProfile]);
   const [viewingProfile, setViewingProfile] = useState<Contact | NetworkProfile | null>(null);
 
   // Room State (Channels & Groups)
