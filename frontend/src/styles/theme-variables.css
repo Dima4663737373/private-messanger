@@ -271,7 +271,7 @@
   border-radius: 16px;
   display: flex;
   align-items: center;
-  justify-center;
+  justify-content: center;
   pointer-events: none;
   z-index: 100;
 }
