@@ -541,9 +541,14 @@ const InnerApp: React.FC = () => {
       // Keys are already derived early (before WS connects) — see keysReady effect above
 
       // 1. Register encryption public key in profile (required for key exchange)
-      // notifyProfileUpdate auto-includes encryptionPublicKey from cached keys
+      // MUST complete before sending/receiving — recipient needs our key to decrypt
       if (getCachedKeys(publicKey)) {
-        notifyProfileUpdate('', '', '').catch(() => {});
+        try {
+          await notifyProfileUpdate('', '', '');
+        } catch {
+          logger.warn('Profile key registration failed — retrying...');
+          try { await notifyProfileUpdate('', '', ''); } catch { /* give up */ }
+        }
       }
 
       // 2. Sync My Profile

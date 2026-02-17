@@ -52,21 +52,28 @@ export function useSync(
     cache.set(key, value);
   };
 
-  // Helper to get sender's encryption key
+  // Helper to get sender's encryption key (with retry for race conditions)
   const getSenderKey = async (senderAddr: string): Promise<string | null> => {
     // Skip invalid/placeholder addresses
     if (!senderAddr || senderAddr === 'unknown' || senderAddr.startsWith('hash:')) return null;
 
-    if (keyCache.current.has(senderAddr)) return keyCache.current.get(senderAddr)!;
+    // Return cached value only if it's a non-empty string
+    const cached = keyCache.current.get(senderAddr);
+    if (cached && cached.length > 0) return cached;
 
-    // Safe fetch handling 404
-    const { data } = await safeBackendFetch<any>(`profiles/${senderAddr}`, {
-      mockFallback: { exists: false, profile: null }
-    });
+    // Fetch from backend (with retry — profile may still be registering)
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const { data } = await safeBackendFetch<any>(`profiles/${senderAddr}`, {
+        mockFallback: { exists: false, profile: null }
+      });
 
-    if (data && data.exists && data.profile && data.profile.encryption_public_key) {
-       cacheSet(keyCache.current, senderAddr, data.profile.encryption_public_key, MAX_KEY_CACHE_SIZE);
-       return data.profile.encryption_public_key;
+      if (data?.exists && data.profile?.encryption_public_key) {
+        cacheSet(keyCache.current, senderAddr, data.profile.encryption_public_key, MAX_KEY_CACHE_SIZE);
+        return data.profile.encryption_public_key;
+      }
+
+      // Wait before retry (profile registration may be in flight)
+      if (attempt < 2) await new Promise(r => setTimeout(r, 1500));
     }
 
     return null;
@@ -562,7 +569,8 @@ export function useSync(
               const rawMsg = data.payload;
 
               // Cache sender's encryption key from payload (avoids extra REST call)
-              if (rawMsg.senderEncryptionKey && rawMsg.sender && rawMsg.sender !== address) {
+              // Only cache non-empty keys — empty means profile wasn't ready yet
+              if (rawMsg.senderEncryptionKey && rawMsg.senderEncryptionKey.length > 10 && rawMsg.sender && rawMsg.sender !== address) {
                 cacheSet(keyCache.current, rawMsg.sender, rawMsg.senderEncryptionKey, MAX_KEY_CACHE_SIZE);
               }
 

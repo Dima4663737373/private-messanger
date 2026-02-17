@@ -483,7 +483,16 @@ wss.on('connection', (ws: any) => {
         const realId = created ? msgId : msg.id;
 
         // Fetch sender's encryption public key so recipient can decrypt without extra REST call
-        const senderProfile = await Profile.findByPk(sender);
+        // Retry up to 3 times — profile POST may still be in flight for new users
+        let senderEncKey = '';
+        for (let attempt = 0; attempt < 3; attempt++) {
+          const senderProfile = await Profile.findByPk(sender);
+          if (senderProfile?.encryption_public_key) {
+            senderEncKey = senderProfile.encryption_public_key;
+            break;
+          }
+          if (attempt < 2) await new Promise(r => setTimeout(r, 500));
+        }
 
         const messagePayload = {
           id: realId, dialogHash, recipientHash, senderHash,
@@ -495,7 +504,7 @@ wss.on('connection', (ws: any) => {
           replyToId: replyToId || '',
           replyToText: replyToText || '',
           replyToSender: replyToSender || '',
-          senderEncryptionKey: senderProfile?.encryption_public_key || '',
+          senderEncryptionKey: senderEncKey,
           status: 'confirmed'
         };
 
