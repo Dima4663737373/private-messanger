@@ -77,6 +77,7 @@ export class Profile extends Model {
   declare address_hash: string;
   declare show_last_seen: boolean;
   declare show_avatar: boolean;
+  declare last_seen: number;
 }
 
 Profile.init({
@@ -113,6 +114,10 @@ Profile.init({
     type: DataTypes.BOOLEAN,
     defaultValue: true,
   },
+  last_seen: {
+    type: DataTypes.BIGINT,
+    allowNull: true,
+  },
 }, { sequelize, modelName: 'Profile' });
 
 export class Message extends Model {
@@ -136,6 +141,7 @@ export class Message extends Model {
   declare reply_to_id: string;
   declare reply_to_text: string;
   declare reply_to_sender: string;
+  declare read_at: number;
 }
 
 Message.init({
@@ -209,6 +215,10 @@ Message.init({
   },
   reply_to_sender: {
     type: DataTypes.STRING,
+    allowNull: true,
+  },
+  read_at: {
+    type: DataTypes.BIGINT,
     allowNull: true,
   },
 }, {

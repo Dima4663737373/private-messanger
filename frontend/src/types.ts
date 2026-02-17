@@ -54,6 +54,8 @@ export interface Message {
   senderHash?: string;
   recipientHash?: string;
   dialogHash?: string;
+  // Read receipt timestamp
+  readAt?: number;
   // Aleo transaction ID (blockchain proof)
   txId?: string;
 }
@@ -128,6 +130,7 @@ export interface RawMessage {
   reply_to_text?: string;
   reply_to_sender?: string;
   edited?: boolean;
+  read_at?: number;
 }
 
 /** Raw room from backend database */

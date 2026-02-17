@@ -418,14 +418,23 @@ wss.on('connection', (ws: any) => {
         });
       }
 
-      // Read receipt — relay to the sender of messages in a dialog
+      // Read receipt — persist to DB + relay to the sender
       if (data.type === 'READ_RECEIPT' && data.dialogHash && data.senderHash && Array.isArray(data.messageIds)) {
         const dialogParts = data.dialogHash.split('_');
-        const messageIds: string[] = data.messageIds.slice(0, 100); // limit
+        const messageIds: string[] = data.messageIds.slice(0, 100);
+        const readAt = Date.now();
+
+        // Persist read status to database
+        Message.update(
+          { status: 'read', read_at: readAt },
+          { where: { id: messageIds, status: { [Op.ne]: 'read' } } }
+        ).catch(e => console.error('Failed to persist read receipts:', e));
+
+        // Broadcast to sender's sessions
         wss.clients.forEach((client: any) => {
           if (client !== ws && client.readyState === WebSocket.OPEN && client.subscribedHash) {
             if (dialogParts.includes(client.subscribedHash) && client.subscribedHash !== data.senderHash) {
-              client.send(JSON.stringify({ type: 'READ_RECEIPT', payload: { dialogHash: data.dialogHash, messageIds } }));
+              client.send(JSON.stringify({ type: 'READ_RECEIPT', payload: { dialogHash: data.dialogHash, messageIds, readAt } }));
             }
           }
         });
@@ -522,9 +531,15 @@ wss.on('connection', (ws: any) => {
         ws.send(JSON.stringify({ type: 'dm_sent', payload: { tempId, id: realId, timestamp } }));
       }
 
-      // Heartbeat — update lastSeen
+      // Heartbeat — update lastSeen (in-memory + database)
       if (data.type === 'HEARTBEAT') {
-        ws.lastSeen = Date.now();
+        const now = Date.now();
+        ws.lastSeen = now;
+        // Persist to database (throttled: only if >30s since last DB write)
+        if (ws.authenticatedAddress && (!ws.lastSeenDbWrite || now - ws.lastSeenDbWrite > 30000)) {
+          ws.lastSeenDbWrite = now;
+          Profile.update({ last_seen: now }, { where: { address: ws.authenticatedAddress } }).catch(() => {});
+        }
       }
     } catch (e) {
       console.error('WS handler error:', e);
@@ -536,6 +551,10 @@ wss.on('connection', (ws: any) => {
 
   ws.on('close', () => {
     pendingChallenges.delete(ws);
+    // Persist last_seen to DB on disconnect
+    if (ws.authenticatedAddress) {
+      Profile.update({ last_seen: Date.now() }, { where: { address: ws.authenticatedAddress } }).catch(() => {});
+    }
     // Clear subscriptions to help GC
     ws.subscribedRooms.clear();
     ws.subscribedHash = null;
@@ -569,7 +588,7 @@ app.get('/online/:addressHash', onlineStatusLimiter, async (_req, res) => {
     }
   });
 
-  // Respect show_last_seen preference
+  // Respect show_last_seen preference + get persisted last_seen from DB
   let showLastSeen = true;
   let showAvatar = true;
   try {
@@ -577,6 +596,10 @@ app.get('/online/:addressHash', onlineStatusLimiter, async (_req, res) => {
     if (profile) {
       showLastSeen = profile.show_last_seen !== false;
       showAvatar = profile.show_avatar !== false;
+      // Use persisted last_seen if in-memory is missing (e.g., after server restart)
+      if (!lastSeen && profile.last_seen) {
+        lastSeen = Number(profile.last_seen);
+      }
     }
   } catch { /* ignore */ }
 

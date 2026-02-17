@@ -1,40 +1,36 @@
 import React from 'react';
-import { Check, CheckCheck, Clock, XCircle, Link } from 'lucide-react';
+import { Check, CheckCheck, Clock, XCircle } from 'lucide-react';
 import { cn } from './Spinner';
 
 export type MessageStatusType = 'pending' | 'sent' | 'included' | 'confirmed' | 'failed' | 'read';
 
 interface MessageStatusProps {
-  status?: string; // string to match generic types, but we expect specific values
+  status?: string;
+  readAt?: number;
   className?: string;
 }
 
-export const MessageStatus: React.FC<MessageStatusProps> = ({ status, className }) => {
+function formatReadAt(ts: number): string {
+  const d = new Date(ts);
+  return `Read ${d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
+}
+
+export const MessageStatus: React.FC<MessageStatusProps> = ({ status, readAt, className }) => {
   if (!status) return null;
 
   switch (status) {
     case 'pending':
-      return <Clock className={cn("w-3 h-3 text-white/40", className)} />;
+      return <Clock className={cn("w-3 h-3 text-white/40", className)} title="Sending..." />;
     case 'sent':
-      return <Check className={cn("w-3 h-3 text-white/40", className)} />; // Single check
+      return <Check className={cn("w-3 h-3 text-white/40", className)} title="Sent" />;
     case 'included':
-      return (
-        <span className="inline-flex items-center gap-0.5" title="On-chain confirmed">
-          <CheckCheck className={cn("w-3 h-3 text-white/60", className)} />
-          <Link className={cn("w-2.5 h-2.5 text-[#FF8C00]", className)} />
-        </span>
-      );
+      return <CheckCheck className={cn("w-3 h-3 text-[#FF8C00]", className)} title="On-chain confirmed" />;
     case 'confirmed':
-      return (
-        <span className="inline-flex items-center gap-0.5" title="Blockchain confirmed">
-          <CheckCheck className={cn("w-3 h-3 text-[#FF8C00]", className)} />
-          <Link className={cn("w-2.5 h-2.5 text-[#FF8C00]", className)} />
-        </span>
-      );
+      return <CheckCheck className={cn("w-3 h-3 text-[#FF8C00]", className)} title="Blockchain confirmed" />;
     case 'read':
-        return <CheckCheck className={cn("w-3 h-3 text-blue-400", className)} />; // Read (blue)
+      return <CheckCheck className={cn("w-3 h-3 text-blue-400", className)} title={readAt ? formatReadAt(readAt) : 'Read'} />;
     case 'failed':
-      return <XCircle className={cn("w-3 h-3 text-red-500", className)} />;
+      return <XCircle className={cn("w-3 h-3 text-red-500", className)} title="Failed" />;
     default:
       return null;
   }

@@ -28,7 +28,7 @@ export function useSync(
   onRoomMessageDeleted?: (roomId: string, messageId: string) => void,
   onRoomMessageEdited?: (roomId: string, messageId: string, text: string) => void,
   onDMSent?: (tempId: string, realId: string) => void,
-  onReadReceipt?: (dialogHash: string, messageIds: string[]) => void,
+  onReadReceipt?: (dialogHash: string, messageIds: string[], readAt?: number) => void,
   onProfileUpdated?: (address: string, username?: string, showAvatar?: boolean) => void
 ) {
   const ws = useRef<WebSocket | null>(null);
@@ -521,9 +521,9 @@ export function useSync(
 
             // Read receipt — other user read our messages
             if (data.type === 'READ_RECEIPT') {
-              const { dialogHash, messageIds } = data.payload;
+              const { dialogHash, messageIds, readAt } = data.payload;
               if (callbacksRef.current.onReadReceipt) {
-                callbacksRef.current.onReadReceipt(dialogHash, messageIds);
+                callbacksRef.current.onReadReceipt(dialogHash, messageIds, readAt);
               }
               return;
             }
@@ -807,8 +807,9 @@ export function useSync(
               time: new Date(Number(rawMsg.timestamp)).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
               senderId: rawMsg.sender === address ? 'me' : rawMsg.sender,
               isMine: rawMsg.sender === address,
-              status: rawMsg.status,
+              status: rawMsg.status || 'sent',
               timestamp: Number(rawMsg.timestamp),
+              readAt: rawMsg.read_at ? Number(rawMsg.read_at) : undefined,
               recipient: rawMsg.recipient,
               attachment,
               reactions: allReactions[rawMsg.id] || undefined,

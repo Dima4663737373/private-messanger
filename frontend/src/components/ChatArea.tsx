@@ -1007,7 +1007,7 @@ const ChatArea: React.FC<ChatAreaProps> = ({
                         {msg.edited && <span className="italic text-[#FF8C00]">(edited)</span>}
                         {disappearTimer !== 'off' && <Timer size={8} className="ml-1 text-[#FF8C00]" />}
                         {msg.isMine && (
-                            <MessageStatus status={msg.status} />
+                            <MessageStatus status={msg.status} readAt={msg.readAt} />
                         )}
                         </div>
 

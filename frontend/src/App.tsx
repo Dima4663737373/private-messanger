@@ -450,7 +450,8 @@ const InnerApp: React.FC = () => {
   }, []);
 
   // Read receipt — mark our sent messages as "read" when counterparty reads them
-  const handleReadReceipt = React.useCallback((dialogHash: string, messageIds: string[]) => {
+  const handleReadReceipt = React.useCallback((dialogHash: string, messageIds: string[], readAt?: number) => {
+    const readTime = readAt || Date.now();
     setHistories(prev => {
       let changed = false;
       const next = { ...prev };
@@ -459,7 +460,7 @@ const InnerApp: React.FC = () => {
         const updated = msgs.map(m => {
           if (messageIds.includes(m.id) && m.isMine && m.status !== 'read') {
             changed = true;
-            return { ...m, status: 'read' as const };
+            return { ...m, status: 'read' as const, readAt: readTime };
           }
           return m;
         });
@@ -752,7 +753,7 @@ const InnerApp: React.FC = () => {
     return map;
   }, [contacts]);
 
-  // Fetch online status / lastSeen when active DM chat changes
+  // Fetch online status / lastSeen when active DM chat changes (+ poll every 30s)
   const [contactOnlineStatus, setContactOnlineStatus] = useState<{ online: boolean; lastSeen: number | null; showAvatar: boolean } | null>(null);
   const contactsRef = useRef(contacts);
   contactsRef.current = contacts;
@@ -760,10 +761,15 @@ const InnerApp: React.FC = () => {
     if (!activeChatId || activeRoomId) { setContactOnlineStatus(null); return; }
     const contact = contactsRef.current.find(c => c.id === activeChatId);
     if (!contact?.address) return;
-    try {
-      const addrHash = hashAddress(contact.address);
-      fetchOnlineStatus(addrHash).then(setContactOnlineStatus);
-    } catch { /* ignore */ }
+    const poll = () => {
+      try {
+        const addrHash = hashAddress(contact.address);
+        fetchOnlineStatus(addrHash).then(setContactOnlineStatus);
+      } catch { /* ignore */ }
+    };
+    poll();
+    const interval = setInterval(poll, 30000);
+    return () => clearInterval(interval);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeChatId, activeRoomId]);
 
