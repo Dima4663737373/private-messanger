@@ -186,10 +186,12 @@ const ChatArea: React.FC<ChatAreaProps> = ({
   // Input emoji picker state
   const [showInputEmojiPicker, setShowInputEmojiPicker] = useState(false);
   const mainInputRef = useRef<HTMLInputElement>(null);
+  const editInputRef = useRef<HTMLInputElement>(null);
   const emojiPickerContainerRef = useRef<HTMLDivElement>(null);
 
   // Floating format toolbar state
   const [showFormatBar, setShowFormatBar] = useState(false);
+  const [formatTarget, setFormatTarget] = useState<'main' | 'edit'>('main');
   const formatBarRef = useRef<HTMLDivElement>(null);
 
   // Room info panel
@@ -291,7 +293,7 @@ const ChatArea: React.FC<ChatAreaProps> = ({
       if (emojiPickerContainerRef.current && !emojiPickerContainerRef.current.contains(event.target as Node)) {
         setShowInputEmojiPicker(false);
       }
-      if (formatBarRef.current && !formatBarRef.current.contains(event.target as Node) && event.target !== mainInputRef.current) {
+      if (formatBarRef.current && !formatBarRef.current.contains(event.target as Node) && event.target !== mainInputRef.current && event.target !== editInputRef.current) {
         setShowFormatBar(false);
       }
     };
@@ -371,26 +373,36 @@ const ChatArea: React.FC<ChatAreaProps> = ({
   };
 
   // Check if text is selected in input → show/hide format bar
-  const handleInputSelect = () => {
-    const el = mainInputRef.current;
+  const handleInputSelect = (target: 'main' | 'edit' = 'main') => {
+    const el = target === 'edit' ? editInputRef.current : mainInputRef.current;
     if (!el) return;
     const start = el.selectionStart ?? 0;
     const end = el.selectionEnd ?? 0;
-    setShowFormatBar(start !== end);
+    if (start !== end) {
+      setFormatTarget(target);
+      setShowFormatBar(true);
+    } else {
+      setShowFormatBar(false);
+    }
   };
 
-  // Wrap selected text with formatting markers
+  // Wrap selected text with formatting markers (works for both main and edit inputs)
   const applyFormat = (prefix: string, suffix: string) => {
-    const el = mainInputRef.current;
+    const isEdit = formatTarget === 'edit';
+    const el = isEdit ? editInputRef.current : mainInputRef.current;
     if (!el) return;
     const start = el.selectionStart ?? 0;
     const end = el.selectionEnd ?? 0;
     if (start === end) return;
-    const selected = input.slice(start, end);
-    const newValue = input.slice(0, start) + prefix + selected + suffix + input.slice(end);
-    setInput(newValue);
+    const currentValue = isEdit ? editContent : input;
+    const selected = currentValue.slice(start, end);
+    const newValue = currentValue.slice(0, start) + prefix + selected + suffix + currentValue.slice(end);
+    if (isEdit) {
+      setEditContent(newValue);
+    } else {
+      setInput(newValue);
+    }
     setShowFormatBar(false);
-    // Restore cursor after the formatted text
     requestAnimationFrame(() => {
       el.focus();
       const pos = start + prefix.length + selected.length + suffix.length;
@@ -438,6 +450,7 @@ const ChatArea: React.FC<ChatAreaProps> = ({
   const submitEdit = async (msg: Message) => {
       // Don't submit if text is empty or unchanged
       if (!editContent.trim() || editContent.trim() === msg.text) return;
+      setShowFormatBar(false);
       if (roomChat && onEditRoomMessage) {
           onEditRoomMessage(msg.id, editContent);
           setEditingMessageId(null);
@@ -459,6 +472,7 @@ const ChatArea: React.FC<ChatAreaProps> = ({
   const cancelEdit = () => {
       setEditingMessageId(null);
       setEditContent('');
+      setShowFormatBar(false);
   };
 
   if (!chatId || !activeChat) {
@@ -894,13 +908,24 @@ const ChatArea: React.FC<ChatAreaProps> = ({
               }`}>
                 {/* Edit Mode */}
                 {editingMessageId === msg.id ? (
-                    <div className="flex flex-col gap-2 min-w-[200px]">
+                    <div className="flex flex-col gap-2 min-w-[200px] relative">
                         <input
+                            ref={editInputRef}
                             value={editContent}
                             onChange={(e) => setEditContent(e.target.value)}
+                            onSelect={() => handleInputSelect('edit')}
                             className="w-full bg-transparent border-b border-white/20 outline-none pb-1 text-sm"
                             autoFocus
                         />
+                        {/* Format toolbar for edit input */}
+                        {showFormatBar && formatTarget === 'edit' && (
+                          <div ref={formatBarRef} className="absolute -top-10 left-0 flex items-center gap-1 bg-[#1A1A2E] border border-white/10 rounded-lg px-1 py-1 shadow-lg z-50">
+                            <button onClick={() => applyFormat('*', '*')} className="w-7 h-7 flex items-center justify-center text-white/70 hover:text-[#FF8C00] hover:bg-white/10 rounded-md transition-colors" title="Bold"><Bold size={13} /></button>
+                            <button onClick={() => applyFormat('_', '_')} className="w-7 h-7 flex items-center justify-center text-white/70 hover:text-[#FF8C00] hover:bg-white/10 rounded-md transition-colors" title="Italic"><Italic size={13} /></button>
+                            <button onClick={() => applyFormat('~', '~')} className="w-7 h-7 flex items-center justify-center text-white/70 hover:text-[#FF8C00] hover:bg-white/10 rounded-md transition-colors" title="Strikethrough"><Strikethrough size={13} /></button>
+                            <button onClick={() => applyFormat('__', '__')} className="w-7 h-7 flex items-center justify-center text-white/70 hover:text-[#FF8C00] hover:bg-white/10 rounded-md transition-colors" title="Underline"><Underline size={13} /></button>
+                          </div>
+                        )}
                         {/* Formatting preview */}
                         {/[*_~]/.test(editContent) && (
                           <div className="text-xs opacity-60 px-1">{applyFormatting(editContent)}</div>
@@ -1200,7 +1225,7 @@ const ChatArea: React.FC<ChatAreaProps> = ({
                   typingTimeoutRef.current = setTimeout(() => { typingTimeoutRef.current = null; }, 2000);
                 }
               }}
-              onSelect={handleInputSelect}
+              onSelect={() => handleInputSelect('main')}
               onKeyDown={handleKeyDown}
               placeholder={isSending ? "Encrypting & sending..." : roomChat ? `Message #${roomChat.name}...` : "Type an encrypted message..."}
               disabled={isSending}
@@ -1208,7 +1233,7 @@ const ChatArea: React.FC<ChatAreaProps> = ({
             />
             {/* Floating format toolbar */}
             <AnimatePresence>
-              {showFormatBar && (
+              {showFormatBar && formatTarget === 'main' && (
                 <motion.div
                   ref={formatBarRef}
                   initial={{ opacity: 0, y: 4, scale: 0.95 }}
