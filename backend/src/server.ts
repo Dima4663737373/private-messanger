@@ -12,6 +12,7 @@ import { Op } from 'sequelize';
 import nacl from 'tweetnacl';
 import { encodeBase64, decodeBase64 } from 'tweetnacl-util';
 import { createHmac, randomBytes } from 'crypto';
+import multer from 'multer';
 
 const app = express();
 const server = createServer(app);
@@ -1205,6 +1206,59 @@ app.post('/ipfs/pin', requireAuth, async (req: any, res) => {
   } catch (e) {
     console.error('POST /ipfs/pin error:', e);
     res.status(500).json({ error: 'Failed to register pin' });
+  }
+});
+
+// POST /ipfs/upload — proxy file upload to Pinata (keeps JWT on server)
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } }); // 10 MB
+
+const uploadLimiter = rateLimit({ windowMs: 60_000, max: 10, message: { error: 'Too many uploads' } });
+
+app.post('/ipfs/upload', requireAuth, uploadLimiter, upload.single('file'), async (req: any, res) => {
+  try {
+    const PINATA_JWT = process.env.PINATA_JWT;
+    if (!PINATA_JWT) {
+      return res.status(503).json({ error: 'IPFS upload not configured on server' });
+    }
+
+    const file = req.file;
+    if (!file) {
+      return res.status(400).json({ error: 'No file provided' });
+    }
+
+    // Build multipart form for Pinata
+    const FormData = (await import('form-data')).default;
+    const formData = new FormData();
+    formData.append('file', file.buffer, { filename: file.originalname, contentType: file.mimetype });
+
+    const axios = (await import('axios')).default;
+    const pinataRes = await axios.post('https://api.pinata.cloud/pinning/pinFileToIPFS', formData, {
+      headers: {
+        'Authorization': `Bearer ${PINATA_JWT}`,
+        ...formData.getHeaders(),
+      },
+      maxContentLength: 15 * 1024 * 1024,
+      maxBodyLength: 15 * 1024 * 1024,
+    });
+
+    const cid = pinataRes.data.IpfsHash;
+
+    // Auto-register pin
+    await PinnedFile.upsert({
+      cid: cid.slice(0, 200),
+      uploader_address: req.authenticatedAddress,
+      file_name: (file.originalname || '').slice(0, 255),
+      file_size: file.size || 0,
+      mime_type: (file.mimetype || '').slice(0, 100),
+      pin_status: 'pinned',
+      last_verified: Date.now(),
+      context: ((req.body?.context) || 'attachment').slice(0, 20),
+    });
+
+    res.json({ cid });
+  } catch (e: any) {
+    console.error('POST /ipfs/upload error:', e?.response?.data || e.message);
+    res.status(500).json({ error: 'Upload to IPFS failed' });
   }
 });
 

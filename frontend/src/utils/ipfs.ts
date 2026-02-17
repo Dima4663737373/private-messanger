@@ -38,16 +38,34 @@ export async function uploadFileToIPFS(file: File, context: 'attachment' | 'avat
       }
   }
 
-  // Mock Fallback (dev only — no Pinata JWT configured)
-  if (!import.meta.env.DEV) {
-    logger.warn("No VITE_PINATA_JWT configured. File upload unavailable in production.");
-    throw new Error("File upload not configured. Set VITE_PINATA_JWT.");
-  }
+  // No frontend Pinata JWT — proxy upload through backend
+  logger.debug("Uploading file to IPFS via backend proxy...", file.name);
+  try {
+    const { API_CONFIG } = await import('../config');
+    const { getSessionToken } = await import('./auth-store');
+    const formData = new FormData();
+    formData.append('file', file);
+    formData.append('context', context);
 
-  logger.info("Mock IPFS Upload (dev):", file.name);
-  await new Promise(resolve => setTimeout(resolve, IPFS_UPLOAD_RETRY_DELAY));
-  const mockCID = "Qm" + Array.from(crypto.getRandomValues(new Uint8Array(12)), b => b.toString(36)).join('').slice(0, 26);
-  return mockCID;
+    const token = getSessionToken();
+    const res = await fetch(`${API_CONFIG.BACKEND_BASE}/ipfs/upload`, {
+      method: 'POST',
+      headers: token ? { 'Authorization': `Bearer ${token}` } : {},
+      body: formData,
+    });
+
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: res.statusText }));
+      throw new Error(err.error || `Upload failed: ${res.status}`);
+    }
+
+    const data = await res.json();
+    logger.debug("File uploaded via backend proxy, CID:", data.cid);
+    return data.cid;
+  } catch (e) {
+    logger.error("Backend proxy upload error:", e);
+    throw e;
+  }
 }
 
 // Re-export from canonical location to avoid duplication
