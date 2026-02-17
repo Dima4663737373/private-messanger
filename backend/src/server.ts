@@ -5,23 +5,55 @@ import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
 import { createServer } from 'http';
 import { WebSocketServer, WebSocket } from 'ws';
-import { initDB, Message, Profile, SyncStatus, Reaction, Room, RoomMember, RoomMessage, RoomKey, PinnedMessage, UserPreferences, sequelize } from './database';
+import { initDB, Message, Profile, SyncStatus, Reaction, Room, RoomMember, RoomMessage, RoomKey, PinnedMessage, UserPreferences, SessionRecord, PinnedFile, MessageEditHistory, DeletedMessage, sequelize } from './database';
 import { v4 as uuidv4 } from 'uuid';
 import { IndexerService } from './services/indexer';
 import { Op } from 'sequelize';
 import nacl from 'tweetnacl';
 import { encodeBase64, decodeBase64 } from 'tweetnacl-util';
+import { createHmac, randomBytes } from 'crypto';
 
 const app = express();
 const server = createServer(app);
 const wss = new WebSocketServer({ server });
 
+// --- Validation Limits ---
+const LIMITS = {
+  USERNAME: 50,
+  BIO: 500,
+  MESSAGE_TEXT: 10000,
+  ENCRYPTED_PAYLOAD: 50000,
+  ROOM_NAME: 100,
+  ATTACHMENT_PART: 500,
+  HASH: 600,
+  ADDRESS: 200,
+  REPLY_TEXT: 5000,
+  TX_ID: 200,
+  ENCRYPTION_KEY: 500,
+  ROOM_MESSAGE: 10000,
+} as const;
+
 // --- Security Middleware ---
 
-// HTTP security headers
+// HTTP security headers with CSP
 app.use(helmet({
-  contentSecurityPolicy: false, // Allow frontend to load resources
-  crossOriginEmbedderPolicy: false
+  contentSecurityPolicy: {
+    directives: {
+      defaultSrc: ["'self'"],
+      scriptSrc: ["'self'", "'unsafe-inline'"], // unsafe-inline needed for React
+      styleSrc: ["'self'", "'unsafe-inline'"], // unsafe-inline for Tailwind
+      imgSrc: ["'self'", "data:", "https:", "ipfs.io", "*.ipfs.io", "cloudflare-ipfs.com"],
+      connectSrc: ["'self'", "ws:", "wss:", "https:", "ipfs.io", "*.ipfs.io"],
+      fontSrc: ["'self'", "data:"],
+      objectSrc: ["'none'"],
+      mediaSrc: ["'self'", "https:", "ipfs.io", "*.ipfs.io"],
+      frameSrc: ["'none'"],
+      baseUri: ["'self'"],
+      formAction: ["'self'"],
+      upgradeInsecureRequests: []
+    }
+  },
+  crossOriginEmbedderPolicy: false // Keep disabled for IPFS compatibility
 }));
 
 // CORS — restrict to known origins (localhost dev + configurable production)
@@ -54,7 +86,7 @@ app.use(cors({
   credentials: true
 }));
 
-app.use(express.json({ limit: '100kb' }));
+app.use(express.json({ limit: '500kb' })); // Encrypted payloads can be large
 
 const indexer = new IndexerService(wss);
 
@@ -64,18 +96,71 @@ interface Session {
   address: string;
   limited: boolean; // true = new user, can only register profile
   createdAt: number;
+  sessionSecret: string; // HMAC secret for message authentication
 }
 
 const sessions = new Map<string, Session>();
 const SESSION_TTL = 24 * 60 * 60 * 1000; // 24 hours
+
+// HMAC utilities for WebSocket message authentication
+const MASTER_SECRET = process.env.HMAC_MASTER_SECRET || randomBytes(32).toString('hex');
+
+function generateSessionSecret(token: string): string {
+  // Derive session-specific secret from token + master secret
+  return createHmac('sha256', MASTER_SECRET).update(token).digest('hex');
+}
+
+function generateMessageHMAC(sessionSecret: string, message: string): string {
+  return createHmac('sha256', sessionSecret).update(message).digest('hex');
+}
+
+function verifyMessageHMAC(sessionSecret: string, message: string, providedHMAC: string): boolean {
+  const expectedHMAC = generateMessageHMAC(sessionSecret, message);
+  return expectedHMAC === providedHMAC;
+}
 const CHALLENGE_TTL = 5 * 60 * 1000; // 5 minutes to complete auth challenge
 const pendingChallenges = new Map<WebSocket, { challenge: string; address: string; createdAt: number }>();
+
+// Persistent session helpers
+async function persistSession(token: string, session: Session) {
+  try {
+    await SessionRecord.upsert({ token, address: session.address, limited: session.limited, created_at: session.createdAt });
+  } catch { /* non-critical */ }
+}
+async function deletePersistedSession(token: string) {
+  try {
+    await SessionRecord.destroy({ where: { token } });
+  } catch { /* non-critical */ }
+}
+async function loadPersistedSessions() {
+  try {
+    const now = Date.now();
+    const records = await SessionRecord.findAll();
+    let loaded = 0;
+    for (const r of records) {
+      const createdAt = Number(r.created_at);
+      if (now - createdAt > SESSION_TTL) {
+        r.destroy().catch(() => {});
+      } else {
+        const sessionSecret = generateSessionSecret(r.token);
+        sessions.set(r.token, { address: r.address, limited: r.limited, createdAt, sessionSecret });
+        loaded++;
+      }
+    }
+    if (loaded > 0) console.log(`[Sessions] Restored ${loaded} persistent sessions`);
+  } catch (e) {
+    console.error('[Sessions] Failed to load persistent sessions:', e);
+  }
+}
 
 // Cleanup expired sessions and stale challenges every hour
 setInterval(() => {
   const now = Date.now();
   for (const [token, session] of sessions) {
-    if (now - session.createdAt > SESSION_TTL) sessions.delete(token);
+    if (now - session.createdAt > SESSION_TTL) {
+      sessions.delete(token);
+      deletePersistedSession(token);
+    }
   }
   // Sweep stale pending challenges (e.g. client disconnected without completing auth)
   for (const [ws, pending] of pendingChallenges) {
@@ -138,6 +223,7 @@ function requireAuth(req: any, res: any, next: any) {
   const session = sessions.get(token);
   if (!session || Date.now() - session.createdAt > SESSION_TTL) {
     sessions.delete(token);
+    deletePersistedSession(token);
     return res.status(401).json({ error: 'Session expired' });
   }
   req.authenticatedAddress = session.address;
@@ -193,17 +279,58 @@ function broadcastToRoom(roomId: string, msg: object, exclude?: WebSocket) {
   });
 }
 
-wss.on('connection', (ws: any) => {
+// WebSocket connection tracking and rate limiting
+const wsConnectionsByIP = new Map<string, { count: number; firstConnection: number }>();
+const WS_CONNECTION_LIMIT = 10; // Max 10 connections per IP
+const WS_CONNECTION_WINDOW = 60 * 1000; // 1 minute window
+
+// Cleanup stale connection tracking every 5 minutes
+setInterval(() => {
+  const now = Date.now();
+  for (const [ip, data] of wsConnectionsByIP.entries()) {
+    if (now - data.firstConnection > WS_CONNECTION_WINDOW) {
+      wsConnectionsByIP.delete(ip);
+    }
+  }
+}, 5 * 60 * 1000);
+
+wss.on('connection', (ws: any, req: any) => {
+  // Get client IP (handles proxies)
+  const ip = req.headers['x-forwarded-for']?.split(',')[0].trim() || req.socket.remoteAddress || 'unknown';
+
+  // Rate limit connections per IP
+  const now = Date.now();
+  const existing = wsConnectionsByIP.get(ip);
+
+  if (existing) {
+    if (now - existing.firstConnection < WS_CONNECTION_WINDOW) {
+      if (existing.count >= WS_CONNECTION_LIMIT) {
+        console.warn(`[WS] Connection limit exceeded for IP: ${ip}`);
+        ws.close(1008, 'Too many connections from this IP');
+        return;
+      }
+      existing.count++;
+    } else {
+      // Reset window
+      wsConnectionsByIP.set(ip, { count: 1, firstConnection: now });
+    }
+  } else {
+    wsConnectionsByIP.set(ip, { count: 1, firstConnection: now });
+  }
+
+  // Track this connection for cleanup
+  ws.clientIP = ip;
+
   ws._msgTimestamps = [] as number[];
   ws.subscribedRooms = new Set<string>();
   ws.authenticated = false; // Require authentication before subscribing
 
   ws.on('message', async (message: any) => {
     try {
-      // WS message size limit: 64KB max
+      // WS message size limit: 256KB max (encrypted payloads can be large)
       const msgStr = message.toString();
-      if (msgStr.length > 65536) {
-        ws.send(JSON.stringify({ type: 'error', message: 'Message too large (max 64KB)' }));
+      if (msgStr.length > 262144) {
+        ws.send(JSON.stringify({ type: 'error', message: 'Message too large (max 256KB)' }));
         return;
       }
 
@@ -224,6 +351,31 @@ wss.on('connection', (ws: any) => {
         return;
       }
 
+      // HMAC verification for all authenticated messages (except AUTH flow)
+      if (data.type !== 'AUTH' && data.type !== 'AUTH_RESPONSE' && data.type !== 'AUTH_NEWBIE') {
+        if (!ws.sessionToken || !sessions.has(ws.sessionToken)) {
+          ws.send(JSON.stringify({ type: 'error', message: 'Not authenticated' }));
+          return;
+        }
+
+        const session = sessions.get(ws.sessionToken)!;
+        const { hmac, ...messageData } = data;
+
+        if (!hmac) {
+          ws.send(JSON.stringify({ type: 'error', message: 'Missing HMAC' }));
+          return;
+        }
+
+        // Create canonical message string (without hmac field)
+        const messageStr = JSON.stringify(messageData);
+
+        if (!verifyMessageHMAC(session.sessionSecret, messageStr, hmac)) {
+          ws.send(JSON.stringify({ type: 'error', message: 'Invalid HMAC - message authentication failed' }));
+          ws.close(1008, 'HMAC verification failed'); // Policy violation
+          return;
+        }
+      }
+
       // AUTH message — initiate challenge-response authentication
       if (data.type === 'AUTH') {
         const { address } = data;
@@ -238,11 +390,14 @@ wss.on('connection', (ws: any) => {
         if (!profile || !profile.encryption_public_key) {
           // New user — issue limited token (can only register profile)
           const token = uuidv4();
-          sessions.set(token, { address, limited: true, createdAt: Date.now() });
+          const sessionSecret = generateSessionSecret(token);
+          const session = { address, limited: true, createdAt: Date.now(), sessionSecret };
+          sessions.set(token, session);
+          persistSession(token, session);
           ws.authenticated = true;
           ws.authenticatedAddress = address;
           ws.sessionToken = token;
-          ws.send(JSON.stringify({ type: 'AUTH_SUCCESS', address, token, requiresProfile: true }));
+          ws.send(JSON.stringify({ type: 'AUTH_SUCCESS', address, token, sessionSecret, requiresProfile: true }));
           return;
         }
 
@@ -267,11 +422,14 @@ wss.on('connection', (ws: any) => {
           console.error('AUTH challenge generation failed:', e);
           // Fallback: issue limited token if challenge fails (e.g. malformed key)
           const token = uuidv4();
-          sessions.set(token, { address, limited: true, createdAt: Date.now() });
+          const sessionSecret = generateSessionSecret(token);
+          const fallbackSession = { address, limited: true, createdAt: Date.now(), sessionSecret };
+          sessions.set(token, fallbackSession);
+          persistSession(token, fallbackSession);
           ws.authenticated = true;
           ws.authenticatedAddress = address;
           ws.sessionToken = token;
-          ws.send(JSON.stringify({ type: 'AUTH_SUCCESS', address, token, requiresProfile: true }));
+          ws.send(JSON.stringify({ type: 'AUTH_SUCCESS', address, token, sessionSecret, requiresProfile: true }));
         }
         return;
       }
@@ -287,11 +445,14 @@ wss.on('connection', (ws: any) => {
 
         if (data.decryptedChallenge === pending.challenge) {
           const token = uuidv4();
-          sessions.set(token, { address: pending.address, limited: false, createdAt: Date.now() });
+          const sessionSecret = generateSessionSecret(token);
+          const fullSession = { address: pending.address, limited: false, createdAt: Date.now(), sessionSecret };
+          sessions.set(token, fullSession);
+          persistSession(token, fullSession);
           ws.authenticated = true;
           ws.authenticatedAddress = pending.address;
           ws.sessionToken = token;
-          ws.send(JSON.stringify({ type: 'AUTH_SUCCESS', address: pending.address, token }));
+          ws.send(JSON.stringify({ type: 'AUTH_SUCCESS', address: pending.address, token, sessionSecret }));
         } else {
           ws.send(JSON.stringify({ type: 'AUTH_FAILED', message: 'Challenge verification failed' }));
         }
@@ -311,11 +472,14 @@ wss.on('connection', (ws: any) => {
         }
 
         const token = uuidv4();
-        sessions.set(token, { address, limited: true, createdAt: Date.now() });
+        const sessionSecret = generateSessionSecret(token);
+        const newSession = { address, limited: true, createdAt: Date.now(), sessionSecret };
+        sessions.set(token, newSession);
+        persistSession(token, newSession);
         ws.authenticated = true;
         ws.authenticatedAddress = address;
         ws.sessionToken = token;
-        ws.send(JSON.stringify({ type: 'AUTH_SUCCESS', address, token, requiresProfile: true }));
+        ws.send(JSON.stringify({ type: 'AUTH_SUCCESS', address, token, sessionSecret, requiresProfile: true }));
         return;
       }
 
@@ -389,7 +553,7 @@ wss.on('connection', (ws: any) => {
           room_id: data.roomId.slice(0, 100),
           sender: sender.slice(0, 100),
           sender_name: senderName.slice(0, 100),
-          text: data.text.slice(0, 10000),
+          text: data.text.slice(0, LIMITS.ROOM_MESSAGE),
           timestamp,
         });
         const msg = { type: 'room_message', payload: { id: msgId, roomId: data.roomId, sender, senderName, text: data.text, timestamp } };
@@ -517,11 +681,27 @@ wss.on('connection', (ws: any) => {
           status: 'confirmed'
         };
 
+        // Check if recipient has blocked the sender (suppress real-time delivery)
+        let recipientBlocked = false;
+        if (resolvedRecipient !== 'unknown') {
+          try {
+            const recipientPrefs = await UserPreferences.findByPk(resolvedRecipient);
+            if (recipientPrefs?.blocked_users) {
+              const blockedList: string[] = JSON.parse(recipientPrefs.blocked_users || '[]');
+              recipientBlocked = blockedList.includes(sender);
+            }
+          } catch { /* non-critical */ }
+        }
+
         // Broadcast to recipient (and sender's other sessions)
         wss.clients.forEach((client: any) => {
           if (client.readyState === WebSocket.OPEN && client !== ws) {
             const subHash = client.subscribedHash;
-            if (subHash && (subHash === recipientHash || subHash === senderHash)) {
+            if (subHash === senderHash) {
+              // Always deliver to sender's other sessions
+              client.send(JSON.stringify({ type: 'message_detected', payload: messagePayload }));
+            } else if (subHash === recipientHash && !recipientBlocked) {
+              // Only deliver to recipient if not blocked
               client.send(JSON.stringify({ type: 'message_detected', payload: messagePayload }));
             }
           }
@@ -551,6 +731,18 @@ wss.on('connection', (ws: any) => {
 
   ws.on('close', () => {
     pendingChallenges.delete(ws);
+
+    // Decrement connection count for this IP
+    if (ws.clientIP) {
+      const existing = wsConnectionsByIP.get(ws.clientIP);
+      if (existing) {
+        existing.count--;
+        if (existing.count <= 0) {
+          wsConnectionsByIP.delete(ws.clientIP);
+        }
+      }
+    }
+
     // Persist last_seen to DB on disconnect
     if (ws.authenticatedAddress) {
       Profile.update({ last_seen: Date.now() }, { where: { address: ws.authenticatedAddress } }).catch(() => {});
@@ -559,11 +751,8 @@ wss.on('connection', (ws: any) => {
     ws.subscribedRooms.clear();
     ws.subscribedHash = null;
     ws.subscribedDialog = null;
-    // Security: invalidate session on disconnect to prevent stolen tokens
-    if (ws.sessionToken) {
-      sessions.delete(ws.sessionToken);
-      console.log(`[WS] Session invalidated for ${ws.authenticatedAddress?.slice(0, 14)}... on disconnect`);
-    }
+    // Note: sessions persist across reconnections (TTL-based expiry)
+    // This allows clients to reuse tokens after server restarts or page refreshes
   });
 });
 
@@ -712,7 +901,7 @@ app.get('/link-preview', linkPreviewLimiter, async (req, res) => {
 // --- Routes ---
 
 // GET /messages/:dialogHash — messages for a dialog or address
-app.get('/messages/:dialogHash', async (req, res) => {
+app.get('/messages/:dialogHash', requireAuth, async (req: any, res) => {
   try {
     const { dialogHash } = req.params;
     if (!isValidHash(dialogHash)) return res.status(400).json({ error: 'Invalid hash' });
@@ -743,7 +932,7 @@ app.get('/messages/:dialogHash', async (req, res) => {
 });
 
 // GET /messages/dialog/:dialogHash — messages for a specific dialog
-app.get('/messages/dialog/:dialogHash', async (req, res) => {
+app.get('/messages/dialog/:dialogHash', requireAuth, async (req: any, res) => {
   try {
     const { dialogHash } = req.params;
     if (!isValidHash(dialogHash)) return res.status(400).json({ error: 'Invalid hash' });
@@ -765,7 +954,7 @@ app.get('/messages/dialog/:dialogHash', async (req, res) => {
 });
 
 // GET /dialogs/:addressHash — all active dialogs for a user
-app.get('/dialogs/:addressHash', async (req, res) => {
+app.get('/dialogs/:addressHash', requireAuth, async (req: any, res) => {
   try {
     const { addressHash } = req.params;
     if (!isValidHash(addressHash)) return res.status(400).json({ error: 'Invalid hash' });
@@ -904,7 +1093,7 @@ app.get('/history/:address', requireFullAuth, async (req: any, res) => {
 app.post('/profiles', requireAuth, profileWriteLimiter, async (req: any, res) => {
   try {
     const address = req.authenticatedAddress; // Use authenticated address, not client-provided
-    const { name, bio, txId, encryptionPublicKey, addressHash, showLastSeen, showProfilePhoto } = req.body;
+    const { name, bio, txId, encryptionPublicKey, addressHash, showLastSeen, showProfilePhoto, avatarCid } = req.body;
 
     // Build update data — only include non-empty fields to avoid overwriting
     const data: any = { address };
@@ -937,12 +1126,21 @@ app.post('/profiles', requireAuth, profileWriteLimiter, async (req: any, res) =>
     if (typeof showProfilePhoto === 'boolean') {
       data.show_avatar = showProfilePhoto;
     }
+    if (typeof avatarCid === 'string' && avatarCid.length > 0) {
+      // IPFS CID validation: must start with Qm or bafy (CIDv0/v1)
+      if (avatarCid.startsWith('Qm') || avatarCid.startsWith('bafy')) {
+        data.avatar_cid = avatarCid.slice(0, 200);
+      }
+    } else if (avatarCid === null || avatarCid === '') {
+      // Allow clearing avatar
+      data.avatar_cid = null;
+    }
 
     await Profile.upsert(data);
 
     // Broadcast profile update to all connected clients (so they see the new name / avatar change)
-    if (data.username || typeof showProfilePhoto === 'boolean') {
-      const payload = { type: 'profile_detected', payload: { address, username: data.username, showAvatar: data.show_avatar } };
+    if (data.username || typeof showProfilePhoto === 'boolean' || data.avatar_cid !== undefined) {
+      const payload = { type: 'profile_detected', payload: { address, username: data.username, showAvatar: data.show_avatar, avatarCid: data.avatar_cid } };
       wss.clients.forEach((client: any) => {
         if (client.readyState === WebSocket.OPEN && client.authenticatedAddress !== address) {
           client.send(JSON.stringify(payload));
@@ -955,7 +1153,9 @@ app.post('/profiles', requireAuth, profileWriteLimiter, async (req: any, res) =>
     if (req.sessionLimited && encryptionPublicKey) {
       const token = req.headers.authorization?.slice(7);
       if (token && sessions.has(token)) {
-        sessions.get(token)!.limited = false;
+        const s = sessions.get(token)!;
+        s.limited = false;
+        persistSession(token, s);
       }
     }
 
@@ -971,9 +1171,99 @@ app.post('/logout', requireAuth, (req: any, res) => {
   const token = req.headers.authorization?.slice(7);
   if (token && sessions.has(token)) {
     sessions.delete(token);
+    deletePersistedSession(token);
     console.log(`[Auth] Session invalidated for ${req.authenticatedAddress?.slice(0, 14)}... (logout)`);
   }
   res.json({ success: true });
+});
+
+// --- IPFS Pin Tracking ---
+
+// POST /ipfs/pin — register a new pinned file
+app.post('/ipfs/pin', requireAuth, async (req: any, res) => {
+  try {
+    const { cid, fileName, fileSize, mimeType, context } = req.body;
+    if (!cid || typeof cid !== 'string') {
+      return res.status(400).json({ error: 'CID required' });
+    }
+    if (!cid.startsWith('Qm') && !cid.startsWith('bafy')) {
+      return res.status(400).json({ error: 'Invalid IPFS CID format' });
+    }
+
+    await PinnedFile.upsert({
+      cid: cid.slice(0, 200),
+      uploader_address: req.authenticatedAddress,
+      file_name: (fileName || '').slice(0, 255),
+      file_size: typeof fileSize === 'number' ? fileSize : 0,
+      mime_type: (mimeType || '').slice(0, 100),
+      pin_status: 'pinned',
+      last_verified: Date.now(),
+      context: (context || 'attachment').slice(0, 20),
+    });
+
+    res.json({ success: true });
+  } catch (e) {
+    console.error('POST /ipfs/pin error:', e);
+    res.status(500).json({ error: 'Failed to register pin' });
+  }
+});
+
+// GET /ipfs/pins/:address — list pinned files for a user
+app.get('/ipfs/pins/:address', requireAuth, async (req: any, res) => {
+  try {
+    if (req.authenticatedAddress !== req.params.address) {
+      return res.status(403).json({ error: 'Forbidden' });
+    }
+    const pins = await PinnedFile.findAll({
+      where: { uploader_address: req.params.address },
+      order: [['createdAt', 'DESC']],
+      limit: 100,
+    });
+    res.json({ pins });
+  } catch (e) {
+    console.error('GET /ipfs/pins error:', e);
+    res.status(500).json({ error: 'Failed to fetch pins' });
+  }
+});
+
+// GET /ipfs/verify/:cid — check if a CID is still accessible
+app.get('/ipfs/verify/:cid', async (req, res) => {
+  try {
+    const { cid } = req.params;
+    if (!cid.startsWith('Qm') && !cid.startsWith('bafy')) {
+      return res.status(400).json({ error: 'Invalid CID' });
+    }
+
+    // Check IPFS gateway with a HEAD request (fast, no download)
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 10000);
+    try {
+      const response = await fetch(`https://ipfs.io/ipfs/${cid}`, {
+        method: 'HEAD',
+        signal: controller.signal,
+      });
+      clearTimeout(timeout);
+
+      const accessible = response.ok;
+      // Update pin record
+      await PinnedFile.update(
+        { pin_status: accessible ? 'pinned' : 'lost', last_verified: Date.now() },
+        { where: { cid } }
+      );
+
+      res.json({ cid, accessible, status: response.status });
+    } catch {
+      clearTimeout(timeout);
+      await PinnedFile.update(
+        { pin_status: 'lost', last_verified: Date.now() },
+        { where: { cid } }
+      );
+      res.json({ cid, accessible: false, status: 0 });
+    }
+  } catch (e) {
+    console.error('GET /ipfs/verify error:', e);
+    res.status(500).json({ error: 'Verification failed' });
+  }
 });
 
 // --- User Preferences ---
@@ -1000,6 +1290,7 @@ app.get('/preferences/:address', requireAuth, preferencesLimiter, async (req: an
     deleted_chats: [],
     saved_contacts: [],
     disappear_timers: {},
+    blocked_users: [],
     encrypted_keys: null,
     key_nonce: null,
     settings: {},
@@ -1028,6 +1319,7 @@ app.get('/preferences/:address', requireAuth, preferencesLimiter, async (req: an
       deleted_chats: safeParse(prefs.deleted_chats, []),
       saved_contacts: safeParse(prefs.saved_contacts, []),
       disappear_timers: safeParse(prefs.disappear_timers, {}),
+      blocked_users: safeParse(prefs.blocked_users, []),
       encrypted_keys: null, // Secret keys no longer returned — derived from wallet
       key_nonce: null,
       settings: safeParse(prefs.settings, {}),
@@ -1051,7 +1343,7 @@ app.post('/preferences/:address', requireAuth, preferencesLimiter, async (req: a
       return res.status(403).json({ error: 'Can only update your own preferences' });
     }
 
-    const { pinnedChats, mutedChats, deletedChats, savedContacts, disappearTimers, settings, migrated } = req.body;
+    const { pinnedChats, mutedChats, deletedChats, savedContacts, disappearTimers, blockedUsers, settings, migrated } = req.body;
     // Note: encryptedKeys and keyNonce are no longer accepted — keys derived from wallet
 
     // Validate and stringify JSON fields
@@ -1093,6 +1385,13 @@ app.post('/preferences/:address', requireAuth, preferencesLimiter, async (req: a
       data.disappear_timers = JSON.stringify(disappearTimers);
     }
 
+    if (blockedUsers !== undefined) {
+      if (!Array.isArray(blockedUsers)) return res.status(400).json({ error: 'blockedUsers must be array' });
+      // Validate: max 500 entries, each must be a string address
+      const validBlocked = blockedUsers.slice(0, 500).filter((a: any) => typeof a === 'string' && a.length > 0 && a.length <= 200);
+      data.blocked_users = JSON.stringify(validBlocked);
+    }
+
     if (settings !== undefined) {
       if (typeof settings !== 'object' || settings === null) {
         return res.status(400).json({ error: 'settings must be object' });
@@ -1132,7 +1431,7 @@ function isValidEmoji(str: string): boolean {
 }
 
 // POST /reactions/batch — get reactions for multiple messages at once
-app.post('/reactions/batch', async (req, res) => {
+app.post('/reactions/batch', requireAuth, async (req: any, res) => {
   try {
     const { messageIds } = req.body;
     if (!Array.isArray(messageIds) || messageIds.length === 0) return res.json({});
@@ -1288,6 +1587,16 @@ app.delete('/messages/:id', requireAuth, async (req: any, res) => {
     if (!msg) return res.status(404).json({ error: 'Message not found' });
     if (msg.sender !== address) return res.status(403).json({ error: 'Only sender can delete' });
 
+    // Save deletion audit record
+    await DeletedMessage.create({
+      message_id: id,
+      dialog_hash: msg.dialog_hash || null,
+      deleted_by: address,
+      deleted_at: Date.now(),
+      sender: msg.sender,
+      recipient: msg.recipient,
+    }).catch(e => console.error('Failed to save delete audit:', e));
+
     const dialogHash = msg.dialog_hash;
     await msg.destroy();
 
@@ -1320,8 +1629,21 @@ app.post('/messages/:id/edit', requireAuth, async (req: any, res) => {
     if (!msg) return res.status(404).json({ error: 'Message not found' });
     if (msg.sender !== address) return res.status(403).json({ error: 'Only sender can edit' });
 
+    // Save previous version to edit history
+    const editedAt = Date.now();
+    await MessageEditHistory.create({
+      message_id: id,
+      previous_payload: msg.encrypted_payload,
+      previous_payload_self: msg.encrypted_payload_self || null,
+      edited_by: address,
+      edited_at: editedAt,
+    });
+
+    // Update the message
     msg.encrypted_payload = encryptedPayload.slice(0, 50000);
     if (encryptedPayloadSelf) msg.encrypted_payload_self = encryptedPayloadSelf.slice(0, 50000);
+    msg.edited_at = editedAt;
+    msg.edit_count = (Number(msg.edit_count) || 0) + 1;
     await msg.save();
 
     // Broadcast edit to all relevant clients
@@ -1335,17 +1657,44 @@ app.post('/messages/:id/edit', requireAuth, async (req: any, res) => {
               id, encryptedPayload: msg.encrypted_payload,
               encryptedPayloadSelf: msg.encrypted_payload_self,
               sender: msg.sender, recipient: msg.recipient,
-              timestamp: msg.timestamp
+              timestamp: msg.timestamp,
+              editedAt, editCount: msg.edit_count
             }
           }));
         }
       }
     });
 
-    res.json({ success: true });
+    res.json({ success: true, editedAt, editCount: msg.edit_count });
   } catch (e) {
     console.error('POST /messages/:id/edit error:', e);
     res.status(500).json({ error: 'Failed to edit message' });
+  }
+});
+
+// GET /messages/:id/history — get edit history for a message
+app.get('/messages/:id/history', requireAuth, async (req: any, res) => {
+  try {
+    const { id } = req.params;
+    const address = req.authenticatedAddress;
+
+    // Verify the requester is sender or recipient
+    const msg = await Message.findByPk(id);
+    if (!msg) return res.status(404).json({ error: 'Message not found' });
+    if (msg.sender !== address && msg.recipient !== address) {
+      return res.status(403).json({ error: 'Access denied' });
+    }
+
+    const history = await MessageEditHistory.findAll({
+      where: { message_id: id },
+      order: [['edited_at', 'DESC']],
+      limit: 50,
+    });
+
+    res.json({ history });
+  } catch (e) {
+    console.error('GET /messages/:id/history error:', e);
+    res.status(500).json({ error: 'Failed to fetch edit history' });
   }
 });
 
@@ -1405,10 +1754,18 @@ app.get('/rooms', async (req, res) => {
 });
 
 // GET /rooms/:id — room details + members
-app.get('/rooms/:id', async (req, res) => {
+app.get('/rooms/:id', requireAuth, async (req: any, res) => {
   try {
     const room = await Room.findByPk(req.params.id);
     if (!room) return res.status(404).json({ error: 'Room not found' });
+
+    // Private rooms require membership
+    if (room.is_private) {
+      const address = req.authenticatedAddress;
+      const member = await RoomMember.findOne({ where: { room_id: room.id, user_id: address } });
+      if (!member) return res.status(403).json({ error: 'Not a member of this private room' });
+    }
+
     const members = await RoomMember.findAll({ where: { room_id: room.id } });
     res.json({ ...room.toJSON(), members: members.map(m => m.user_id) });
   } catch (e) {
@@ -1564,12 +1921,23 @@ app.post('/rooms/:id/leave', requireFullAuth, async (req: any, res) => {
 });
 
 // GET /rooms/:id/messages — room messages
-app.get('/rooms/:id/messages', async (req, res) => {
+app.get('/rooms/:id/messages', requireAuth, async (req: any, res) => {
   try {
+    const roomId = req.params.id;
+    const address = req.authenticatedAddress;
+
+    // Verify membership for private rooms
+    const room = await Room.findByPk(roomId);
+    if (!room) return res.status(404).json({ error: 'Room not found' });
+    if (room.is_private) {
+      const member = await RoomMember.findOne({ where: { room_id: roomId, user_id: address } });
+      if (!member) return res.status(403).json({ error: 'Not a member of this room' });
+    }
+
     const limit = clampInt(req.query.limit, 1, 200, 100);
     const offset = clampInt(req.query.offset, 0, 100000, 0);
     const messages = await RoomMessage.findAll({
-      where: { room_id: req.params.id },
+      where: { room_id: roomId },
       order: [['timestamp', 'ASC']],
       limit,
       offset,
@@ -1712,7 +2080,7 @@ app.get('/rooms/:id/members', requireFullAuth, async (req: any, res) => {
 // --- Pinned Messages ---
 
 // GET /pins/:contextId — get pinned messages for a dialog or room
-app.get('/pins/:contextId', async (req, res) => {
+app.get('/pins/:contextId', requireAuth, async (req: any, res) => {
   try {
     const { contextId } = req.params;
     if (!contextId || contextId.length > 300) return res.json([]);
@@ -1850,7 +2218,8 @@ app.get('/health', (_req, res) => {
   res.json({ status: 'ok', uptime: process.uptime(), timestamp: Date.now() });
 });
 
-initDB().then(() => {
+initDB().then(async () => {
+  await loadPersistedSessions();
   indexer.start();
 
   // Run disappearing message cleanup every 60 seconds

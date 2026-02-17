@@ -13,7 +13,7 @@
 
 import nacl from 'tweetnacl';
 import { encodeBase64, decodeBase64, decodeUTF8 } from 'tweetnacl-util';
-import { generateKeyPair } from './crypto';
+import { generateKeyPair, validateKeyPair } from './crypto';
 import { KEY_CACHE_TTL } from '../constants';
 import { logger } from './logger';
 
@@ -42,6 +42,12 @@ export function getCachedKeys(publicKey: string): EncryptionKeyPair | null {
 }
 
 export function setCachedKeys(publicKey: string, keys: EncryptionKeyPair): void {
+  // Validate keys before caching
+  const validation = validateKeyPair(keys);
+  if (!validation.valid) {
+    logger.error('Invalid keys rejected from cache:', validation.error);
+    throw new Error(`Invalid encryption keys: ${validation.error}`);
+  }
   sessionKeyCache.set(publicKey, { keys, expiresAt: Date.now() + KEY_CACHE_TTL });
 }
 
@@ -75,6 +81,12 @@ function getSessionKeys(publicKey: string): EncryptionKeyPair | null {
 }
 
 function setSessionKeys(publicKey: string, keys: EncryptionKeyPair): void {
+  // Validate keys before storing
+  const validation = validateKeyPair(keys);
+  if (!validation.valid) {
+    logger.error('Invalid keys rejected from sessionStorage:', validation.error);
+    throw new Error(`Invalid encryption keys: ${validation.error}`);
+  }
   try {
     sessionStorage.setItem(SESSION_KEY_PREFIX + publicKey, JSON.stringify(keys));
   } catch { /* ignore quota errors */ }

@@ -85,6 +85,32 @@ export const MESSAGE_PREVIEW = {
 // File Upload Constants
 // ═══════════════════════════════════════════════════════════
 
+/** Maximum avatar file size (5 MB) */
+export const MAX_AVATAR_SIZE = 5 * 1024 * 1024;
+
+/** Allowed avatar MIME types */
+export const AVATAR_ALLOWED_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
+
+// ═══════════════════════════════════════════════════════════
+// Input Validation Limits
+// ═══════════════════════════════════════════════════════════
+
+/** Maximum message text length (characters) */
+export const MAX_MESSAGE_LENGTH = 10000;
+
+/** Maximum username length */
+export const MAX_USERNAME_LENGTH = 50;
+
+/** Maximum bio length */
+export const MAX_BIO_LENGTH = 500;
+
+/** Maximum room/channel name length */
+export const MAX_ROOM_NAME_LENGTH = 100;
+
+// ═══════════════════════════════════════════════════════════
+// File Upload Constants
+// ═══════════════════════════════════════════════════════════
+
 /** Maximum file size for uploads (100 MB) */
 export const MAX_FILE_SIZE = 100 * 1024 * 1024;
 
@@ -128,3 +154,21 @@ export const MAX_OFFLINE_QUEUE_SIZE = 100;
 
 /** Offline queue retention period (7 days) */
 export const OFFLINE_QUEUE_TTL = 7 * 24 * 60 * 60 * 1000;
+
+// ═══════════════════════════════════════════════════════════
+// Avatar Helpers
+// ═══════════════════════════════════════════════════════════
+
+/** Generic avatar for hidden/unknown users */
+export const GENERIC_AVATAR = `${UI_AVATARS_BASE_URL}?name=?&background=888&color=fff`;
+
+/**
+ * Build avatar URL — uses IPFS if CID available, falls back to ui-avatars
+ */
+export function buildAvatarUrl(name: string, avatarCid?: string | null, hideAvatar?: boolean): string {
+  if (hideAvatar) return GENERIC_AVATAR;
+  if (avatarCid && (avatarCid.startsWith('Qm') || avatarCid.startsWith('bafy'))) {
+    return `${IPFS_GATEWAY_URL}${avatarCid}`;
+  }
+  return `${UI_AVATARS_BASE_URL}?name=${encodeURIComponent(name || '?')}&background=random&color=fff`;
+}

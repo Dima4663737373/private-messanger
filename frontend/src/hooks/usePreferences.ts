@@ -21,6 +21,7 @@ export interface Preferences {
   deletedChats: string[];
   savedContacts: SavedContact[];
   disappearTimers: Record<string, string>;
+  blockedUsers: string[];
   settings: UserSettings;
 }
 
@@ -30,6 +31,7 @@ const DEFAULT_PREFERENCES: Preferences = {
   deletedChats: [],
   savedContacts: [],
   disappearTimers: {},
+  blockedUsers: [],
   settings: { ...DEFAULT_SETTINGS }
 };
 
@@ -58,6 +60,7 @@ export function usePreferences(publicKey: string | null) {
         deletedChats: prefs.deleted_chats || [],
         savedContacts: prefs.saved_contacts || [],
         disappearTimers: prefs.disappear_timers || {},
+        blockedUsers: prefs.blocked_users || [],
         settings: { ...DEFAULT_SETTINGS, ...(prefs.settings || {}) }
       });
       setIsLoaded(true);
@@ -165,6 +168,25 @@ export function usePreferences(publicKey: string | null) {
     );
   }, [setDeletedChats]);
 
+  // Update blocked users
+  const setBlockedUsers = useCallback((users: string[] | ((prev: string[]) => string[])) => {
+    setPreferences(prev => {
+      const next = typeof users === 'function' ? users(prev.blockedUsers) : users;
+      saveToBackend({ blockedUsers: next });
+      return { ...prev, blockedUsers: next };
+    });
+  }, [saveToBackend]);
+
+  // Block a user
+  const blockUser = useCallback((address: string) => {
+    setBlockedUsers(prev => prev.includes(address) ? prev : [...prev, address]);
+  }, [setBlockedUsers]);
+
+  // Unblock a user
+  const unblockUser = useCallback((address: string) => {
+    setBlockedUsers(prev => prev.filter(a => a !== address));
+  }, [setBlockedUsers]);
+
   // Set disappear timer for a specific chat
   const setDisappearTimer = useCallback((chatId: string, timer: string) => {
     setDisappearTimers(prev => ({ ...prev, [chatId]: timer }));
@@ -187,6 +209,9 @@ export function usePreferences(publicKey: string | null) {
     setDeletedChats,
     setSavedContacts,
     setDisappearTimers,
+    setBlockedUsers,
+    blockUser,
+    unblockUser,
     togglePin,
     toggleMute,
     markChatDeleted,

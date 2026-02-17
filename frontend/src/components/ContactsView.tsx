@@ -6,6 +6,7 @@ import Avatar from './Avatar';
 import { EmptyState } from './ui/EmptyState';
 import { ContactSkeleton } from './ui/Skeleton';
 import { toast } from 'react-hot-toast';
+import { buildAvatarUrl } from '../constants';
 
 interface ContactsViewProps {
   contacts: Contact[];
@@ -129,7 +130,7 @@ const ContactsView: React.FC<ContactsViewProps> = ({ contacts, onAddContact, onE
                     className="bg-white p-4 rounded-2xl border border-[#E5E5E5] hover:border-[#FF8C00] transition-all flex items-center justify-between group shadow-sm hover:shadow-md"
                   >
                     <div className="flex items-center gap-4">
-                      <Avatar src={`https://ui-avatars.com/api/?name=${encodeURIComponent(contact.name)}&background=random&color=fff`} size={56} />
+                      <Avatar src={buildAvatarUrl(contact.name, contact.avatarCid)} size={56} />
                       <div>
                         <h3 className="font-bold text-lg text-[#0A0A0A]">{contact.name}</h3>
                         <p className="text-[#999] font-mono text-sm">{contact.address ? `${contact.address.slice(0, 10)}...${contact.address.slice(-5)}` : 'No Address'}</p>
@@ -197,7 +198,7 @@ const ContactsView: React.FC<ContactsViewProps> = ({ contacts, onAddContact, onE
                       className="bg-white p-4 rounded-2xl border border-[#E5E5E5] hover:border-[#FF8C00] transition-all flex items-center justify-between group shadow-sm hover:shadow-md"
                     >
                       <div className="flex items-center gap-4">
-                        <Avatar src={`https://ui-avatars.com/api/?name=${encodeURIComponent('Unknown')}&background=random&color=fff`} size={56} />
+                        <Avatar src={buildAvatarUrl('Unknown')} size={56} />
                         <div>
                           <h3 className="font-bold text-lg text-[#0A0A0A]">Unknown User</h3>
                           <p className="text-[#666] text-sm">Direct Address Match</p>
@@ -239,7 +240,7 @@ const ContactsView: React.FC<ContactsViewProps> = ({ contacts, onAddContact, onE
                     className="bg-white p-4 rounded-2xl border border-[#E5E5E5] hover:border-[#FF8C00] transition-all flex items-center justify-between group shadow-sm hover:shadow-md"
                   >
                     <div className="flex items-center gap-4">
-                      <Avatar src={`https://ui-avatars.com/api/?name=${encodeURIComponent(profile.username || 'U')}&background=random&color=fff`} size={56} />
+                      <Avatar src={buildAvatarUrl(profile.username || 'U', profile.avatar_cid)} size={56} />
                       <div>
                         <h3 className="font-bold text-lg text-[#0A0A0A]">{profile.username || 'Unknown Name'}</h3>
                         <p className="text-[#666] text-sm">{profile.bio || 'No bio available'}</p>

@@ -1,7 +1,8 @@
 import { logger } from './logger';
 import { IPFS_UPLOAD_RETRY_DELAY } from '../constants';
+import { safeBackendFetch } from './api-client';
 
-export async function uploadFileToIPFS(file: File): Promise<string> {
+export async function uploadFileToIPFS(file: File, context: 'attachment' | 'avatar' = 'attachment'): Promise<string> {
   const PINATA_JWT = import.meta.env.VITE_PINATA_JWT;
 
   if (PINATA_JWT) {
@@ -21,8 +22,16 @@ export async function uploadFileToIPFS(file: File): Promise<string> {
         if (!res.ok) throw new Error(`Pinata upload failed: ${res.statusText}`);
 
         const data = await res.json();
-        logger.debug("File uploaded to Pinata, CID:", data.IpfsHash);
-        return data.IpfsHash;
+        const cid = data.IpfsHash;
+        logger.debug("File uploaded to Pinata, CID:", cid);
+
+        // Register pin with backend for tracking
+        safeBackendFetch('ipfs/pin', {
+          method: 'POST',
+          body: { cid, fileName: file.name, fileSize: file.size, mimeType: file.type, context }
+        }).catch(() => { /* non-critical */ });
+
+        return cid;
       } catch (e) {
           logger.error("Pinata upload error:", e);
           throw e;

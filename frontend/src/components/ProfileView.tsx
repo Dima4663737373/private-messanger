@@ -4,6 +4,7 @@ import Avatar from './Avatar';
 import { Contact } from '../types';
 import { toast } from 'react-hot-toast';
 import { safeBackendFetch } from '../utils/api-client';
+import { buildAvatarUrl } from '../constants';
 
 interface ProfileViewProps {
   contact: Contact | any;
@@ -24,14 +25,16 @@ const ProfileView: React.FC<ProfileViewProps> = ({
   const [msgLoading, setMsgLoading] = useState(false);
   const [addLoading, setAddLoading] = useState(false);
   const [fetchedBio, setFetchedBio] = useState<string | null>(null);
+  const [fetchedAvatarCid, setFetchedAvatarCid] = useState<string | null>(null);
 
-  // Fetch real bio from backend profile if not already available
+  // Fetch real bio and avatar from backend profile if not already available
   useEffect(() => {
     const addr = contact.address || contact.id;
-    if (!addr || contact.bio) return;
+    if (!addr) return;
     safeBackendFetch<any>(`profiles/${addr}`).then(({ data }) => {
-      if (data?.exists && data.profile?.bio) {
-        setFetchedBio(data.profile.bio);
+      if (data?.exists && data.profile) {
+        if (data.profile.bio && !contact.bio) setFetchedBio(data.profile.bio);
+        if (data.profile.avatar_cid) setFetchedAvatarCid(data.profile.avatar_cid);
       }
     }).catch(() => {});
   }, [contact.address, contact.id, contact.bio]);
@@ -110,7 +113,7 @@ const ProfileView: React.FC<ProfileViewProps> = ({
                 <div className="p-[3px] rounded-2xl gradient-border shadow-lg shadow-[#FF8C00]/20">
                   <div className="bg-[#0A0A0A] p-[3px] rounded-[13px]">
                     <Avatar
-                      src={`https://ui-avatars.com/api/?name=${encodeURIComponent(displayName)}&background=1A1A1A&color=FF8C00&bold=true&format=svg`}
+                      src={buildAvatarUrl(displayName, contact.avatarCid || contact.avatar_cid || fetchedAvatarCid)}
                       size={88}
                     />
                   </div>

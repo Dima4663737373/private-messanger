@@ -2,6 +2,7 @@ import { hashAddress } from '../utils/aleo-utils';
 import { useEffect, useRef, useState } from 'react';
 import { Message, Room, PinnedMessage, RawMessage, RawRoom, RawRoomMessage } from '../types';
 import { getQueuedMessages, dequeueMessage, enqueueMessage } from '../utils/offline-queue';
+import { getCachedMessage, getCachedMessages, cacheMessage, removeCachedMessage, pruneExpired } from '../utils/message-cache';
 import { fieldToString, fieldsToString } from '../utils/messageUtils';
 import { encryptMessage, KeyPair, encryptRoomMessage, decryptRoomMessage, generateRoomKey, encryptRoomKeyForMember, decryptRoomKey } from '../utils/crypto';
 import { getCachedKeys } from '../utils/key-derivation';
@@ -18,7 +19,7 @@ export function useSync(
   address: string | null,
   onNewMessage: (msg: Message) => void,
   onMessageDeleted?: (msgId: string) => void,
-  onMessageUpdated?: (msgId: string, newText: string) => void,
+  onMessageUpdated?: (msgId: string, newText: string, editedAt?: number, editCount?: number) => void,
   onReactionUpdate?: (msgId: string, reactions: Record<string, string[]>) => void,
   onRoomMessage?: (roomId: string, msg: Message) => void,
   onRoomCreated?: (room: Room) => void,
@@ -29,12 +30,13 @@ export function useSync(
   onRoomMessageEdited?: (roomId: string, messageId: string, text: string) => void,
   onDMSent?: (tempId: string, realId: string) => void,
   onReadReceipt?: (dialogHash: string, messageIds: string[], readAt?: number) => void,
-  onProfileUpdated?: (address: string, username?: string, showAvatar?: boolean) => void
+  onProfileUpdated?: (address: string, username?: string, showAvatar?: boolean, avatarCid?: string) => void
 ) {
   const ws = useRef<WebSocket | null>(null);
   const [isConnected, setIsConnected] = useState(false);
   const [typingUsers, setTypingUsers] = useState<Record<string, { ts: number; sender?: string }>>({}); // key -> { timestamp, sender? }
   const { decrypt, decryptAsSender } = useEncryptionWorker();
+  const sessionSecretRef = useRef<string | null>(null);
 
   // In-Memory Caches (bounded, cleared on refresh)
   const MAX_CACHE_SIZE = 1000;
@@ -50,6 +52,46 @@ export function useSync(
       if (firstKey !== undefined) cache.delete(firstKey);
     }
     cache.set(key, value);
+  };
+
+  // HMAC generation for WebSocket message authentication
+  const generateHMAC = async (sessionSecret: string, message: string): Promise<string> => {
+    const encoder = new TextEncoder();
+    const keyData = encoder.encode(sessionSecret);
+    const messageData = encoder.encode(message);
+
+    const cryptoKey = await crypto.subtle.importKey(
+      'raw',
+      keyData,
+      { name: 'HMAC', hash: 'SHA-256' },
+      false,
+      ['sign']
+    );
+
+    const signature = await crypto.subtle.sign('HMAC', cryptoKey, messageData);
+    return Array.from(new Uint8Array(signature))
+      .map(b => b.toString(16).padStart(2, '0'))
+      .join('');
+  };
+
+  // Send authenticated WebSocket message with HMAC
+  const sendAuthenticatedMessage = async (socket: WebSocket, messageData: any) => {
+    if (!sessionSecretRef.current) {
+      // No session secret yet (during AUTH flow) - send without HMAC
+      socket.send(JSON.stringify(messageData));
+      return;
+    }
+
+    try {
+      const messageStr = JSON.stringify(messageData);
+      const hmac = await generateHMAC(sessionSecretRef.current, messageStr);
+      const authenticatedMessage = { ...messageData, hmac };
+      socket.send(JSON.stringify(authenticatedMessage));
+    } catch (e) {
+      logger.error('Failed to generate HMAC:', e);
+      // Fallback: send without HMAC (will be rejected by server, but won't crash client)
+      socket.send(JSON.stringify(messageData));
+    }
   };
 
   // Helper to get sender's encryption key (with retry for race conditions)
@@ -302,12 +344,45 @@ export function useSync(
               return;
             }
 
-            // Step 2b: Authentication succeeded — store session token
+            // Step 2b: Authentication succeeded — store session token + secret
             if (data.type === 'AUTH_SUCCESS') {
               logger.debug('WS Authenticated successfully');
               // Store session token for REST API auth
               if (data.token) {
                 setSessionToken(data.token);
+              }
+              // Store session secret for HMAC message authentication
+              if (data.sessionSecret) {
+                sessionSecretRef.current = data.sessionSecret;
+                logger.debug('Session secret stored for HMAC');
+
+                // Override socket.send to automatically add HMAC to all future messages
+                const originalSend = socket.send.bind(socket);
+                socket.send = function(data: string | ArrayBufferLike | Blob | ArrayBufferView) {
+                  if (typeof data === 'string' && sessionSecretRef.current) {
+                    try {
+                      const messageData = JSON.parse(data);
+                      // Skip HMAC for AUTH messages (they don't have session yet)
+                      if (messageData.type === 'AUTH' || messageData.type === 'AUTH_RESPONSE' || messageData.type === 'AUTH_NEWBIE' || messageData.type === 'AUTH_KEY_MISMATCH') {
+                        originalSend(data);
+                        return;
+                      }
+                      // Add HMAC asynchronously
+                      generateHMAC(sessionSecretRef.current, data).then(hmac => {
+                        const authenticatedMessage = { ...messageData, hmac };
+                        originalSend(JSON.stringify(authenticatedMessage));
+                      }).catch(e => {
+                        logger.error('HMAC generation failed:', e);
+                        originalSend(data); // Fallback without HMAC
+                      });
+                    } catch {
+                      // Not JSON or other error - send as-is
+                      originalSend(data);
+                    }
+                  } else {
+                    originalSend(data);
+                  }
+                };
               }
               setIsConnected(true);
 
@@ -534,24 +609,25 @@ export function useSync(
                      keyCache.current.delete(data.payload.address);
                      // Update contact name + avatar visibility in real-time
                      if (callbacksRef.current.onProfileUpdated) {
-                       callbacksRef.current.onProfileUpdated(data.payload.address, data.payload.username, data.payload.showAvatar);
+                       callbacksRef.current.onProfileUpdated(data.payload.address, data.payload.username, data.payload.showAvatar, data.payload.avatarCid);
                      }
                  }
             }
             else if (data.type === 'message_deleted') {
                  if (onMessageDeleted) onMessageDeleted(data.payload.id);
+                 removeCachedMessage(data.payload.id).catch(() => {});
             }
             else if (data.type === 'message_updated') {
-                 const { id, encryptedPayload, sender, recipient, timestamp, encryptedPayloadSelf } = data.payload;
+                 const { id, encryptedPayload, sender, recipient, timestamp, encryptedPayloadSelf, editedAt, editCount } = data.payload;
                  const text = await decryptPayload(
-                     encryptedPayload, 
-                     sender, 
-                     recipient, 
+                     encryptedPayload,
+                     sender,
+                     recipient,
                      timestamp,
                      encryptedPayloadSelf
                  );
                  if (text) cacheSet(decryptionCache.current, id, text, MAX_CACHE_SIZE);
-                 if (onMessageUpdated) onMessageUpdated(id, text || "Decryption Failed");
+                 if (onMessageUpdated) onMessageUpdated(id, text || "Decryption Failed", editedAt, editCount);
             }
             else if (data.type === 'message_detected' || data.type === 'tx_confirmed') {
               // If it's just a confirmation of an existing message, we might handle it differently
@@ -576,6 +652,10 @@ export function useSync(
 
               let text = decryptionCache.current.get(rawMsg.id);
               if (!text) {
+                 // Check IndexedDB persistent cache
+                 text = await getCachedMessage(rawMsg.id).catch(() => null) || undefined;
+              }
+              if (!text) {
                  text = await decryptPayload(
                      rawMsg.encryptedPayload || rawMsg.content_encrypted,
                      rawMsg.sender,
@@ -583,7 +663,12 @@ export function useSync(
                      rawMsg.timestamp,
                      rawMsg.encryptedPayloadSelf || rawMsg.encrypted_payload_self
                  );
-                 if (text) cacheSet(decryptionCache.current, rawMsg.id, text, MAX_CACHE_SIZE);
+                 if (text) {
+                   cacheSet(decryptionCache.current, rawMsg.id, text, MAX_CACHE_SIZE);
+                   cacheMessage(rawMsg.id, text, Number(rawMsg.timestamp)).catch(() => {});
+                 }
+              } else if (!decryptionCache.current.has(rawMsg.id)) {
+                 cacheSet(decryptionCache.current, rawMsg.id, text, MAX_CACHE_SIZE);
               }
               
               let attachment = undefined;
@@ -618,6 +703,18 @@ export function useSync(
               };
               
               onNewMessage(msg);
+
+              // Browser notification when tab is in background
+              if (!msg.isMine && document.hidden && Notification.permission === 'granted') {
+                try {
+                  const senderName = rawMsg.senderName || rawMsg.sender?.slice(0, 10) || 'Someone';
+                  new Notification('Ghost Messenger', {
+                    body: `${senderName}: ${(text || '').slice(0, 60)}`,
+                    icon: '/ghost-icon.png',
+                    tag: `msg-${rawMsg.id}`,
+                  });
+                } catch { /* ignore */ }
+              }
             }
           } catch (e) {
             logger.error('WS Message Error:', e);
@@ -705,7 +802,10 @@ export function useSync(
           status: rawMsg.status,
           timestamp: Number(rawMsg.timestamp),
           recipient: rawMsg.recipient,
-          attachment
+          attachment,
+          edited: rawMsg.edit_count > 0 || !!rawMsg.edited_at,
+          editedAt: rawMsg.edited_at ? Number(rawMsg.edited_at) : undefined,
+          editCount: rawMsg.edit_count ? Number(rawMsg.edit_count) : undefined,
         };
       }));
 
@@ -773,9 +873,13 @@ export function useSync(
         const senders = new Set(rawMessages.map((m: RawMessage) => m.sender === address ? m.recipient : m.sender).filter(a => a && a !== 'unknown'));
         await Promise.all([...senders].map(addr => getSenderKey(addr)));
 
+        // Pre-load IndexedDB cache for all message IDs
+        const idbCache = await getCachedMessages(messageIds).catch(() => new Map<string, string>());
+
         const decryptedMessages = (await Promise.all(rawMessages.map(async (rawMsg: RawMessage) => {
           try {
-            let text = decryptionCache.current.get(rawMsg.id);
+            // Check in-memory cache → IndexedDB cache → decrypt
+            let text = decryptionCache.current.get(rawMsg.id) || idbCache.get(rawMsg.id);
             if (!text) {
                  const payload = rawMsg.encrypted_payload || rawMsg.content_encrypted;
                  text = await decryptPayload(
@@ -785,7 +889,14 @@ export function useSync(
                      rawMsg.timestamp,
                      rawMsg.encrypted_payload_self
                  );
-                 if (text) cacheSet(decryptionCache.current, rawMsg.id, text, MAX_CACHE_SIZE);
+                 if (text) {
+                   cacheSet(decryptionCache.current, rawMsg.id, text, MAX_CACHE_SIZE);
+                   // Persist to IndexedDB for cross-session cache
+                   cacheMessage(rawMsg.id, text, Number(rawMsg.timestamp)).catch(() => {});
+                 }
+            } else if (!decryptionCache.current.has(rawMsg.id)) {
+                 // Restore in-memory cache from IndexedDB hit
+                 cacheSet(decryptionCache.current, rawMsg.id, text, MAX_CACHE_SIZE);
             }
 
             let attachment = undefined;
@@ -815,7 +926,10 @@ export function useSync(
               reactions: allReactions[rawMsg.id] || undefined,
               replyToId: rawMsg.reply_to_id || undefined,
               replyToText: rawMsg.reply_to_text || undefined,
-              replyToSender: rawMsg.reply_to_sender || undefined
+              replyToSender: rawMsg.reply_to_sender || undefined,
+              edited: rawMsg.edit_count > 0 || !!rawMsg.edited_at,
+              editedAt: rawMsg.edited_at ? Number(rawMsg.edited_at) : undefined,
+              editCount: rawMsg.edit_count ? Number(rawMsg.edit_count) : undefined,
             };
           } catch (e) {
             logger.error(`Failed to decrypt message ${rawMsg.id}:`, e);
@@ -846,7 +960,7 @@ export function useSync(
     return data && data.exists ? data.profile : null;
   };
   
-  const notifyProfileUpdate = async (name: string, bio: string, txId: string, privacySettings?: { showLastSeen?: boolean; showProfilePhoto?: boolean }) => {
+  const notifyProfileUpdate = async (name: string, bio: string, txId: string, privacySettings?: { showLastSeen?: boolean; showProfilePhoto?: boolean }, extra?: { avatarCid?: string | null }) => {
     if (!address) return;
     const keys = getCachedKeys(address);
     let addressHash = '';
@@ -861,7 +975,8 @@ export function useSync(
           txId,
           encryptionPublicKey: keys?.publicKey || '',
           addressHash,
-          ...(privacySettings || {})
+          ...(privacySettings || {}),
+          ...(extra || {})
       }
     });
     if (error) logger.warn('notifyProfileUpdate failed:', error);
@@ -878,7 +993,10 @@ export function useSync(
       method: 'POST',
       body: { messageId, userAddress: address, emoji }
     });
-    if (error) logger.warn('addReaction failed:', error);
+    if (error) {
+      logger.warn('addReaction failed:', error);
+      toast.error('Failed to add reaction');
+    }
   };
 
   const removeReaction = async (messageId: string, emoji: string) => {
@@ -887,7 +1005,10 @@ export function useSync(
       method: 'DELETE',
       body: { messageId, userAddress: address, emoji }
     });
-    if (error) logger.warn('removeReaction failed:', error);
+    if (error) {
+      logger.warn('removeReaction failed:', error);
+      toast.error('Failed to remove reaction');
+    }
   };
 
   const fetchReactions = async (messageId: string): Promise<Record<string, string[]>> => {
@@ -1270,6 +1391,16 @@ export function useSync(
     }, 30000);
     return () => clearInterval(interval);
   }, [isConnected]);
+
+  // Periodic IndexedDB cache cleanup (every 30 min)
+  useEffect(() => {
+    const pruneInterval = setInterval(() => {
+      pruneExpired().catch(() => {});
+    }, 30 * 60 * 1000);
+    // Run once on mount
+    pruneExpired().catch(() => {});
+    return () => clearInterval(pruneInterval);
+  }, []);
 
   return {
     isConnected,

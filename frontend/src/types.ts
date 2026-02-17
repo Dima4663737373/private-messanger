@@ -48,6 +48,8 @@ export interface Message {
   replyToSender?: string;
   // Edit indicator
   edited?: boolean;
+  editedAt?: number;
+  editCount?: number;
   // Reactions (emoji -> count + who reacted)
   reactions?: Record<string, string[]>; // emoji -> [userId, ...]
   // PrivTok-style metadata
@@ -105,6 +107,7 @@ export interface Contact {
   lastMessageTime?: Date;
   unreadCount?: number;
   hideAvatar?: boolean;
+  avatarCid?: string;
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -131,6 +134,8 @@ export interface RawMessage {
   reply_to_sender?: string;
   edited?: boolean;
   read_at?: number;
+  edited_at?: number;
+  edit_count?: number;
 }
 
 /** Raw room from backend database */
@@ -172,6 +177,7 @@ export interface NetworkProfile {
   encryption_public_key?: string;
   show_avatar?: boolean;
   show_last_seen?: boolean;
+  avatar_cid?: string;
 }
 
 /** Backend profile response */
@@ -184,6 +190,7 @@ export interface ProfileResponse {
     encryption_public_key?: string;
     show_avatar?: boolean;
     show_last_seen?: boolean;
+    avatar_cid?: string;
   };
 }
 

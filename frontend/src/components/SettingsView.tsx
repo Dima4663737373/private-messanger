@@ -1,8 +1,12 @@
-import React, { useState, useEffect } from 'react';
-import { User, Save, Loader2, AlertTriangle, Wallet, Copy, Shield, ChevronRight, LogOut, ExternalLink, Trash2, Lock, MessageSquare, Check, MessageCircle, Bell, BellOff, Eye } from 'lucide-react';
+import React, { useState, useEffect, useRef } from 'react';
+import { User, Save, Loader2, AlertTriangle, Wallet, Copy, Shield, ChevronRight, LogOut, ExternalLink, Trash2, Lock, MessageSquare, Check, MessageCircle, Bell, BellOff, Eye, Camera, X, Type, Palette, Layout, CornerDownLeft, Ban, Key, Download, Upload } from 'lucide-react';
 import { toast } from 'react-hot-toast';
-import { UserSettings } from '../utils/preferences-api';
+import { UserSettings, FontSize, ChatTheme, BubbleStyle } from '../utils/preferences-api';
 import Toggle from './ui/Toggle';
+import { uploadFileToIPFS } from '../utils/ipfs';
+import { MAX_AVATAR_SIZE, AVATAR_ALLOWED_TYPES, IPFS_GATEWAY_URL, MAX_USERNAME_LENGTH, MAX_BIO_LENGTH } from '../constants';
+import { encryptKeysWithPassphrase, decryptKeysWithPassphrase, validateKeyPair } from '../utils/crypto';
+import { getCachedKeys, setCachedKeys } from '../utils/key-derivation';
 
 interface SettingsViewProps {
   onCreateProfile: (name: string, bio: string) => Promise<void>;
@@ -19,6 +23,12 @@ interface SettingsViewProps {
   // Toggleable settings from usePreferences
   settings: UserSettings;
   onUpdateSetting: <K extends keyof UserSettings>(key: K, value: UserSettings[K]) => void;
+  // Avatar
+  avatarCid?: string | null;
+  onAvatarUpload?: (cid: string | null) => Promise<void>;
+  // Block
+  blockedUsers?: string[];
+  onUnblockUser?: (address: string) => void;
 }
 
 type Section = 'main' | 'profile' | 'wallet' | 'privacy' | 'chat_settings' | 'notifications';
@@ -39,11 +49,79 @@ const SettingsView: React.FC<SettingsViewProps> = ({
   onClearAllConversations,
   contactCount = 0,
   settings,
-  onUpdateSetting
+  onUpdateSetting,
+  avatarCid,
+  onAvatarUpload,
+  blockedUsers = [],
+  onUnblockUser
 }) => {
   const [activeSection, setActiveSection] = useState<Section>('main');
   const [name, setName] = useState(initialData?.username || '');
   const [bio, setBio] = useState(initialData?.bio || '');
+  const [avatarUploading, setAvatarUploading] = useState(false);
+  const avatarInputRef = useRef<HTMLInputElement>(null);
+
+  // Key backup state
+  const [backupPassphrase, setBackupPassphrase] = useState('');
+  const [restorePassphrase, setRestorePassphrase] = useState('');
+  const [backupLoading, setBackupLoading] = useState(false);
+
+  const handleBackupKeys = async () => {
+    if (!publicKey || backupPassphrase.length < 8) return;
+    setBackupLoading(true);
+    try {
+      const keys = getCachedKeys(publicKey);
+      if (!keys) {
+        toast.error('No encryption keys found in session. Connect your wallet first.');
+        return;
+      }
+      const backup = await encryptKeysWithPassphrase(keys, backupPassphrase);
+      // Save to backend preferences
+      const { safeBackendFetch } = await import('../utils/api-client');
+      await safeBackendFetch(`preferences/${publicKey}`, {
+        method: 'POST',
+        body: { key: 'encrypted_keys', value: JSON.stringify(backup) }
+      });
+      toast.success('Keys backed up securely');
+      setBackupPassphrase('');
+    } catch (e) {
+      toast.error('Backup failed');
+    } finally {
+      setBackupLoading(false);
+    }
+  };
+
+  const handleRestoreKeys = async () => {
+    if (!publicKey || restorePassphrase.length < 8) return;
+    setBackupLoading(true);
+    try {
+      const { safeBackendFetch } = await import('../utils/api-client');
+      const { data } = await safeBackendFetch<any>(`preferences/${publicKey}`);
+      const raw = data?.encrypted_keys || data?.settings?.encrypted_keys;
+      if (!raw) {
+        toast.error('No backup found on server');
+        return;
+      }
+      const backup = typeof raw === 'string' ? JSON.parse(raw) : raw;
+      const keys = await decryptKeysWithPassphrase(
+        backup.encrypted,
+        backup.nonce,
+        backup.salt,
+        restorePassphrase
+      );
+      if (!keys) {
+        toast.error('Wrong passphrase or corrupted backup');
+        return;
+      }
+      setCachedKeys(publicKey, keys);
+      toast.success('Keys restored successfully! Refresh to apply.');
+      setRestorePassphrase('');
+    } catch (e) {
+      toast.error('Restore failed');
+    } finally {
+      setBackupLoading(false);
+    }
+  };
 
   useEffect(() => {
     if (initialData) {
@@ -52,21 +130,72 @@ const SettingsView: React.FC<SettingsViewProps> = ({
     }
   }, [initialData]);
 
+  const handleAvatarSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    e.target.value = '';
+
+    if (!AVATAR_ALLOWED_TYPES.includes(file.type)) {
+      toast.error('Allowed formats: JPEG, PNG, WebP, GIF');
+      return;
+    }
+    if (file.size > MAX_AVATAR_SIZE) {
+      toast.error(`Max avatar size: ${MAX_AVATAR_SIZE / 1024 / 1024}MB`);
+      return;
+    }
+
+    setAvatarUploading(true);
+    try {
+      const cid = await uploadFileToIPFS(file, 'avatar');
+      await onAvatarUpload?.(cid);
+      toast.success('Avatar uploaded');
+    } catch (err) {
+      toast.error('Avatar upload failed');
+    } finally {
+      setAvatarUploading(false);
+    }
+  };
+
+  const handleRemoveAvatar = async () => {
+    setAvatarUploading(true);
+    try {
+      await onAvatarUpload?.(null);
+      toast.success('Avatar removed');
+    } catch {
+      toast.error('Failed to remove avatar');
+    } finally {
+      setAvatarUploading(false);
+    }
+  };
+
   const handleSaveProfile = async () => {
-    if (!name || !bio) {
+    if (!name.trim() || !bio.trim()) {
       toast.error('Username and bio are required');
       return;
     }
     if (initialData?.username) {
-      await onUpdateProfile(name, bio);
+      // Check if anything actually changed
+      if (name.trim() === initialData.username && bio.trim() === (initialData.bio || '')) {
+        toast('No changes to save', { icon: 'ℹ️' });
+        return;
+      }
+      try {
+        await onUpdateProfile(name.trim(), bio.trim());
+      } catch (e: any) {
+        toast.error('Failed to update profile: ' + (e?.message || 'Unknown error'));
+      }
     } else {
-      await onCreateProfile(name, bio);
+      try {
+        await onCreateProfile(name.trim(), bio.trim());
+      } catch (e: any) {
+        toast.error('Failed to create profile: ' + (e?.message || 'Unknown error'));
+      }
     }
   };
 
   const handleCopyAddress = () => {
     if (publicKey) {
-      navigator.clipboard.writeText(publicKey);
+      navigator.clipboard.writeText(publicKey).catch(() => toast.error('Failed to copy'));
       toast.success('Address copied');
     }
   };
@@ -96,7 +225,7 @@ const SettingsView: React.FC<SettingsViewProps> = ({
               { view: 'profile' as Section, icon: <User size={24} className="text-white" />, gradient: 'from-[#FF8C00] to-[#FF5500]', title: 'Profile', subtitle: initialData?.username || 'Set up your identity' },
               { view: 'wallet' as Section, icon: <Wallet size={24} className="text-white" />, gradient: 'from-[#10B981] to-[#059669]', title: 'Wallet', subtitle: isWalletConnected ? `${balance?.toFixed(2) || '0.00'} ALEO` : 'Not connected' },
               { view: 'privacy' as Section, icon: <Shield size={24} className="text-white" />, gradient: 'from-[#3B82F6] to-[#2563EB]', title: 'Privacy & Security', subtitle: 'Online status, read receipts, encryption' },
-              { view: 'chat_settings' as Section, icon: <MessageCircle size={24} className="text-white" />, gradient: 'from-[#8B5CF6] to-[#7C3AED]', title: 'Chat Settings', subtitle: 'Coming soon' },
+              { view: 'chat_settings' as Section, icon: <MessageCircle size={24} className="text-white" />, gradient: 'from-[#8B5CF6] to-[#7C3AED]', title: 'Chat Settings', subtitle: 'Theme, font size, layout' },
               { view: 'notifications' as Section, icon: <Bell size={24} className="text-white" />, gradient: 'from-[#F59E0B] to-[#D97706]', title: 'Notifications', subtitle: 'Sound, alerts, browser' },
             ].map(item => (
               <button key={item.view} onClick={() => setActiveSection(item.view)}
@@ -150,29 +279,66 @@ const SettingsView: React.FC<SettingsViewProps> = ({
               </div>
             </div>
 
-            {/* Avatar Preview */}
+            {/* Avatar Preview & Upload */}
             <div className="flex items-center gap-4">
-              <div className="w-16 h-16 rounded-full flex items-center justify-center text-white text-xl font-bold" style={{ backgroundColor: settings.avatarColor }}>
-                {name ? name.slice(0, 2).toUpperCase() : '?'}
+              <div className="relative group">
+                {avatarCid ? (
+                  <img
+                    src={`${IPFS_GATEWAY_URL}${avatarCid}`}
+                    alt="avatar"
+                    className="w-16 h-16 rounded-full object-cover border-2 border-[#E5E5E5]"
+                  />
+                ) : (
+                  <div className="w-16 h-16 rounded-full flex items-center justify-center text-white text-xl font-bold" style={{ backgroundColor: settings.avatarColor }}>
+                    {name ? name.slice(0, 2).toUpperCase() : '?'}
+                  </div>
+                )}
+                {/* Camera overlay */}
+                <button
+                  onClick={() => avatarInputRef.current?.click()}
+                  disabled={avatarUploading}
+                  className="absolute inset-0 bg-black/50 rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer"
+                >
+                  {avatarUploading ? (
+                    <Loader2 size={20} className="text-white animate-spin" />
+                  ) : (
+                    <Camera size={20} className="text-white" />
+                  )}
+                </button>
+                {/* Remove button */}
+                {avatarCid && !avatarUploading && (
+                  <button
+                    onClick={handleRemoveAvatar}
+                    className="absolute -top-1 -right-1 w-5 h-5 bg-red-500 rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
+                  >
+                    <X size={12} className="text-white" />
+                  </button>
+                )}
+                <input ref={avatarInputRef} type="file" accept="image/jpeg,image/png,image/webp,image/gif" className="hidden" onChange={handleAvatarSelect} />
               </div>
               <div>
                 <p className="font-bold text-[#0A0A0A]">{name || 'No username'}</p>
                 <p className="text-sm text-[#666]">{bio || 'No bio set'}</p>
+                <p className="text-xs text-[#999] mt-0.5">Hover avatar to change photo</p>
               </div>
             </div>
 
             <div>
               <label className="block text-xs font-bold uppercase tracking-wider text-[#666] mb-2">Username</label>
               <input type="text" value={name} onChange={(e) => setName(e.target.value)}
+                maxLength={MAX_USERNAME_LENGTH}
                 className="w-full bg-[#FAFAFA] border border-[#E5E5E5] rounded-xl p-4 font-bold focus:outline-none focus:border-[#FF8C00] transition-all text-black"
                 placeholder="e.g. GhostUser" />
+              <span className="text-xs text-[#999] mt-1 block text-right">{name.length}/{MAX_USERNAME_LENGTH}</span>
             </div>
 
             <div>
               <label className="block text-xs font-bold uppercase tracking-wider text-[#666] mb-2">Bio / Status</label>
               <textarea value={bio} onChange={(e) => setBio(e.target.value)}
+                maxLength={MAX_BIO_LENGTH}
                 className="w-full bg-[#FAFAFA] border border-[#E5E5E5] rounded-xl p-4 font-medium focus:outline-none focus:border-[#FF8C00] transition-all h-24 resize-none text-black"
                 placeholder="Tell others about yourself..." />
+              <span className="text-xs text-[#999] mt-1 block text-right">{bio.length}/{MAX_BIO_LENGTH}</span>
             </div>
 
             {/* Wallet address (read-only) */}
@@ -246,6 +412,67 @@ const SettingsView: React.FC<SettingsViewProps> = ({
                 className="w-full bg-white border-2 border-red-200 text-red-600 py-3 rounded-xl font-bold hover:bg-red-50 transition-all flex items-center justify-center gap-2">
                 <LogOut size={18} /> Disconnect Wallet
               </button>
+
+              {/* Key Backup / Recovery */}
+              <div className="pt-4">
+                <div className="flex items-center gap-2 mb-3">
+                  <Key size={16} className="text-[#FF8C00]" />
+                  <h3 className="text-xs font-bold uppercase tracking-wider text-[#666]">Encryption Key Backup</h3>
+                </div>
+                <div className="bg-[#FAFAFA] border border-[#E5E5E5] rounded-2xl p-5 space-y-4">
+                  <p className="text-xs text-[#666]">
+                    Back up your encryption keys with a passphrase. If you lose access to your wallet, you can restore keys to decrypt old messages.
+                  </p>
+
+                  {/* Backup */}
+                  <div>
+                    <label className="block text-xs font-bold text-[#333] mb-1">Backup Keys</label>
+                    <div className="flex gap-2">
+                      <input
+                        type="password"
+                        placeholder="Enter passphrase (min 8 chars)"
+                        value={backupPassphrase}
+                        onChange={e => setBackupPassphrase(e.target.value)}
+                        className="flex-1 bg-white border border-[#E5E5E5] rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-[#FF8C00] text-black"
+                      />
+                      <button
+                        onClick={handleBackupKeys}
+                        disabled={backupPassphrase.length < 8 || backupLoading}
+                        className="px-4 py-2 bg-[#FF8C00] text-black text-sm font-bold rounded-lg hover:bg-[#FF9F2A] disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center gap-1"
+                      >
+                        {backupLoading ? <Loader2 size={14} className="animate-spin" /> : <Download size={14} />}
+                        Backup
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Restore */}
+                  <div>
+                    <label className="block text-xs font-bold text-[#333] mb-1">Restore Keys</label>
+                    <div className="flex gap-2">
+                      <input
+                        type="password"
+                        placeholder="Enter backup passphrase"
+                        value={restorePassphrase}
+                        onChange={e => setRestorePassphrase(e.target.value)}
+                        className="flex-1 bg-white border border-[#E5E5E5] rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-[#FF8C00] text-black"
+                      />
+                      <button
+                        onClick={handleRestoreKeys}
+                        disabled={restorePassphrase.length < 8 || backupLoading}
+                        className="px-4 py-2 bg-[#0A0A0A] text-white text-sm font-bold rounded-lg hover:bg-[#333] disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center gap-1"
+                      >
+                        {backupLoading ? <Loader2 size={14} className="animate-spin" /> : <Upload size={14} />}
+                        Restore
+                      </button>
+                    </div>
+                  </div>
+
+                  <p className="text-[10px] text-[#999]">
+                    Keys are encrypted with PBKDF2 (100K iterations) + NaCl secretbox. Never share your passphrase.
+                  </p>
+                </div>
+              </div>
             </div>
           )}
         </div>
@@ -339,7 +566,7 @@ const SettingsView: React.FC<SettingsViewProps> = ({
                   </div>
                   <div className="flex justify-between text-[#666]">
                     <span>Program</span>
-                    <span className="font-mono text-[#333] text-xs">ghost_msg_015.aleo</span>
+                    <span className="font-mono text-[#333] text-xs">ghost_msg_018.aleo</span>
                   </div>
                   <div className="flex justify-between text-[#666]">
                     <span>Message content</span>
@@ -373,6 +600,35 @@ const SettingsView: React.FC<SettingsViewProps> = ({
               </div>
             </div>
 
+            {/* Blocked Users */}
+            <div>
+              <div className="flex items-center gap-2 mb-3">
+                <Ban size={16} className="text-red-400" />
+                <h3 className="text-xs font-bold uppercase tracking-wider text-[#666]">Blocked Users</h3>
+              </div>
+              <div className="bg-[#FAFAFA] border border-[#E5E5E5] rounded-2xl p-5">
+                {blockedUsers.length === 0 ? (
+                  <p className="text-sm text-[#999] text-center py-2">No blocked users</p>
+                ) : (
+                  <div className="space-y-2">
+                    {blockedUsers.map(addr => (
+                      <div key={addr} className="flex items-center justify-between py-2 border-b border-[#F0F0F0] last:border-0">
+                        <span className="font-mono text-xs text-[#666] truncate max-w-[200px]" title={addr}>
+                          {addr.slice(0, 12)}...{addr.slice(-6)}
+                        </span>
+                        <button
+                          onClick={() => onUnblockUser?.(addr)}
+                          className="text-xs font-bold text-[#10B981] hover:text-[#059669] px-3 py-1 border border-[#10B981]/30 rounded-lg hover:bg-[#10B981]/10 transition-colors"
+                        >
+                          Unblock
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+
             {/* Danger Zone */}
             {onClearAllConversations && (
               <div className="pt-2 space-y-3">
@@ -392,19 +648,122 @@ const SettingsView: React.FC<SettingsViewProps> = ({
     );
   }
 
-  // ── Chat Settings (Coming Soon) ──
+  // ── Chat Settings ──
   if (activeSection === 'chat_settings') {
+    const fontSizes: { value: FontSize; label: string; sample: string }[] = [
+      { value: 'small', label: 'Small', sample: 'Aa' },
+      { value: 'medium', label: 'Medium', sample: 'Aa' },
+      { value: 'large', label: 'Large', sample: 'Aa' },
+    ];
+    const themes: { value: ChatTheme; label: string; bg: string; text: string; accent: string }[] = [
+      { value: 'light', label: 'Light', bg: '#FFFFFF', text: '#0A0A0A', accent: '#FF8C00' },
+      { value: 'dark', label: 'Dark', bg: '#0A0A0A', text: '#FAFAFA', accent: '#FF8C00' },
+      { value: 'midnight', label: 'Midnight', bg: '#0D1117', text: '#C9D1D9', accent: '#58A6FF' },
+      { value: 'aleo', label: 'Aleo', bg: '#1A0A00', text: '#FFD9B3', accent: '#FF8C00' },
+    ];
+    const bubbleStyles: { value: BubbleStyle; label: string }[] = [
+      { value: 'rounded', label: 'Rounded' },
+      { value: 'flat', label: 'Flat' },
+    ];
+
     return (
       <div className="flex-1 bg-white flex flex-col h-screen overflow-y-auto animate-slide-up">
         <BackHeader title="CHAT SETTINGS" subtitle="Customize your chat experience" />
-        <div className="flex-1 p-8 flex flex-col items-center justify-center">
-          <div className="w-20 h-20 bg-[#F5F0FF] rounded-full flex items-center justify-center mb-4">
-            <MessageCircle size={36} className="text-[#8B5CF6]/50" />
+        <div className="flex-1 p-8">
+          <div className="max-w-2xl space-y-5">
+
+            {/* Font Size */}
+            <div>
+              <div className="flex items-center gap-2 mb-3">
+                <Type size={16} className="text-[#8B5CF6]" />
+                <h3 className="text-xs font-bold uppercase tracking-wider text-[#666]">Font Size</h3>
+              </div>
+              <div className="flex gap-2">
+                {fontSizes.map(fs => (
+                  <button key={fs.value} onClick={() => onUpdateSetting('fontSize', fs.value)}
+                    className={`flex-1 py-3 rounded-xl font-bold transition-all border-2 ${
+                      settings.fontSize === fs.value
+                        ? 'bg-[#FF8C00] text-black border-[#FF8C00]'
+                        : 'bg-[#FAFAFA] text-[#666] border-[#E5E5E5] hover:border-[#FF8C00]'
+                    }`}>
+                    <span style={{ fontSize: fs.value === 'small' ? 12 : fs.value === 'medium' ? 15 : 18 }}>{fs.sample}</span>
+                    <span className="block text-xs mt-0.5">{fs.label}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Chat Theme */}
+            <div>
+              <div className="flex items-center gap-2 mb-3">
+                <Palette size={16} className="text-[#3B82F6]" />
+                <h3 className="text-xs font-bold uppercase tracking-wider text-[#666]">Chat Theme</h3>
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                {themes.map(t => (
+                  <button key={t.value} onClick={() => onUpdateSetting('chatTheme', t.value)}
+                    className={`p-3 rounded-xl transition-all border-2 flex items-center gap-3 ${
+                      settings.chatTheme === t.value
+                        ? 'border-[#FF8C00] ring-1 ring-[#FF8C00]/30'
+                        : 'border-[#E5E5E5] hover:border-[#FF8C00]'
+                    }`}>
+                    <div className="w-10 h-10 rounded-lg flex items-center justify-center shrink-0"
+                      style={{ backgroundColor: t.bg, border: '1px solid #333' }}>
+                      <div className="w-3 h-3 rounded-full" style={{ backgroundColor: t.accent }} />
+                    </div>
+                    <div className="text-left">
+                      <p className="font-bold text-sm text-[#0A0A0A]">{t.label}</p>
+                      <p className="text-[10px] text-[#999]">{t.value === 'light' ? 'Clean & bright' : t.value === 'dark' ? 'Easy on the eyes' : t.value === 'midnight' ? 'Deep blue' : 'Warm orange'}</p>
+                    </div>
+                    {settings.chatTheme === t.value && <Check size={16} className="text-[#FF8C00] ml-auto" />}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Bubble Style */}
+            <div>
+              <div className="flex items-center gap-2 mb-3">
+                <MessageCircle size={16} className="text-[#10B981]" />
+                <h3 className="text-xs font-bold uppercase tracking-wider text-[#666]">Bubble Style</h3>
+              </div>
+              <div className="flex gap-2">
+                {bubbleStyles.map(bs => (
+                  <button key={bs.value} onClick={() => onUpdateSetting('bubbleStyle', bs.value)}
+                    className={`flex-1 py-3 rounded-xl font-bold transition-all border-2 ${
+                      settings.bubbleStyle === bs.value
+                        ? 'bg-[#FF8C00] text-black border-[#FF8C00]'
+                        : 'bg-[#FAFAFA] text-[#666] border-[#E5E5E5] hover:border-[#FF8C00]'
+                    }`}>
+                    {bs.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Layout & Behavior */}
+            <div>
+              <div className="flex items-center gap-2 mb-3">
+                <Layout size={16} className="text-[#F59E0B]" />
+                <h3 className="text-xs font-bold uppercase tracking-wider text-[#666]">Layout & Input</h3>
+              </div>
+              <div className="bg-[#FAFAFA] border border-[#E5E5E5] rounded-2xl p-5 divide-y divide-[#E5E5E5]">
+                <Toggle
+                  enabled={settings.compactMode}
+                  onChange={(v) => onUpdateSetting('compactMode', v)}
+                  label="Compact Mode"
+                  description="Reduce spacing between messages"
+                />
+                <Toggle
+                  enabled={settings.sendOnEnter}
+                  onChange={(v) => onUpdateSetting('sendOnEnter', v)}
+                  label="Send on Enter"
+                  description="Press Enter to send, Shift+Enter for new line"
+                />
+              </div>
+            </div>
+
           </div>
-          <h3 className="text-xl font-bold text-[#0A0A0A] mb-2">Coming Soon</h3>
-          <p className="text-[#666] text-center max-w-sm">
-            Chat themes, font size, message grouping, and more customization options are on the way.
-          </p>
         </div>
       </div>
     );

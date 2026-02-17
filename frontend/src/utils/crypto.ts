@@ -26,6 +26,62 @@ export const generateKeyPair = (): KeyPair => {
   };
 };
 
+/**
+ * Validate encryption keypair for security
+ * Checks for zero keys, invalid length, and weak keys
+ */
+export const validateKeyPair = (keyPair: KeyPair): { valid: boolean; error?: string } => {
+  try {
+    // Check if keys exist
+    if (!keyPair.publicKey || !keyPair.secretKey) {
+      return { valid: false, error: 'Missing public or secret key' };
+    }
+
+    // Decode keys
+    const pk = decodeBase64(keyPair.publicKey);
+    const sk = decodeBase64(keyPair.secretKey);
+
+    // Check length
+    if (pk.length !== nacl.box.publicKeyLength) {
+      return { valid: false, error: `Invalid public key length: ${pk.length} (expected ${nacl.box.publicKeyLength})` };
+    }
+    if (sk.length !== nacl.box.secretKeyLength) {
+      return { valid: false, error: `Invalid secret key length: ${sk.length} (expected ${nacl.box.secretKeyLength})` };
+    }
+
+    // Check for zero keys (all bytes are 0)
+    const isZeroPk = pk.every(byte => byte === 0);
+    const isZeroSk = sk.every(byte => byte === 0);
+    if (isZeroPk || isZeroSk) {
+      return { valid: false, error: 'Zero key detected - keys must not be all zeros' };
+    }
+
+    // Check for weak keys (all bytes are the same)
+    const firstPk = pk[0];
+    const firstSk = sk[0];
+    const isWeakPk = pk.every(byte => byte === firstPk);
+    const isWeakSk = sk.every(byte => byte === firstSk);
+    if (isWeakPk || isWeakSk) {
+      return { valid: false, error: 'Weak key detected - keys have insufficient entropy' };
+    }
+
+    // Test key derivation (public key should match secret key)
+    try {
+      const derivedPk = nacl.box.keyPair.fromSecretKey(sk).publicKey;
+      const pkMatch = pk.every((byte, i) => byte === derivedPk[i]);
+      if (!pkMatch) {
+        return { valid: false, error: 'Public key does not match secret key' };
+      }
+    } catch (e) {
+      return { valid: false, error: 'Key derivation test failed' };
+    }
+
+    return { valid: true };
+  } catch (e) {
+    return { valid: false, error: `Validation error: ${e instanceof Error ? e.message : 'Unknown error'}` };
+  }
+};
+
 // Encrypt a message for a recipient
 export const encryptMessage = (
   message: string | Uint8Array,
@@ -211,6 +267,76 @@ export const decryptRoomKey = (
     if (!decrypted) return null;
     return encodeBase64(decrypted);
   } catch (e) {
+    return null;
+  }
+};
+
+// ── Key Backup / Recovery (Passphrase-based) ────────────────
+
+/**
+ * Derive an encryption key from a passphrase using PBKDF2.
+ * Returns a 32-byte key suitable for NaCl secretbox.
+ */
+async function deriveKeyFromPassphrase(passphrase: string, salt: Uint8Array): Promise<Uint8Array> {
+  const enc = new TextEncoder();
+  const keyMaterial = await crypto.subtle.importKey(
+    'raw',
+    enc.encode(passphrase),
+    'PBKDF2',
+    false,
+    ['deriveBits']
+  );
+  const bits = await crypto.subtle.deriveBits(
+    { name: 'PBKDF2', salt, iterations: 100_000, hash: 'SHA-256' },
+    keyMaterial,
+    256
+  );
+  return new Uint8Array(bits);
+}
+
+/**
+ * Encrypt key pair with a passphrase for backup.
+ * Returns { encrypted: base64, nonce: base64, salt: base64 }
+ */
+export const encryptKeysWithPassphrase = async (
+  keys: KeyPair,
+  passphrase: string
+): Promise<{ encrypted: string; nonce: string; salt: string }> => {
+  const salt = nacl.randomBytes(16);
+  const derivedKey = await deriveKeyFromPassphrase(passphrase, salt);
+  const nonce = nacl.randomBytes(nacl.secretbox.nonceLength);
+  const plaintext = new Uint8Array(textEncoder.encode(JSON.stringify(keys)));
+  const encrypted = nacl.secretbox(plaintext, new Uint8Array(nonce), new Uint8Array(derivedKey));
+  return {
+    encrypted: encodeBase64(encrypted),
+    nonce: encodeBase64(nonce),
+    salt: encodeBase64(salt)
+  };
+};
+
+/**
+ * Decrypt key pair from backup using passphrase.
+ * Returns KeyPair or null if passphrase is wrong.
+ */
+export const decryptKeysWithPassphrase = async (
+  encryptedB64: string,
+  nonceB64: string,
+  saltB64: string,
+  passphrase: string
+): Promise<KeyPair | null> => {
+  try {
+    const salt = decodeBase64(saltB64);
+    const derivedKey = await deriveKeyFromPassphrase(passphrase, salt);
+    const nonce = new Uint8Array(decodeBase64(nonceB64));
+    const encrypted = new Uint8Array(decodeBase64(encryptedB64));
+    const decrypted = nacl.secretbox.open(encrypted, nonce, new Uint8Array(derivedKey));
+    if (!decrypted) return null;
+    const json = textDecoder.decode(decrypted);
+    const keys = JSON.parse(json) as KeyPair;
+    const validation = validateKeyPair(keys);
+    if (!validation.valid) return null;
+    return keys;
+  } catch {
     return null;
   }
 };

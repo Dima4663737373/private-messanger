@@ -75,6 +75,7 @@ export class Profile extends Model {
   declare tx_id: string;
   declare encryption_public_key: string;
   declare address_hash: string;
+  declare avatar_cid: string;
   declare show_last_seen: boolean;
   declare show_avatar: boolean;
   declare last_seen: number;
@@ -105,6 +106,10 @@ Profile.init({
     type: DataTypes.STRING,
     allowNull: true,
     unique: true,
+  },
+  avatar_cid: {
+    type: DataTypes.STRING,
+    allowNull: true,
   },
   show_last_seen: {
     type: DataTypes.BOOLEAN,
@@ -142,6 +147,8 @@ export class Message extends Model {
   declare reply_to_text: string;
   declare reply_to_sender: string;
   declare read_at: number;
+  declare edited_at: number;
+  declare edit_count: number;
 }
 
 Message.init({
@@ -220,6 +227,14 @@ Message.init({
   read_at: {
     type: DataTypes.BIGINT,
     allowNull: true,
+  },
+  edited_at: {
+    type: DataTypes.BIGINT,
+    allowNull: true,
+  },
+  edit_count: {
+    type: DataTypes.INTEGER,
+    defaultValue: 0,
   },
 }, {
   sequelize,
@@ -387,6 +402,7 @@ export class UserPreferences extends Model {
   declare deleted_chats: string; // JSON array
   declare saved_contacts: string; // JSON array of {address, name}
   declare disappear_timers: string; // JSON object
+  declare blocked_users: string; // JSON array of addresses
   declare encrypted_keys: string | null; // JSON object with publicKey/secretKey
   declare key_nonce: string | null;
   declare settings: string; // JSON object — toggleable user settings
@@ -418,6 +434,10 @@ UserPreferences.init({
     type: DataTypes.TEXT,
     defaultValue: '{}',
   },
+  blocked_users: {
+    type: DataTypes.TEXT,
+    defaultValue: '[]',
+  },
   encrypted_keys: {
     type: DataTypes.TEXT,
     allowNull: true,
@@ -438,6 +458,192 @@ UserPreferences.init({
   sequelize,
   modelName: 'UserPreferences',
   timestamps: true,
+});
+
+// ── Message Edit History ──────────────────────
+
+export class MessageEditHistory extends Model {
+  declare id: number;
+  declare message_id: string;
+  declare previous_payload: string;
+  declare previous_payload_self: string;
+  declare edited_by: string;
+  declare edited_at: number;
+}
+
+MessageEditHistory.init({
+  id: {
+    type: DataTypes.INTEGER,
+    primaryKey: true,
+    autoIncrement: true,
+  },
+  message_id: {
+    type: DataTypes.STRING,
+    allowNull: false,
+  },
+  previous_payload: {
+    type: DataTypes.TEXT,
+    allowNull: false,
+  },
+  previous_payload_self: {
+    type: DataTypes.TEXT,
+    allowNull: true,
+  },
+  edited_by: {
+    type: DataTypes.STRING,
+    allowNull: false,
+  },
+  edited_at: {
+    type: DataTypes.BIGINT,
+    allowNull: false,
+  },
+}, {
+  sequelize,
+  modelName: 'MessageEditHistory',
+  timestamps: false,
+  indexes: [{ fields: ['message_id'] }],
+});
+
+// ── Deleted Message Audit ──────────────────────
+
+export class DeletedMessage extends Model {
+  declare id: number;
+  declare message_id: string;
+  declare dialog_hash: string;
+  declare deleted_by: string;
+  declare deleted_at: number;
+  declare sender: string;
+  declare recipient: string;
+}
+
+DeletedMessage.init({
+  id: {
+    type: DataTypes.INTEGER,
+    primaryKey: true,
+    autoIncrement: true,
+  },
+  message_id: {
+    type: DataTypes.STRING,
+    allowNull: false,
+  },
+  dialog_hash: {
+    type: DataTypes.STRING,
+    allowNull: true,
+  },
+  deleted_by: {
+    type: DataTypes.STRING,
+    allowNull: false,
+  },
+  deleted_at: {
+    type: DataTypes.BIGINT,
+    allowNull: false,
+  },
+  sender: {
+    type: DataTypes.STRING,
+    allowNull: true,
+  },
+  recipient: {
+    type: DataTypes.STRING,
+    allowNull: true,
+  },
+}, {
+  sequelize,
+  modelName: 'DeletedMessage',
+  timestamps: false,
+  indexes: [{ fields: ['dialog_hash'] }, { fields: ['deleted_by'] }],
+});
+
+// ── IPFS Pin Tracking ──────────────────────
+
+export class PinnedFile extends Model {
+  declare id: number;
+  declare cid: string;
+  declare uploader_address: string;
+  declare file_name: string;
+  declare file_size: number;
+  declare mime_type: string;
+  declare pin_status: string;
+  declare last_verified: number;
+  declare context: string;
+}
+
+PinnedFile.init({
+  id: {
+    type: DataTypes.INTEGER,
+    primaryKey: true,
+    autoIncrement: true,
+  },
+  cid: {
+    type: DataTypes.STRING,
+    allowNull: false,
+    unique: true,
+  },
+  uploader_address: {
+    type: DataTypes.STRING,
+    allowNull: false,
+  },
+  file_name: {
+    type: DataTypes.STRING,
+    allowNull: true,
+  },
+  file_size: {
+    type: DataTypes.INTEGER,
+    allowNull: true,
+  },
+  mime_type: {
+    type: DataTypes.STRING,
+    allowNull: true,
+  },
+  pin_status: {
+    type: DataTypes.STRING(20),
+    defaultValue: 'pinned', // pinned | lost | re-pinned
+  },
+  last_verified: {
+    type: DataTypes.BIGINT,
+    allowNull: true,
+  },
+  context: {
+    type: DataTypes.STRING, // 'avatar' | 'attachment' | 'other'
+    defaultValue: 'attachment',
+  },
+}, {
+  sequelize,
+  modelName: 'PinnedFile',
+  timestamps: true,
+  indexes: [{ fields: ['uploader_address'] }, { fields: ['pin_status'] }],
+});
+
+// ── Persistent Sessions ──────────────────────
+
+export class SessionRecord extends Model {
+  declare token: string;
+  declare address: string;
+  declare limited: boolean;
+  declare created_at: number;
+}
+
+SessionRecord.init({
+  token: {
+    type: DataTypes.STRING,
+    primaryKey: true,
+  },
+  address: {
+    type: DataTypes.STRING,
+    allowNull: false,
+  },
+  limited: {
+    type: DataTypes.BOOLEAN,
+    defaultValue: false,
+  },
+  created_at: {
+    type: DataTypes.BIGINT,
+    allowNull: false,
+  },
+}, {
+  sequelize,
+  modelName: 'SessionRecord',
+  timestamps: false,
+  indexes: [{ fields: ['address'] }],
 });
 
 export const initDB = async () => {

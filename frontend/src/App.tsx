@@ -28,22 +28,19 @@ import { safeBackendFetch } from './utils/api-client';
 import { playNotificationSound } from './utils/notification-sound';
 // lucide icons removed - FAB is now in Sidebar
 import ProfileView from './components/ProfileView';
+import { useSystemTheme, applyTheme } from './hooks/useSystemTheme';
 import {
-  UI_AVATARS_BASE_URL,
   ADDRESS_DISPLAY,
   MESSAGE_PREVIEW,
   MAX_FILE_SIZE,
-  MAX_FILENAME_LENGTH
+  MAX_FILENAME_LENGTH,
+  buildAvatarUrl
 } from './constants';
-
-const GENERIC_AVATAR = `${UI_AVATARS_BASE_URL}?name=?&background=888&color=fff`;
 
 const mapContactToChat = (contact: Contact, isActive: boolean): Chat => ({
   id: contact.id,
   name: contact.name,
-  avatar: contact.hideAvatar
-    ? GENERIC_AVATAR
-    : `${UI_AVATARS_BASE_URL}?name=${encodeURIComponent(contact.name)}&background=random&color=fff`,
+  avatar: buildAvatarUrl(contact.name, contact.avatarCid, contact.hideAvatar),
   status: 'offline',
   lastMessage: contact.lastMessage || 'No messages yet',
   time: contact.lastMessageTime ? new Date(contact.lastMessageTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '',
@@ -63,8 +60,11 @@ const InnerApp: React.FC = () => {
     deletedChats,
     savedContacts: backendSavedContacts,
     disappearTimers,
+    blockedUsers,
     setDisappearTimers,
     setSavedContacts: setBackendSavedContacts,
+    blockUser,
+    unblockUser,
     togglePin,
     toggleMute,
     markChatDeleted,
@@ -73,6 +73,15 @@ const InnerApp: React.FC = () => {
     settings: userSettings,
     updateSetting
   } = usePreferences(publicKey);
+
+  // System theme detection
+  const systemTheme = useSystemTheme();
+
+  // Apply theme to document root when chatTheme or systemTheme changes
+  useEffect(() => {
+    const theme = userSettings.chatTheme || 'light';
+    applyTheme(theme as any, systemTheme);
+  }, [userSettings.chatTheme, systemTheme]);
 
   // Derive encryption keys EARLY — before WS connects, so AUTH_CHALLENGE can be answered
   // Uses signMessage from useWallet() context for deterministic derivation (like alpaca-invoice)
@@ -125,6 +134,8 @@ const InnerApp: React.FC = () => {
   // Ref to access current settings inside memoized callbacks
   const settingsRef = useRef(userSettings);
   settingsRef.current = userSettings;
+  const blockedUsersRef = useRef(blockedUsers);
+  blockedUsersRef.current = blockedUsers;
 
   // Ref to access activeChatId and sendReadReceipt inside memoized handleNewMessage
   const activeChatIdRef = useRef<string | null>(null);
@@ -154,6 +165,7 @@ const InnerApp: React.FC = () => {
   const [chats, setChats] = useState<Chat[]>([]);
   const [histories, setHistories] = useState<Record<string, Message[]>>({});
   const [myProfile, setMyProfile] = useState<{username?: string, bio?: string} | null>(null);
+  const [myAvatarCid, setMyAvatarCid] = useState<string | null>(null);
   const [viewingProfile, setViewingProfile] = useState<Contact | NetworkProfile | null>(null);
 
   // Room State (Channels & Groups)
@@ -195,7 +207,7 @@ const InnerApp: React.FC = () => {
   const handleNewMessage = React.useCallback((msg: Message & { recipient?: string, recipientHash?: string, dialogHash?: string }) => {
     // Determine counterparty
     let counterpartyAddress = msg.isMine ? msg.recipient : msg.senderId;
-    
+
     // Handle 'unknown' recipient for sent messages — skip them (can't send on-chain)
     if (msg.isMine && (counterpartyAddress === 'unknown' || !counterpartyAddress)) {
          logger.warn('Skipping message with unknown recipient:', msg.recipientHash);
@@ -203,6 +215,11 @@ const InnerApp: React.FC = () => {
     }
 
     if (!counterpartyAddress) return;
+
+    // Block filter: suppress incoming messages from blocked users (still saved server-side)
+    if (!msg.isMine && blockedUsersRef.current.includes(counterpartyAddress)) {
+      return;
+    }
 
     const isDuplicate = processedMsgIds.current.has(msg.id);
     processedMsgIds.current.add(msg.id);
@@ -332,14 +349,14 @@ const InnerApp: React.FC = () => {
       });
   }, []);
 
-  const handleMessageUpdated = React.useCallback((msgId: string, newText: string) => {
+  const handleMessageUpdated = React.useCallback((msgId: string, newText: string, editedAt?: number, editCount?: number) => {
       setHistories(prev => {
           const newHistories = { ...prev };
           for (const chatId in newHistories) {
               const idx = newHistories[chatId].findIndex(m => m.id === msgId);
               if (idx !== -1) {
                   const msgs = [...newHistories[chatId]];
-                  msgs[idx] = { ...msgs[idx], text: newText, edited: true };
+                  msgs[idx] = { ...msgs[idx], text: newText, edited: true, editedAt, editCount };
                   // Update reply quotes that reference the edited message
                   for (let i = 0; i < msgs.length; i++) {
                     if (msgs[i].replyToId === msgId) {
@@ -482,12 +499,13 @@ const InnerApp: React.FC = () => {
   }, []);
 
   // Profile updated — update contact name + avatar visibility in real-time when someone changes their profile
-  const handleProfileUpdated = React.useCallback((addr: string, username?: string, showAvatar?: boolean) => {
+  const handleProfileUpdated = React.useCallback((addr: string, username?: string, showAvatar?: boolean, avatarCid?: string) => {
     setContacts(prev => prev.map(c => {
       if (c.address !== addr) return c;
       const updates: Partial<Contact> = {};
       if (username) { updates.name = username; updates.initials = username.slice(0, ADDRESS_DISPLAY.INITIALS).toUpperCase(); }
       if (typeof showAvatar === 'boolean') { updates.hideAvatar = !showAvatar; }
+      if (avatarCid !== undefined) { updates.avatarCid = avatarCid || undefined; }
       return { ...c, ...updates };
     }));
   }, []);
@@ -568,6 +586,7 @@ const InnerApp: React.FC = () => {
         if (profile) {
           logger.debug("Synced profile:", profile);
           setMyProfile({ username: profile.username, bio: profile.bio });
+          if (profile.avatar_cid) setMyAvatarCid(profile.avatar_cid);
         }
       }).catch(() => { /* own profile fetch failed, non-critical */ });
 
@@ -646,7 +665,8 @@ const InnerApp: React.FC = () => {
                     ? {
                         ...c,
                         ...(profile.username ? { name: profile.username, initials: profile.username.slice(0,2).toUpperCase() } : {}),
-                        hideAvatar: profile.show_avatar === false
+                        hideAvatar: profile.show_avatar === false,
+                        avatarCid: profile.avatar_cid || undefined
                       }
                     : c
                 ));
@@ -1120,6 +1140,12 @@ const InnerApp: React.FC = () => {
   };
 
 
+  const handleAvatarUpload = async (cid: string | null) => {
+    if (!publicKey) return;
+    await notifyProfileUpdate(myProfile?.username || '', myProfile?.bio || '', 'avatar-update', undefined, { avatarCid: cid });
+    setMyAvatarCid(cid);
+  };
+
   const handleSendMessageFromProfile = (contact: Contact | any) => {
     // Check if contact exists
     const address = contact.address || contact.id; // Fallback if contact object structure varies
@@ -1162,61 +1188,84 @@ const InnerApp: React.FC = () => {
 
   const handleDeleteRoom = async (roomId: string) => {
     const room = [...channels, ...groups].find(r => r.id === roomId);
-    await deleteRoomApi(roomId);
-    setChannels(prev => prev.filter(r => r.id !== roomId));
-    setGroups(prev => prev.filter(r => r.id !== roomId));
-    if (activeRoomId === roomId) setActiveRoomId(null);
-    toast.success('Room deleted');
+    try {
+      await deleteRoomApi(roomId);
+      setChannels(prev => prev.filter(r => r.id !== roomId));
+      setGroups(prev => prev.filter(r => r.id !== roomId));
+      if (activeRoomId === roomId) setActiveRoomId(null);
+      toast.success('Room deleted');
 
-    // On-chain deletion proof (optional, non-blocking)
-    if (publicKey && room) {
-      (async () => {
-        try {
-          const nameHash = hashAddress(room.name);
-          const creatorHash = hashAddress(publicKey);
-          const fn = room.type === 'channel' ? 'delete_channel' : 'delete_group';
-          await executeTransaction(fn, [nameHash, creatorHash]);
-        } catch (e) {
-          logger.warn('On-chain room deletion failed (non-critical):', e?.message);
-        }
-      })();
+      // On-chain deletion proof (optional, non-blocking)
+      if (publicKey && room) {
+        (async () => {
+          try {
+            const nameHash = hashAddress(room.name);
+            const creatorHash = hashAddress(publicKey);
+            const fn = room.type === 'channel' ? 'delete_channel' : 'delete_group';
+            await executeTransaction(fn, [nameHash, creatorHash]);
+          } catch (e) {
+            logger.warn('On-chain room deletion failed (non-critical):', e?.message);
+          }
+        })();
+      }
+    } catch (e) {
+      logger.error('Delete room failed:', e);
+      toast.error('Failed to delete room');
     }
   };
 
   const handleJoinRoom = async (roomId: string) => {
-    await joinRoom(roomId);
-    subscribeRoom(roomId);
-    toast.success('Joined room');
-    // Refresh groups list
-    fetchRooms('group').then(setGroups);
+    try {
+      await joinRoom(roomId);
+      subscribeRoom(roomId);
+      toast.success('Joined room');
+      fetchRooms('group').then(setGroups);
+    } catch (e) {
+      logger.error('Join room failed:', e);
+      toast.error('Failed to join room');
+    }
   };
 
   const handleLeaveRoom = async (roomId: string) => {
-    await leaveRoom(roomId);
-    if (activeRoomId === roomId) setActiveRoomId(null);
-    toast.success('Left room');
-    fetchRooms('group').then(setGroups);
+    try {
+      await leaveRoom(roomId);
+      if (activeRoomId === roomId) setActiveRoomId(null);
+      toast.success('Left room');
+      fetchRooms('group').then(setGroups);
+    } catch (e) {
+      logger.error('Leave room failed:', e);
+      toast.error('Failed to leave room');
+    }
   };
 
   const handleSelectRoom = async (roomId: string) => {
     setActiveRoomId(roomId);
     setActiveChatId(null);
     setRoomMembers([]);
-    // Auto-join (idempotent on server: findOrCreate)
-    await joinRoom(roomId);
-    subscribeRoom(roomId);
-    // Load room messages + members in parallel
-    const [msgs, info] = await Promise.all([
-      fetchRoomMessages(roomId),
-      fetchRoomInfo(roomId)
-    ]);
-    setRoomHistories(prev => ({ ...prev, [roomId]: msgs }));
-    if (info) setRoomMembers(info.members);
+    try {
+      // Auto-join (idempotent on server: findOrCreate)
+      await joinRoom(roomId);
+      subscribeRoom(roomId);
+      // Load room messages + members in parallel
+      const [msgs, info] = await Promise.all([
+        fetchRoomMessages(roomId),
+        fetchRoomInfo(roomId)
+      ]);
+      setRoomHistories(prev => ({ ...prev, [roomId]: msgs }));
+      if (info) setRoomMembers(info.members);
+    } catch (e) {
+      logger.error('Failed to load room:', e);
+      toast.error('Failed to load room');
+    }
   };
 
   // Forward a message to another contact
   const handleForwardMessage = async (toAddress: string, text: string, originalSender: string) => {
-    if (!publicKey || !toAddress.startsWith('aleo1') || toAddress.length < 60) return;
+    if (!publicKey) return;
+    if (!toAddress.startsWith('aleo1') || toAddress.length < 60) {
+      toast.error('Invalid recipient address');
+      return;
+    }
 
     const forwardText = `↪ Forwarded from ${originalSender}:\n${text}`;
 
@@ -1276,22 +1325,32 @@ const InnerApp: React.FC = () => {
 
   const handleDeleteRoomMessage = async (msgId: string) => {
     if (!activeRoomId) return;
-    await deleteRoomMessage(activeRoomId, msgId);
-    setRoomHistories(prev => ({
-      ...prev,
-      [activeRoomId]: (prev[activeRoomId] || []).filter(m => m.id !== msgId)
-    }));
-    toast.success('Message deleted');
+    try {
+      await deleteRoomMessage(activeRoomId, msgId);
+      setRoomHistories(prev => ({
+        ...prev,
+        [activeRoomId]: (prev[activeRoomId] || []).filter(m => m.id !== msgId)
+      }));
+      toast.success('Message deleted');
+    } catch (e) {
+      logger.error('Delete room message failed:', e);
+      toast.error('Failed to delete message');
+    }
   };
 
   const handleEditRoomMessage = async (msgId: string, newText: string) => {
     if (!activeRoomId) return;
-    await editRoomMessage(activeRoomId, msgId, newText);
-    setRoomHistories(prev => ({
-      ...prev,
-      [activeRoomId]: (prev[activeRoomId] || []).map(m => m.id === msgId ? { ...m, text: newText, edited: true } : m)
-    }));
-    toast.success('Message edited');
+    try {
+      await editRoomMessage(activeRoomId, msgId, newText);
+      setRoomHistories(prev => ({
+        ...prev,
+        [activeRoomId]: (prev[activeRoomId] || []).map(m => m.id === msgId ? { ...m, text: newText, edited: true } : m)
+      }));
+      toast.success('Message edited');
+    } catch (e) {
+      logger.error('Edit room message failed:', e);
+      toast.error('Failed to edit message');
+    }
   };
 
   const handleClearDM = async () => {
@@ -1357,7 +1416,11 @@ const InnerApp: React.FC = () => {
 
   const handleClearAllConversations = async () => {
     try {
-      // Clear all conversations via backend
+      const total = contacts.filter(c => c.dialogHash).length;
+      if (total === 0) {
+        toast('No conversations to clear', { icon: 'ℹ️' });
+        return;
+      }
       let failed = 0;
       for (const contact of contacts) {
         if (contact.dialogHash) {
@@ -1367,12 +1430,14 @@ const InnerApp: React.FC = () => {
       setContacts([]);
       setHistories({});
       setActiveChatId(null);
-      if (failed > 0) {
-        toast.success(`Conversations cleared (${failed} failed)`);
+      if (failed === total) {
+        toast.error('Failed to clear conversations');
+      } else if (failed > 0) {
+        toast.error(`${failed} of ${total} conversations failed to clear`);
       } else {
         toast.success('All conversations cleared');
       }
-    } catch (e) {
+    } catch (e: any) {
       logger.error('Clear all failed:', e?.message);
       toast.error('Failed to clear conversations');
     }
@@ -1455,23 +1520,26 @@ const InnerApp: React.FC = () => {
     }
 
     // 2. Off-chain delete (instant)
-    await deleteDMMessage(msgId);
-    if (activeChatId) {
-      setHistories(prev => {
-        const remaining = (prev[activeChatId!] || []).filter(m => m.id !== msgId)
-          // Update reply quotes that reference the deleted message
-          .map(m => m.replyToId === msgId ? { ...m, replyToText: 'Message deleted' } : m);
-        // Update sidebar preview to show the last remaining message (or empty)
-        const lastMsg = remaining.length > 0 ? remaining[remaining.length - 1] : null;
-        setContacts(pc => pc.map(c =>
-          c.id === activeChatId
-            ? { ...c, lastMessage: lastMsg?.text || '', lastMessageTime: lastMsg ? new Date(Number(lastMsg.timestamp)) : undefined }
-            : c
-        ));
-        return { ...prev, [activeChatId!]: remaining };
-      });
+    try {
+      await deleteDMMessage(msgId);
+      if (activeChatId) {
+        setHistories(prev => {
+          const remaining = (prev[activeChatId!] || []).filter(m => m.id !== msgId)
+            .map(m => m.replyToId === msgId ? { ...m, replyToText: 'Message deleted' } : m);
+          const lastMsg = remaining.length > 0 ? remaining[remaining.length - 1] : null;
+          setContacts(pc => pc.map(c =>
+            c.id === activeChatId
+              ? { ...c, lastMessage: lastMsg?.text || '', lastMessageTime: lastMsg ? new Date(Number(lastMsg.timestamp)) : undefined }
+              : c
+          ));
+          return { ...prev, [activeChatId!]: remaining };
+        });
+      }
+      toast.success('Message deleted');
+    } catch (e: any) {
+      logger.error('Off-chain delete failed:', e?.message);
+      toast.error('Failed to delete message: ' + (e?.message || 'Server error'));
     }
-    toast.success('Message deleted');
   };
 
   const handleEditDMMessage = async (msgId: string, newText: string) => {
@@ -1495,44 +1563,55 @@ const InnerApp: React.FC = () => {
     }
 
     // 2. Off-chain edit (instant via backend)
-    await editDMMessage(msgId, newText, contact.address);
-    // Optimistic update
-    setHistories(prev => {
-      const updated = (prev[activeChatId!] || []).map(m => {
-        if (m.id === msgId) return { ...m, text: newText, edited: true };
-        // Update reply quotes that reference the edited message
-        if (m.replyToId === msgId) return { ...m, replyToText: newText };
-        return m;
+    try {
+      await editDMMessage(msgId, newText, contact.address);
+      // Optimistic update only on success
+      setHistories(prev => {
+        const updated = (prev[activeChatId!] || []).map(m => {
+          if (m.id === msgId) return { ...m, text: newText, edited: true };
+          if (m.replyToId === msgId) return { ...m, replyToText: newText };
+          return m;
+        });
+        const lastMsg = updated[updated.length - 1];
+        if (lastMsg && lastMsg.id === msgId) {
+          setContacts(pc => pc.map(c =>
+            c.id === activeChatId ? { ...c, lastMessage: newText } : c
+          ));
+        }
+        return { ...prev, [activeChatId!]: updated };
       });
-      // Update sidebar preview if this was the last message
-      const lastMsg = updated[updated.length - 1];
-      if (lastMsg && lastMsg.id === msgId) {
-        setContacts(pc => pc.map(c =>
-          c.id === activeChatId ? { ...c, lastMessage: newText } : c
-        ));
-      }
-      return { ...prev, [activeChatId!]: updated };
-    });
-    toast.success('Message edited');
+      toast.success('Message edited');
+    } catch (e: any) {
+      logger.error('Off-chain edit failed:', e?.message);
+      toast.error('Failed to edit message: ' + (e?.message || 'Server error'));
+    }
   };
 
   // --- Pin Handlers ---
   const handlePinMessage = async (msgId: string, msgText: string) => {
     const contextId = activeRoomId || activeDialogHash;
     if (!contextId) return;
-    await pinMessage(contextId, msgId, msgText);
-    const pins = await fetchPins(contextId);
-    setPinnedMessages(prev => ({ ...prev, [contextId]: pins }));
-    toast.success('Message pinned');
+    try {
+      await pinMessage(contextId, msgId, msgText);
+      const pins = await fetchPins(contextId);
+      setPinnedMessages(prev => ({ ...prev, [contextId]: pins }));
+      toast.success('Message pinned');
+    } catch (e: any) {
+      toast.error('Failed to pin message: ' + (e?.message || 'Server error'));
+    }
   };
 
   const handleUnpinMessage = async (msgId: string) => {
     const contextId = activeRoomId || activeDialogHash;
     if (!contextId) return;
-    await unpinMessage(contextId, msgId);
-    const pins = await fetchPins(contextId);
-    setPinnedMessages(prev => ({ ...prev, [contextId]: pins }));
-    toast.success('Message unpinned');
+    try {
+      await unpinMessage(contextId, msgId);
+      const pins = await fetchPins(contextId);
+      setPinnedMessages(prev => ({ ...prev, [contextId]: pins }));
+      toast.success('Message unpinned');
+    } catch (e: any) {
+      toast.error('Failed to unpin message: ' + (e?.message || 'Server error'));
+    }
   };
 
   // Load pins when active chat/room changes
@@ -1747,8 +1826,16 @@ const InnerApp: React.FC = () => {
             contactHideAvatar={contactOnlineStatus?.showAvatar === false}
             linkPreviews={userSettings.linkPreviews}
             fetchLinkPreview={fetchLinkPreview}
+            isBlocked={!activeRoomId && activeChatId ? blockedUsers.includes(activeChatId) : false}
+            onBlockUser={!activeRoomId && activeChatId ? () => { blockUser(activeChatId!); toast.success('User blocked'); } : undefined}
+            onUnblockUser={!activeRoomId && activeChatId ? () => { unblockUser(activeChatId!); toast.success('User unblocked'); } : undefined}
             forwardContacts={contacts.filter(c => c.address?.startsWith('aleo1')).map(c => ({ id: c.id, name: c.name, address: c.address || '' }))}
             onForwardMessage={handleForwardMessage}
+            fontSize={userSettings.fontSize}
+            chatTheme={userSettings.chatTheme}
+            bubbleStyle={userSettings.bubbleStyle}
+            compactMode={userSettings.compactMode}
+            sendOnEnter={userSettings.sendOnEnter}
           />
         )}
 
@@ -1814,6 +1901,10 @@ const InnerApp: React.FC = () => {
                 notifyProfileUpdate(myProfile?.username || '', myProfile?.bio || '', 'settings-update', privacy);
               }
             }}
+            avatarCid={myAvatarCid}
+            onAvatarUpload={handleAvatarUpload}
+            blockedUsers={blockedUsers}
+            onUnblockUser={(addr) => { unblockUser(addr); toast.success('User unblocked'); }}
           />
         )}
       </main>

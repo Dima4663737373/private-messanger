@@ -13,6 +13,10 @@ import { waitForToken } from './auth-store';
 import { PREFERENCES_DEBOUNCE } from '../constants';
 import { logger } from './logger';
 
+export type FontSize = 'small' | 'medium' | 'large';
+export type ChatTheme = 'light' | 'dark' | 'midnight' | 'aleo';
+export type BubbleStyle = 'rounded' | 'flat';
+
 export interface UserSettings {
   // Privacy
   typingIndicators: boolean;
@@ -27,6 +31,12 @@ export interface UserSettings {
   notifPreview: boolean;
   // Profile
   avatarColor: string;
+  // Chat appearance
+  fontSize: FontSize;
+  chatTheme: ChatTheme;
+  bubbleStyle: BubbleStyle;
+  compactMode: boolean;
+  sendOnEnter: boolean;
 }
 
 export const DEFAULT_SETTINGS: UserSettings = {
@@ -40,6 +50,11 @@ export const DEFAULT_SETTINGS: UserSettings = {
   notifSound: true,
   notifPreview: true,
   avatarColor: '#FF8C00',
+  fontSize: 'medium',
+  chatTheme: 'dark',
+  bubbleStyle: 'rounded',
+  compactMode: false,
+  sendOnEnter: true,
 };
 
 export interface SavedContact {
@@ -54,6 +69,7 @@ export interface UserPreferences {
   deleted_chats: string[];
   saved_contacts: SavedContact[];
   disappear_timers: Record<string, string>;
+  blocked_users: string[];
   settings: Partial<UserSettings>;
   migrated?: boolean;
 }
@@ -65,6 +81,7 @@ const DEFAULT_PREFS = (address: string): UserPreferences => ({
   deleted_chats: [],
   saved_contacts: [],
   disappear_timers: {},
+  blocked_users: [],
   settings: {},
 });
 
@@ -100,6 +117,7 @@ export async function updatePreferences(
     deletedChats: string[];
     savedContacts: SavedContact[];
     disappearTimers: Record<string, string>;
+    blockedUsers: string[];
     settings: Partial<UserSettings>;
     migrated: boolean;
   }>

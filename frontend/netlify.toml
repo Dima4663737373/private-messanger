@@ -43,10 +43,10 @@
     # Referrer policy - send origin only on HTTPS
     Referrer-Policy = "strict-origin-when-cross-origin"
 
-    # Permissions policy - disable unused features
+    # Permissions policy - disable unused features (microphone allowed for voice messages)
     Permissions-Policy = """
       camera=(),
-      microphone=(),
+      microphone=(self),
       geolocation=(),
       payment=(),
       usb=(),

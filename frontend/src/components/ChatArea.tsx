@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect, useRef, useLayoutEffect } from 'react';
-import { Search, MoreVertical, Paperclip, Send, Smile, Menu, Ghost, Shield, MessageSquare, Trash2, Edit2, X, Check, File as FileIcon, Download, Reply, Timer, Clock, Pin, Copy, Users, LogOut, Share2, Bold, Italic, Strikethrough, Underline } from 'lucide-react';
+import { Search, MoreVertical, Paperclip, Send, Smile, Menu, Ghost, Shield, MessageSquare, Trash2, Edit2, X, Check, File as FileIcon, Download, Reply, Timer, Clock, Pin, Copy, Users, LogOut, Share2, Bold, Italic, Strikethrough, Underline, Ban, Lock, Mic, Square } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Chat, Message, DisappearTimer, DISAPPEAR_TIMERS, Room, AppView, PinnedMessage } from '../types';
 import { logger } from '../utils/logger';
@@ -11,8 +11,14 @@ import { EmptyState } from './ui/EmptyState';
 import { toast } from 'react-hot-toast';
 import DOMPurify from 'dompurify';
 import EmojiPicker, { Theme } from 'emoji-picker-react';
-import { IPFS_GATEWAY_URL, ADDRESS_DISPLAY, MESSAGE_PREVIEW } from '../constants';
+import { IPFS_GATEWAY_URL, ADDRESS_DISPLAY, MESSAGE_PREVIEW, GENERIC_AVATAR, MAX_MESSAGE_LENGTH } from '../constants';
 import { applyFormatting } from '../utils/formatText';
+import { safeBackendFetch } from '../utils/api-client';
+import { TypingIndicator } from './ui/TypingIndicator';
+import { ScrollToBottomButton } from './ui/ScrollToBottomButton';
+import { useAutoResizeTextarea } from '../hooks/useAutoResizeTextarea';
+import ImageLightbox from './ui/ImageLightbox';
+import { useVoiceRecorder } from '../hooks/useVoiceRecorder';
 
 const QUICK_EMOJIS = ['👍', '❤️', '😂', '😮', '😢', '🔥'];
 
@@ -24,7 +30,6 @@ function timeAgo(ts: number): string {
   return `${Math.floor(diff / 86_400_000)}d ago`;
 }
 
-const GENERIC_AVATAR = 'https://ui-avatars.com/api/?name=?&background=888&color=fff';
 const URL_REGEX = /https?:\/\/[^\s<>"')\]]+/g;
 
 // Inline link preview card component
@@ -51,9 +56,10 @@ const LinkPreviewCard: React.FC<{
   }, [url, fetchPreview]);
 
   if (loading) return (
-    <div className="mt-2 rounded-lg border border-[#E5E5E5] bg-white/80 p-3 animate-pulse">
-      <div className="h-3 bg-[#E5E5E5] rounded w-2/3 mb-2" />
-      <div className="h-2 bg-[#E5E5E5] rounded w-full" />
+    <div className="mt-3 rounded-xl border-2 border-[var(--border-primary)] bg-[var(--bg-secondary)] p-4 animate-pulse">
+      <div className="h-4 bg-[var(--border-primary)] rounded w-3/4 mb-3" />
+      <div className="h-3 bg-[var(--border-primary)] rounded w-full mb-2" />
+      <div className="h-3 bg-[var(--border-primary)] rounded w-2/3" />
     </div>
   );
 
@@ -62,20 +68,41 @@ const LinkPreviewCard: React.FC<{
   const domain = (() => { try { return new URL(url).hostname; } catch { return url; } })();
 
   return (
-    <a href={url} target="_blank" rel="noreferrer" className="block mt-2 rounded-lg border border-[#E5E5E5] bg-white overflow-hidden hover:border-[#FF8C00] transition-colors no-underline">
-      <div className="flex">
-        {preview.image && (
-          <div className="w-20 h-20 shrink-0 bg-[#F5F5F5]">
-            <img src={preview.image} alt="" className="w-full h-full object-cover" onError={e => (e.currentTarget.style.display = 'none')} />
-          </div>
+    <motion.a
+      href={url}
+      target="_blank"
+      rel="noreferrer"
+      initial={{ opacity: 0, y: 10 }}
+      animate={{ opacity: 1, y: 0 }}
+      className="block mt-3 rounded-xl border-2 border-[var(--border-primary)] bg-[var(--bg-primary)] overflow-hidden hover:border-[var(--accent-primary)] hover:shadow-md transition-all no-underline group"
+    >
+      {preview.image && (
+        <div className="w-full h-40 bg-[var(--bg-secondary)] overflow-hidden">
+          <img
+            src={preview.image}
+            alt={preview.title || ''}
+            className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+            onError={e => (e.currentTarget.parentElement!.style.display = 'none')}
+          />
+        </div>
+      )}
+      <div className="p-4">
+        {preview.title && (
+          <h3 className="text-sm font-bold text-[var(--text-primary)] mb-2 line-clamp-2 leading-snug">
+            {preview.title}
+          </h3>
         )}
-        <div className="p-2.5 min-w-0 flex-1">
-          {preview.title && <p className="text-xs font-bold text-[#0A0A0A] truncate">{preview.title}</p>}
-          {preview.description && <p className="text-[11px] text-[#666] line-clamp-2 mt-0.5">{preview.description}</p>}
-          <p className="text-[10px] text-[#999] font-mono mt-1">{preview.siteName || domain}</p>
+        {preview.description && (
+          <p className="text-xs text-[var(--text-secondary)] line-clamp-3 leading-relaxed mb-2">
+            {preview.description}
+          </p>
+        )}
+        <div className="flex items-center gap-2 text-[10px] text-[var(--text-tertiary)] font-mono uppercase tracking-wider">
+          <span className="w-1.5 h-1.5 bg-[var(--accent-primary)] rounded-full" />
+          {preview.siteName || domain}
         </div>
       </div>
-    </a>
+    </motion.a>
   );
 };
 
@@ -120,6 +147,16 @@ interface ChatAreaProps {
   onJoinRoom?: () => void;
   forwardContacts?: { id: string; name: string; address: string }[];
   onForwardMessage?: (toAddress: string, text: string, originalSender: string) => void;
+  // Block user
+  isBlocked?: boolean;
+  onBlockUser?: () => void;
+  onUnblockUser?: () => void;
+  // Chat appearance settings
+  fontSize?: 'small' | 'medium' | 'large';
+  chatTheme?: 'light' | 'dark' | 'midnight' | 'aleo';
+  bubbleStyle?: 'rounded' | 'flat';
+  compactMode?: boolean;
+  sendOnEnter?: boolean;
 }
 
 const ChatArea: React.FC<ChatAreaProps> = ({
@@ -162,7 +199,15 @@ const ChatArea: React.FC<ChatAreaProps> = ({
   fetchLinkPreview,
   onJoinRoom,
   forwardContacts = [],
-  onForwardMessage
+  onForwardMessage,
+  isBlocked = false,
+  onBlockUser,
+  onUnblockUser,
+  fontSize = 'medium',
+  chatTheme = 'dark',
+  bubbleStyle = 'rounded',
+  compactMode = false,
+  sendOnEnter = true
 }) => {
   const [input, setInput] = useState('');
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
@@ -174,6 +219,11 @@ const ChatArea: React.FC<ChatAreaProps> = ({
 
   const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
   const [editContent, setEditContent] = useState('');
+
+  // Edit history modal
+  const [editHistoryMsgId, setEditHistoryMsgId] = useState<string | null>(null);
+  const [editHistoryEntries, setEditHistoryEntries] = useState<{ edited_at: number; previous_payload: string }[]>([]);
+  const [editHistoryLoading, setEditHistoryLoading] = useState(false);
 
   // Helper: resolve address to display name
   const resolveName = (addr: string) =>
@@ -193,9 +243,15 @@ const ChatArea: React.FC<ChatAreaProps> = ({
 
   // Input emoji picker state
   const [showInputEmojiPicker, setShowInputEmojiPicker] = useState(false);
-  const mainInputRef = useRef<HTMLInputElement>(null);
+  const mainInputRef = useRef<HTMLTextAreaElement>(null);
   const editInputRef = useRef<HTMLInputElement>(null);
   const emojiPickerContainerRef = useRef<HTMLDivElement>(null);
+
+  // Image lightbox state
+  const [lightboxSrc, setLightboxSrc] = useState<string | null>(null);
+
+  // Voice recorder
+  const { isRecording, recordingDuration, startRecording, stopRecording, cancelRecording } = useVoiceRecorder();
 
   // Floating format toolbar state
   const [showFormatBar, setShowFormatBar] = useState(false);
@@ -211,6 +267,27 @@ const ChatArea: React.FC<ChatAreaProps> = ({
   const [searchMatchIds, setSearchMatchIds] = useState<string[]>([]);
   const [searchIndex, setSearchIndex] = useState(0);
   const searchInputRef = useRef<HTMLInputElement>(null);
+
+  // Scroll tracking for FAB
+  const [showScrollFAB, setShowScrollFAB] = useState(false);
+  const [unreadCount, setUnreadCount] = useState(0);
+  const lastScrollTop = useRef(0);
+
+  // Drag and drop state
+  const [isDragging, setIsDragging] = useState(false);
+
+  // ── Theme & appearance derived values ──
+  const themeColors = {
+    light: { bg: '#FFFFFF', chatBg: '#F5F5F5', myBubble: '#0A0A0A', myText: '#FFFFFF', theirBubble: '#FFFFFF', theirText: '#0A0A0A', theirBorder: '#E5E5E5', headerBg: '#FFFFFF', headerText: '#0A0A0A', inputBg: '#F5F5F5', inputText: '#0A0A0A', inputBorder: '#E5E5E5', accent: '#FF8C00' },
+    dark: { bg: '#0A0A0A', chatBg: '#0A0A0A', myBubble: '#1A1A2E', myText: '#FFFFFF', theirBubble: '#1A1A1A', theirText: '#E5E5E5', theirBorder: '#2A2A2A', headerBg: '#0A0A0A', headerText: '#FFFFFF', inputBg: '#111111', inputText: '#FFFFFF', inputBorder: '#2A2A2A', accent: '#FF8C00' },
+    midnight: { bg: '#0D1117', chatBg: '#0D1117', myBubble: '#161B22', myText: '#C9D1D9', theirBubble: '#161B22', theirText: '#C9D1D9', theirBorder: '#30363D', headerBg: '#0D1117', headerText: '#C9D1D9', inputBg: '#0D1117', inputText: '#C9D1D9', inputBorder: '#30363D', accent: '#58A6FF' },
+    aleo: { bg: '#1A0A00', chatBg: '#1A0A00', myBubble: '#331A00', myText: '#FFD9B3', theirBubble: '#261300', theirText: '#FFD9B3', theirBorder: '#4D2600', headerBg: '#1A0A00', headerText: '#FFD9B3', inputBg: '#1A0A00', inputText: '#FFD9B3', inputBorder: '#4D2600', accent: '#FF8C00' },
+  }[chatTheme];
+  const fontSizePx = { small: 13, medium: 15, large: 17 }[fontSize];
+  const bubbleRadius = bubbleStyle === 'rounded' ? 'rounded-3xl' : 'rounded-lg';
+  const bubbleRadiusMine = bubbleStyle === 'rounded' ? 'rounded-3xl rounded-br-sm' : 'rounded-lg rounded-br-sm';
+  const bubbleRadiusTheirs = bubbleStyle === 'rounded' ? 'rounded-3xl rounded-bl-sm' : 'rounded-lg rounded-bl-sm';
+  const messageSpacing = compactMode ? 'space-y-2' : 'space-y-6';
 
   // Clear edit/reply state and menu when switching chats
   useEffect(() => {
@@ -247,6 +324,53 @@ const ChatArea: React.FC<ChatAreaProps> = ({
       if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
     }
   }, [searchIndex, searchMatchIds]);
+
+  // Auto-resize textarea
+  useAutoResizeTextarea(mainInputRef, input);
+
+  // Scroll tracking for FAB visibility
+  useEffect(() => {
+    const scrollEl = scrollRef.current;
+    if (!scrollEl) return;
+
+    const handleScroll = () => {
+      const { scrollTop, scrollHeight, clientHeight } = scrollEl;
+      const isNearBottom = scrollHeight - scrollTop - clientHeight < 100;
+
+      // Show FAB when scrolled up
+      setShowScrollFAB(!isNearBottom);
+
+      lastScrollTop.current = scrollTop;
+    };
+
+    scrollEl.addEventListener('scroll', handleScroll);
+    return () => scrollEl.removeEventListener('scroll', handleScroll);
+  }, []);
+
+  // Smooth scroll to bottom
+  const scrollToBottom = (smooth = true) => {
+    if (scrollRef.current) {
+      scrollRef.current.scrollTo({
+        top: scrollRef.current.scrollHeight,
+        behavior: smooth ? 'smooth' : 'auto'
+      });
+    }
+  };
+
+  // Auto-scroll on new messages (only if already near bottom)
+  useEffect(() => {
+    if (messages.length === 0) return;
+    const scrollEl = scrollRef.current;
+    if (!scrollEl) return;
+
+    const { scrollTop, scrollHeight, clientHeight } = scrollEl;
+    const wasNearBottom = scrollHeight - scrollTop - clientHeight < 200;
+
+    if (wasNearBottom) {
+      // Delay to let DOM update
+      requestAnimationFrame(() => scrollToBottom(true));
+    }
+  }, [messages.length]);
 
   // Render message text with formatting, clickable URLs and optional search highlighting
   const renderMessageText = (text: string, isSearchMatch: boolean) => {
@@ -353,6 +477,10 @@ const ChatArea: React.FC<ChatAreaProps> = ({
 
   const handleSend = () => {
     if ((!input.trim() && !selectedFile) || !chatId) return;
+    if (input.length > MAX_MESSAGE_LENGTH) {
+      toast.error(`Message too long (max ${MAX_MESSAGE_LENGTH} characters)`);
+      return;
+    }
     onSendMessage(input, selectedFile || undefined, replyingTo || undefined);
     setInput('');
     setSelectedFile(null);
@@ -374,7 +502,7 @@ const ChatArea: React.FC<ChatAreaProps> = ({
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
+    if (e.key === 'Enter' && !e.shiftKey && sendOnEnter) {
       e.preventDefault();
       handleSend();
     }
@@ -456,12 +584,23 @@ const ChatArea: React.FC<ChatAreaProps> = ({
   };
 
   const submitEdit = async (msg: Message) => {
-      // Don't submit if text is empty or unchanged
-      if (!editContent.trim() || editContent.trim() === msg.text) return;
+      if (!editContent.trim()) {
+          toast.error("Message cannot be empty");
+          return;
+      }
+      if (editContent.trim() === msg.text) {
+          toast("No changes to save", { icon: 'ℹ️' });
+          cancelEdit();
+          return;
+      }
       setShowFormatBar(false);
       if (roomChat && onEditRoomMessage) {
-          onEditRoomMessage(msg.id, editContent);
-          setEditingMessageId(null);
+          try {
+              await onEditRoomMessage(msg.id, editContent);
+              setEditingMessageId(null);
+          } catch (e: any) {
+              toast.error("Failed to edit: " + (e?.message || 'Unknown error'));
+          }
           return;
       }
       // Off-chain DM edit
@@ -470,8 +609,8 @@ const ChatArea: React.FC<ChatAreaProps> = ({
               await onEditDMMessage(msg.id, editContent);
               setEditingMessageId(null);
               toast.success("Message edited");
-          } catch (e) {
-              toast.error("Failed to edit: " + e.message);
+          } catch (e: any) {
+              toast.error("Failed to edit: " + (e?.message || 'Unknown error'));
           }
           return;
       }
@@ -481,6 +620,63 @@ const ChatArea: React.FC<ChatAreaProps> = ({
       setEditingMessageId(null);
       setEditContent('');
       setShowFormatBar(false);
+  };
+
+  // Drag and drop handlers
+  const handleDragEnter = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (e.dataTransfer.types.includes('Files')) {
+      setIsDragging(true);
+    }
+  };
+
+  const handleDragLeave = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    // Only hide if leaving the main container
+    if (e.currentTarget === e.target) {
+      setIsDragging(false);
+    }
+  };
+
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+  };
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(false);
+
+    const files = Array.from(e.dataTransfer.files);
+    if (files.length > 0) {
+      const file = files[0]; // Take first file only
+      handleFileSelect({ target: { files: [file] } } as any);
+    }
+  };
+
+  const showEditHistory = async (msgId: string) => {
+    if (roomChat) return; // Edit history only for DMs (encrypted payloads)
+    setEditHistoryMsgId(msgId);
+    setEditHistoryLoading(true);
+    setEditHistoryEntries([]);
+    try {
+      const { data } = await safeBackendFetch<{ history: { edited_at: number; previous_payload: string; previous_payload_self: string }[] }>(
+        `messages/${msgId}/history`
+      );
+      if (data?.history) {
+        // We can't decrypt here since we don't have the decryption function,
+        // but we show timestamps. The payload is encrypted — show the time only.
+        setEditHistoryEntries(data.history);
+      }
+    } catch {
+      toast.error('Failed to load edit history');
+      setEditHistoryMsgId(null);
+    } finally {
+      setEditHistoryLoading(false);
+    }
   };
 
   if (!chatId || !activeChat) {
@@ -536,9 +732,9 @@ const ChatArea: React.FC<ChatAreaProps> = ({
   }
 
   return (
-    <div className="flex-1 bg-[#FAFAFA] flex flex-col relative h-screen overflow-hidden">
+    <div className="flex-1 flex flex-col relative h-screen overflow-hidden" style={{ backgroundColor: themeColors.chatBg, color: themeColors.theirText }}>
       {/* Chat Header */}
-      <header className="px-8 py-5 border-b border-[#E5E5E5] bg-white flex items-center justify-between z-10">
+      <header className="px-8 py-5 border-b flex items-center justify-between z-10 backdrop-blur-xl bg-opacity-90" style={{ backgroundColor: themeColors.headerBg, borderColor: themeColors.theirBorder, color: themeColors.headerText, backdropFilter: 'blur(20px)', WebkitBackdropFilter: 'blur(20px)' }}>
         <div className="flex items-center gap-4">
           <button onClick={onToggleSidebar} className="lg:hidden p-2 hover:bg-[#F5F5F5] rounded-lg mr-2">
             <Menu size={20} className="text-[#666]" />
@@ -556,7 +752,10 @@ const ChatArea: React.FC<ChatAreaProps> = ({
           >
             <h2 className="text-[#0A0A0A] text-lg font-bold flex items-center gap-2">
               {roomChat ? `# ${roomChat.name}` : activeChat.name}
-              {!roomChat && contactOnline && <span className="w-2 h-2 bg-[#10B981] rounded-full animate-pulse" />}
+              {!roomChat && contactOnline && <span className="w-2 h-2 bg-[var(--status-online)] rounded-full status-pulse" />}
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-[var(--accent-light)] text-[var(--accent-primary)] text-[10px] font-bold uppercase tracking-wider rounded-md" title="End-to-end encrypted">
+                <Lock size={10} /> E2E
+              </span>
             </h2>
             <p className="text-[#666] text-xs font-mono tracking-tighter uppercase">
               {roomChat
@@ -612,7 +811,7 @@ const ChatArea: React.FC<ChatAreaProps> = ({
                     </button>
                     <button
                       onClick={() => {
-                        navigator.clipboard.writeText(roomChat.id);
+                        navigator.clipboard.writeText(roomChat.id).catch(() => toast.error('Failed to copy'));
                         toast.success('Room ID copied — share it so others can join');
                         setIsMenuOpen(false);
                       }}
@@ -649,6 +848,25 @@ const ChatArea: React.FC<ChatAreaProps> = ({
                   >
                     <Trash2 size={16} className="text-[#888]" /> Clear History
                   </button>
+                )}
+
+                {/* DM: Block / Unblock User */}
+                {!roomChat && (onBlockUser || onUnblockUser) && (
+                  isBlocked ? (
+                    <button
+                      onClick={() => { setIsMenuOpen(false); onUnblockUser?.(); }}
+                      className="w-full flex items-center gap-3 px-4 py-3 hover:bg-[#FAFAFA] text-sm font-medium text-[#10B981] btn-press border-t border-[#F0F0F0]"
+                    >
+                      <Ban size={16} /> Unblock User
+                    </button>
+                  ) : (
+                    <button
+                      onClick={() => { setIsMenuOpen(false); if (confirm('Block this user? They won\'t be able to send you messages.')) onBlockUser?.(); }}
+                      className="w-full flex items-center gap-3 px-4 py-3 hover:bg-red-50 text-sm font-medium text-red-500 btn-press border-t border-[#F0F0F0]"
+                    >
+                      <Ban size={16} /> Block User
+                    </button>
+                  )
                 )}
 
                 {/* Room: Leave */}
@@ -762,7 +980,7 @@ const ChatArea: React.FC<ChatAreaProps> = ({
               <div className="mt-4 flex gap-2">
                 <button
                   onClick={() => {
-                    navigator.clipboard.writeText(roomChat.id);
+                    navigator.clipboard.writeText(roomChat.id).catch(() => toast.error('Failed to copy'));
                     toast.success('Room ID copied');
                   }}
                   className="flex-1 flex items-center justify-center gap-2 py-2 bg-[#F5F5F5] hover:bg-[#E5E5E5] rounded-xl text-sm font-medium text-[#333] transition-colors btn-press"
@@ -808,7 +1026,7 @@ const ChatArea: React.FC<ChatAreaProps> = ({
                     </div>
                     <button
                       onClick={() => {
-                        navigator.clipboard.writeText(addr);
+                        navigator.clipboard.writeText(addr).catch(() => toast.error('Failed to copy'));
                         toast.success('Address copied');
                       }}
                       className="p-1.5 text-[#CCC] hover:text-[#666] shrink-0 btn-icon"
@@ -865,7 +1083,15 @@ const ChatArea: React.FC<ChatAreaProps> = ({
       )}
 
       {/* Messages Area */}
-      <div ref={scrollRef} className="flex-1 overflow-y-auto px-8 py-8 space-y-6 flex flex-col relative">
+      <div
+        ref={scrollRef}
+        className={`flex-1 overflow-y-auto px-8 py-8 ${messageSpacing} flex flex-col relative`}
+        style={{ fontSize: fontSizePx }}
+        onDragEnter={handleDragEnter}
+        onDragLeave={handleDragLeave}
+        onDragOver={handleDragOver}
+        onDrop={handleDrop}
+      >
         {/* Sentinel for Infinite Scroll */}
         <div ref={topSentinelRef} className="h-1 w-full flex-shrink-0 opacity-0" />
         
@@ -909,11 +1135,13 @@ const ChatArea: React.FC<ChatAreaProps> = ({
                 </div>
               )}
 
-              <div className={`group relative px-6 py-4 rounded-3xl transition-all ${
-                msg.isMine
-                  ? 'bg-[#0A0A0A] text-white rounded-br-sm'
-                  : 'bg-white border border-[#E5E5E5] text-[#0A0A0A] rounded-bl-sm'
-              }`}>
+              <div className={`group relative px-6 py-4 transition-all ${
+                msg.isMine ? bubbleRadiusMine : bubbleRadiusTheirs
+              }`} style={{
+                backgroundColor: msg.isMine ? themeColors.myBubble : themeColors.theirBubble,
+                color: msg.isMine ? themeColors.myText : themeColors.theirText,
+                border: msg.isMine ? 'none' : `1px solid ${themeColors.theirBorder}`,
+              }}>
                 {/* Edit Mode */}
                 {editingMessageId === msg.id ? (
                     <div className="flex flex-col gap-2 min-w-[200px] relative">
@@ -973,10 +1201,15 @@ const ChatArea: React.FC<ChatAreaProps> = ({
                             <div className="mb-2">
                                 {msg.attachment.type === 'image' && msg.attachment.cid !== 'pending...' ? (
                                     <img
-                                        src={msg.attachment.cid.startsWith('Qm') ? `${IPFS_GATEWAY_URL}${msg.attachment.cid}` : msg.attachment.cid}
+                                        src={msg.attachment.cid.startsWith('Qm') || msg.attachment.cid.startsWith('bafy') ? `${IPFS_GATEWAY_URL}${msg.attachment.cid}` : msg.attachment.cid}
                                         alt="attachment"
-                                        className="rounded-lg max-w-full h-auto max-h-[200px] cursor-pointer hover:opacity-90"
-                                        onClick={() => window.open(msg.attachment?.cid.startsWith('Qm') ? `${IPFS_GATEWAY_URL}${msg.attachment?.cid}` : msg.attachment?.cid, '_blank')}
+                                        className="rounded-lg max-w-full h-auto max-h-[200px] cursor-pointer hover:opacity-90 transition-opacity"
+                                        onClick={() => {
+                                          const src = msg.attachment?.cid.startsWith('Qm') || msg.attachment?.cid.startsWith('bafy')
+                                            ? `${IPFS_GATEWAY_URL}${msg.attachment?.cid}`
+                                            : msg.attachment?.cid;
+                                          if (src) setLightboxSrc(src);
+                                        }}
                                     />
                                 ) : (
                                     <div className={`flex items-center gap-3 p-2 rounded-lg ${msg.isMine ? 'bg-white/10' : 'bg-black/5'}`}>
@@ -1012,7 +1245,15 @@ const ChatArea: React.FC<ChatAreaProps> = ({
                         )}
                         <div className={`text-[10px] mt-2 font-mono opacity-60 flex items-center gap-1 ${msg.isMine ? 'justify-end' : 'justify-start'}`}>
                         {msg.time}
-                        {msg.edited && <span className="italic text-[#FF8C00]">(edited)</span>}
+                        {msg.edited && (
+                          <span
+                            className="italic text-[#FF8C00] cursor-pointer hover:underline"
+                            onClick={() => showEditHistory(msg.id)}
+                            title={msg.editedAt ? `Edited ${new Date(msg.editedAt).toLocaleString()}${msg.editCount && msg.editCount > 1 ? ` (${msg.editCount} edits)` : ''}` : 'Edited'}
+                          >
+                            (edited{msg.editCount && msg.editCount > 1 ? ` x${msg.editCount}` : ''})
+                          </span>
+                        )}
                         {disappearTimer !== 'off' && <Timer size={8} className="ml-1 text-[#FF8C00]" />}
                         {msg.isMine && (
                             <MessageStatus status={msg.status} readAt={msg.readAt} />
@@ -1091,7 +1332,7 @@ const ChatArea: React.FC<ChatAreaProps> = ({
                             )}
                             {/* Copy text */}
                             <button
-                              onClick={() => { navigator.clipboard.writeText(msg.text); toast.success('Copied'); }}
+                              onClick={() => { navigator.clipboard.writeText(msg.text).catch(() => toast.error('Failed to copy')); toast.success('Copied'); }}
                               title="Copy text"
                               className="p-1.5 rounded-lg text-[#888] hover:text-[#FF8C00] hover:bg-[#FFF3E0] btn-icon"
                             >
@@ -1149,22 +1390,51 @@ const ChatArea: React.FC<ChatAreaProps> = ({
             </motion.div>
           );})
         )}
+
+        {/* Drag and Drop Overlay */}
+        <AnimatePresence>
+          {isDragging && (
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="absolute inset-0 bg-[var(--accent-primary)] bg-opacity-10 border-4 border-dashed border-[var(--accent-primary)] rounded-2xl flex items-center justify-center z-50 pointer-events-none"
+            >
+              <div className="bg-white px-8 py-6 rounded-2xl shadow-2xl flex flex-col items-center gap-3">
+                <Paperclip size={48} className="text-[var(--accent-primary)]" />
+                <p className="text-lg font-bold text-[var(--accent-primary)]">Drop file to upload</p>
+                <p className="text-sm text-[var(--text-secondary)]">Image or document</p>
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
       </div>
 
       {/* Typing Indicator */}
-      {isTyping && (
-        <div className="px-8 py-2 text-xs text-[#999] flex items-center gap-2 bg-[#FAFAFA]">
-          <span className="flex gap-0.5">
-            <span className="w-1.5 h-1.5 bg-[#FF8C00] rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
-            <span className="w-1.5 h-1.5 bg-[#FF8C00] rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
-            <span className="w-1.5 h-1.5 bg-[#FF8C00] rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
-          </span>
-          {typingUserName ? <><span className="font-medium text-[#666]">{typingUserName}</span> is typing...</> : 'typing...'}
-        </div>
-      )}
+      <AnimatePresence>
+        {isTyping && (
+          <TypingIndicator userName={typingUserName} isRoom={!!roomChat} />
+        )}
+      </AnimatePresence>
 
       {/* Input Area */}
-      <div className="p-6 bg-white border-t border-[#E5E5E5]">
+      <div className="p-6 border-t" style={{ backgroundColor: themeColors.headerBg, borderColor: themeColors.theirBorder }}>
+        {/* Blocked User Banner */}
+        {isBlocked && !roomChat && (
+          <div className="mb-3 flex items-center justify-between gap-3 px-4 py-3 bg-red-50 border border-red-200 rounded-xl">
+            <div className="flex items-center gap-2">
+              <Ban size={16} className="text-red-400" />
+              <span className="text-sm text-red-600 font-medium">You blocked this user</span>
+            </div>
+            <button
+              onClick={() => onUnblockUser?.()}
+              className="text-xs font-bold text-red-500 hover:text-red-700 px-3 py-1 border border-red-300 rounded-lg hover:bg-red-100 transition-colors"
+            >
+              Unblock
+            </button>
+          </div>
+        )}
+
         {/* Reply Bar */}
         {replyingTo && (
           <div className="mb-2 p-3 bg-[#FAFAFA] border border-[#E5E5E5] rounded-xl flex items-center justify-between animate-fade-in">
@@ -1212,7 +1482,7 @@ const ChatArea: React.FC<ChatAreaProps> = ({
             </button>
           </div>
         )}
-        <div className="bg-[#FAFAFA] border border-[#E5E5E5] rounded-2xl p-2 flex items-center gap-2 focus-within:border-[#FF8C00] focus-within:shadow-[0_0_0_4px_rgba(255,140,0,0.1)] transition-all">
+        <div className="rounded-2xl p-2 flex items-center gap-2 transition-all border" style={{ backgroundColor: themeColors.inputBg, borderColor: themeColors.inputBorder }}>
           <input 
             type="file" 
             ref={fileInputRef} 
@@ -1227,9 +1497,8 @@ const ChatArea: React.FC<ChatAreaProps> = ({
             <Paperclip size={20} />
           </button>
           <div className="relative flex-1">
-            <input
+            <textarea
               ref={mainInputRef}
-              type="text"
               value={input}
               onChange={(e) => {
                 setInput(e.target.value);
@@ -1245,10 +1514,18 @@ const ChatArea: React.FC<ChatAreaProps> = ({
               }}
               onSelect={() => handleInputSelect('main')}
               onKeyDown={handleKeyDown}
-              placeholder={isSending ? "Encrypting & sending..." : roomChat ? `Message #${roomChat.name}...` : "Type an encrypted message..."}
-              disabled={isSending}
-              className="w-full bg-transparent border-none focus:ring-0 text-[#0A0A0A] placeholder-[#999] px-2 font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+              placeholder={isBlocked && !roomChat ? "User blocked" : isSending ? "Encrypting & sending..." : roomChat ? `Message #${roomChat.name}...` : "Type an encrypted message..."}
+              disabled={isSending || (isBlocked && !roomChat)}
+              maxLength={MAX_MESSAGE_LENGTH}
+              rows={1}
+              className="w-full bg-transparent border-none focus:ring-0 placeholder-opacity-50 px-2 py-2 font-medium disabled:opacity-50 disabled:cursor-not-allowed resize-none overflow-hidden"
+              style={{ color: themeColors.inputText, minHeight: '44px', maxHeight: '160px' }}
             />
+            {input.length > MAX_MESSAGE_LENGTH * 0.9 && (
+              <span className={`text-xs font-mono shrink-0 ${input.length >= MAX_MESSAGE_LENGTH ? 'text-red-500' : 'text-[#999]'}`}>
+                {input.length}/{MAX_MESSAGE_LENGTH}
+              </span>
+            )}
             {/* Floating format toolbar */}
             <AnimatePresence>
               {showFormatBar && formatTarget === 'main' && (
@@ -1321,14 +1598,69 @@ const ChatArea: React.FC<ChatAreaProps> = ({
               )}
             </AnimatePresence>
           </div>
+          {/* Voice Message */}
+          {isRecording ? (
+            <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 px-3 py-1.5 bg-red-50 border border-red-200 rounded-xl">
+                <div className="w-2 h-2 bg-red-500 rounded-full animate-pulse" />
+                <span className="text-xs font-mono text-red-600">{Math.floor(recordingDuration / 60)}:{(recordingDuration % 60).toString().padStart(2, '0')}</span>
+              </div>
+              <button
+                aria-label="Cancel recording"
+                onClick={cancelRecording}
+                className="w-10 h-10 flex items-center justify-center text-red-500 hover:bg-red-50 rounded-xl transition-colors"
+                title="Cancel"
+              >
+                <X size={20} />
+              </button>
+              <button
+                aria-label="Send voice message"
+                onClick={async () => {
+                  const recording = await stopRecording();
+                  if (!recording) {
+                    toast.error('Recording too short (min 1s)');
+                    return;
+                  }
+                  const file = new File([recording.blob], `voice_${Date.now()}.webm`, { type: recording.blob.type });
+                  onSendMessage(`Voice message (${recording.duration}s)`, file);
+                  URL.revokeObjectURL(recording.url);
+                }}
+                className="w-10 h-10 flex items-center justify-center bg-[#FF8C00] text-white rounded-xl hover:bg-[#FF9F2A] transition-all btn-press"
+                title="Send voice message"
+              >
+                <Send size={18} />
+              </button>
+            </div>
+          ) : (
+            <button
+              aria-label="Record voice message"
+              onClick={async () => {
+                const ok = await startRecording();
+                if (!ok) toast.error('Microphone access denied');
+              }}
+              className="w-10 h-10 flex items-center justify-center text-[#666] hover:text-[#FF8C00] rounded-xl hover:bg-[#FFF3E0] btn-icon transition-colors"
+              title="Record voice message"
+            >
+              <Mic size={20} />
+            </button>
+          )}
           <button
             aria-label="Send message"
             onClick={handleSend}
-            disabled={!input.trim() || isSending}
+            disabled={!input.trim() || isSending || (isBlocked && !roomChat) || isRecording}
             className="w-10 h-10 flex items-center justify-center bg-[#0A0A0A] text-white rounded-xl hover:bg-[#FF8C00] hover:text-black transition-all disabled:opacity-50 disabled:cursor-not-allowed btn-press hover:shadow-lg hover:shadow-[#FF8C00]/20"
           >
             {isSending ? <div className="w-4 h-4 border-2 border-white/60 border-t-transparent rounded-full animate-spin" /> : <Send size={18} />}
           </button>
+        </div>
+
+        {/* Formatting Hint */}
+        <div className="px-2 pt-2 text-[10px] text-[var(--text-tertiary)] font-mono flex items-center gap-3">
+          <span className="opacity-60">Format:</span>
+          <span className="hover:text-[var(--accent-primary)] transition-colors cursor-default">*bold*</span>
+          <span className="hover:text-[var(--accent-primary)] transition-colors cursor-default">_italic_</span>
+          <span className="hover:text-[var(--accent-primary)] transition-colors cursor-default">~strikethrough~</span>
+          <span className="hover:text-[var(--accent-primary)] transition-colors cursor-default">__underline__</span>
         </div>
       </div>
 
@@ -1408,6 +1740,82 @@ const ChatArea: React.FC<ChatAreaProps> = ({
           </motion.div>
         )}
       </AnimatePresence>
+
+      {/* Edit History Modal */}
+      <AnimatePresence>
+        {editHistoryMsgId && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="absolute inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4"
+            onClick={() => setEditHistoryMsgId(null)}
+          >
+            <motion.div
+              initial={{ scale: 0.95, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.95, opacity: 0 }}
+              className="bg-white rounded-2xl shadow-2xl w-full max-w-sm overflow-hidden"
+              onClick={e => e.stopPropagation()}
+            >
+              <div className="p-4 border-b border-[#E5E5E5]">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-[#0A0A0A] font-bold text-sm">Edit History</h3>
+                  <button onClick={() => setEditHistoryMsgId(null)} className="p-1 hover:bg-[#F5F5F5] rounded-lg">
+                    <X size={16} className="text-[#888]" />
+                  </button>
+                </div>
+              </div>
+              <div className="max-h-[300px] overflow-y-auto p-4 space-y-3">
+                {editHistoryLoading ? (
+                  <div className="flex items-center justify-center py-6">
+                    <div className="w-5 h-5 border-2 border-[#FF8C00] border-t-transparent rounded-full animate-spin" />
+                  </div>
+                ) : editHistoryEntries.length === 0 ? (
+                  <p className="text-center text-sm text-[#999] py-4">No previous versions found</p>
+                ) : (
+                  <>
+                    {/* Current version header */}
+                    <div className="pb-2 border-b border-[#E5E5E5]">
+                      <p className="text-xs font-mono text-[#FF8C00]">Current version</p>
+                      <p className="text-sm text-[#333] mt-1">
+                        {messages.find(m => m.id === editHistoryMsgId)?.text || 'Current message'}
+                      </p>
+                    </div>
+                    {/* Previous versions */}
+                    {editHistoryEntries.map((entry, idx) => (
+                      <div key={idx} className="pb-2 border-b border-[#F0F0F0] last:border-0">
+                        <p className="text-[10px] font-mono text-[#999]">
+                          {new Date(Number(entry.edited_at)).toLocaleString()}
+                        </p>
+                        <p className="text-xs text-[#666] mt-1 italic">Previous version (encrypted)</p>
+                      </div>
+                    ))}
+                    <p className="text-[10px] text-[#999] text-center pt-2">
+                      {editHistoryEntries.length} previous {editHistoryEntries.length === 1 ? 'version' : 'versions'}
+                    </p>
+                  </>
+                )}
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Scroll to Bottom FAB */}
+      <ScrollToBottomButton
+        show={showScrollFAB}
+        unreadCount={unreadCount}
+        onClick={() => scrollToBottom(true)}
+      />
+
+      {/* Image Lightbox */}
+      <ImageLightbox
+        src={lightboxSrc || ''}
+        alt="Attachment"
+        isOpen={!!lightboxSrc}
+        onClose={() => setLightboxSrc(null)}
+      />
     </div>
   );
 };
