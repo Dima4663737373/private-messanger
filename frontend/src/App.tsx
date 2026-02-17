@@ -1006,6 +1006,21 @@ const InnerApp: React.FC = () => {
     }
   };
 
+  // Add a chat entry locally WITHOUT on-chain transaction (for messaging non-contacts)
+  const ensureChatExists = (address: string, name: string) => {
+    if (contacts.some(c => c.address === address || c.id === address)) return;
+    const newChat: Contact = {
+      id: address,
+      name,
+      address,
+      description: '',
+      context: 'Direct message',
+      initials: name.slice(0, ADDRESS_DISPLAY.INITIALS).toUpperCase(),
+      unreadCount: 0
+    };
+    setContacts(prev => [...prev, newChat]);
+  };
+
   const handleAddContact = async (address: string, name: string) => {
     if (!publicKey) {
         toast.error('Connect wallet to add contacts');
@@ -1147,15 +1162,14 @@ const InnerApp: React.FC = () => {
   };
 
   const handleSendMessageFromProfile = (contact: Contact | any) => {
-    // Check if contact exists
-    const address = contact.address || contact.id; // Fallback if contact object structure varies
+    const address = contact.address || contact.id;
     const existing = contacts.find(c => c.address === address || c.id === address);
-    
+
     if (existing) {
         setActiveChatId(existing.id);
     } else {
-        // Add temp contact if not exists
-        handleAddContact(address, contact.name || contact.username || 'Unknown');
+        // Create local chat without on-chain transaction
+        ensureChatExists(address, contact.name || contact.username || 'Unknown');
         setActiveChatId(address);
     }
     setViewingProfile(null);
@@ -1852,10 +1866,7 @@ const InnerApp: React.FC = () => {
             onSearchNetwork={searchProfiles}
             onViewProfile={setViewingProfile}
             onMessageUser={(address, name) => {
-              const existing = contacts.find(c => c.address === address);
-              if (!existing) {
-                handleAddContact(address, name);
-              }
+              ensureChatExists(address, name);
               setActiveChatId(address);
               setCurrentView('chats');
             }}
