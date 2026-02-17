@@ -1188,6 +1188,46 @@ const InnerApp: React.FC = () => {
     if (info) setRoomMembers(info.members);
   };
 
+  // Forward a message to another contact
+  const handleForwardMessage = async (toAddress: string, text: string, originalSender: string) => {
+    if (!publicKey || !toAddress.startsWith('aleo1') || toAddress.length < 60) return;
+
+    const forwardText = `↪ Forwarded from ${originalSender}:\n${text}`;
+
+    try {
+      const prepared = await prepareDMMessage(toAddress, forwardText);
+      if (!prepared) { toast.error('Failed to prepare forward'); return; }
+
+      await commitDMMessage(prepared);
+
+      // Optimistic message in target chat
+      const tempMsg: Message = {
+        id: prepared.tempId,
+        text: forwardText,
+        time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        timestamp: prepared.timestamp,
+        senderId: 'me',
+        isMine: true,
+        status: 'sent',
+      };
+
+      setHistories(prev => ({
+        ...prev,
+        [toAddress]: [...(prev[toAddress] || []), tempMsg]
+      }));
+
+      // Update sidebar preview
+      setContacts(prev => prev.map(c =>
+        c.id === toAddress ? { ...c, lastMessage: forwardText, lastMessageTime: new Date() } : c
+      ));
+
+      cacheDecryptedMessage(prepared.tempId, forwardText);
+    } catch (e) {
+      logger.error('Forward failed:', e);
+      toast.error('Forward failed');
+    }
+  };
+
   const handleSendRoomMessage = (text: string) => {
     if (!activeRoomId) return;
     sendRoomMessage(activeRoomId, text, myProfile?.username);
@@ -1681,6 +1721,8 @@ const InnerApp: React.FC = () => {
             contactHideAvatar={contactOnlineStatus?.showAvatar === false}
             linkPreviews={userSettings.linkPreviews}
             fetchLinkPreview={fetchLinkPreview}
+            forwardContacts={contacts.filter(c => c.address?.startsWith('aleo1')).map(c => ({ id: c.id, name: c.name, address: c.address || '' }))}
+            onForwardMessage={handleForwardMessage}
           />
         )}
 

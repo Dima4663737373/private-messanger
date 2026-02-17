@@ -118,6 +118,8 @@ interface ChatAreaProps {
   linkPreviews?: boolean;
   fetchLinkPreview?: (url: string) => Promise<{ title: string | null; description: string | null; image: string | null; siteName: string | null }>;
   onJoinRoom?: () => void;
+  forwardContacts?: { id: string; name: string; address: string }[];
+  onForwardMessage?: (toAddress: string, text: string, originalSender: string) => void;
 }
 
 const ChatArea: React.FC<ChatAreaProps> = ({
@@ -158,7 +160,9 @@ const ChatArea: React.FC<ChatAreaProps> = ({
   contactHideAvatar,
   linkPreviews = true,
   fetchLinkPreview,
-  onJoinRoom
+  onJoinRoom,
+  forwardContacts = [],
+  onForwardMessage
 }) => {
   const [input, setInput] = useState('');
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
@@ -179,6 +183,10 @@ const ChatArea: React.FC<ChatAreaProps> = ({
 
   // Reply state
   const [replyingTo, setReplyingTo] = useState<{ id: string; text: string; sender: string } | null>(null);
+
+  // Forward state
+  const [forwardingMsg, setForwardingMsg] = useState<{ text: string; sender: string } | null>(null);
+  const [forwardSearch, setForwardSearch] = useState('');
 
   // Emoji picker state (for message reactions)
   const [emojiPickerMsgId, setEmojiPickerMsgId] = useState<string | null>(null);
@@ -1089,6 +1097,16 @@ const ChatArea: React.FC<ChatAreaProps> = ({
                             >
                               <Copy size={14} />
                             </button>
+                            {/* Forward */}
+                            {onForwardMessage && !roomChat && (
+                            <button
+                              onClick={() => setForwardingMsg({ text: msg.text, sender: msg.isMine ? 'You' : (memberNames[msg.senderId] || msg.senderId?.slice(0, 8) || 'User') })}
+                              title="Forward"
+                              className="p-1.5 rounded-lg text-[#888] hover:text-[#FF8C00] hover:bg-[#FFF3E0] btn-icon"
+                            >
+                              <Share2 size={14} />
+                            </button>
+                            )}
                             {msg.isMine && (
                               <>
                                 <button onClick={() => handleEdit(msg)} title="Edit" className="p-1.5 rounded-lg text-[#888] hover:text-[#FF8C00] hover:bg-[#FFF3E0] btn-icon">
@@ -1313,6 +1331,83 @@ const ChatArea: React.FC<ChatAreaProps> = ({
           </button>
         </div>
       </div>
+
+      {/* Forward Message Modal */}
+      <AnimatePresence>
+        {forwardingMsg && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="absolute inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4"
+            onClick={() => { setForwardingMsg(null); setForwardSearch(''); }}
+          >
+            <motion.div
+              initial={{ scale: 0.95, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.95, opacity: 0 }}
+              className="bg-white rounded-2xl shadow-2xl w-full max-w-sm overflow-hidden"
+              onClick={e => e.stopPropagation()}
+            >
+              <div className="p-4 border-b border-[#E5E5E5]">
+                <div className="flex items-center justify-between mb-3">
+                  <h3 className="text-[#0A0A0A] font-bold text-sm">Forward message</h3>
+                  <button onClick={() => { setForwardingMsg(null); setForwardSearch(''); }} className="p-1 hover:bg-[#F5F5F5] rounded-lg">
+                    <X size={16} className="text-[#888]" />
+                  </button>
+                </div>
+                <div className="bg-[#F8F8F8] rounded-lg p-2 mb-3">
+                  <p className="text-[10px] text-[#999] font-mono uppercase">From {forwardingMsg.sender}</p>
+                  <p className="text-xs text-[#333] line-clamp-2">{forwardingMsg.text}</p>
+                </div>
+                <input
+                  value={forwardSearch}
+                  onChange={e => setForwardSearch(e.target.value)}
+                  placeholder="Search contacts..."
+                  className="w-full px-3 py-2 bg-[#F5F5F5] rounded-lg text-sm outline-none border border-transparent focus:border-[#FF8C00] transition-colors"
+                  autoFocus
+                />
+              </div>
+              <div className="max-h-60 overflow-y-auto">
+                {forwardContacts
+                  .filter(c => c.id !== chatId && (
+                    c.name.toLowerCase().includes(forwardSearch.toLowerCase()) ||
+                    c.address.includes(forwardSearch)
+                  ))
+                  .map(c => (
+                    <button
+                      key={c.id}
+                      onClick={() => {
+                        if (onForwardMessage) {
+                          onForwardMessage(c.address, forwardingMsg.text, forwardingMsg.sender);
+                          toast.success(`Forwarded to ${c.name}`);
+                        }
+                        setForwardingMsg(null);
+                        setForwardSearch('');
+                      }}
+                      className="w-full flex items-center gap-3 px-4 py-3 hover:bg-[#F8F8F8] transition-colors text-left"
+                    >
+                      <div className="w-8 h-8 rounded-full bg-[#FF8C00]/10 flex items-center justify-center text-[#FF8C00] text-xs font-bold">
+                        {c.name.slice(0, 2).toUpperCase()}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-medium text-[#0A0A0A] truncate">{c.name}</p>
+                        <p className="text-[10px] text-[#999] font-mono truncate">{c.address.slice(0, 14)}...{c.address.slice(-4)}</p>
+                      </div>
+                      <Share2 size={14} className="text-[#CCC]" />
+                    </button>
+                  ))}
+                {forwardContacts.filter(c => c.id !== chatId && (
+                  c.name.toLowerCase().includes(forwardSearch.toLowerCase()) ||
+                  c.address.includes(forwardSearch)
+                )).length === 0 && (
+                  <p className="text-center text-sm text-[#999] py-8">No contacts found</p>
+                )}
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 };

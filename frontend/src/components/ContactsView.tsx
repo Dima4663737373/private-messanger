@@ -34,7 +34,7 @@ const ContactsView: React.FC<ContactsViewProps> = ({ contacts, onAddContact, onE
     const timer = setTimeout(async () => {
       // Strip @ prefix for username search (e.g. "@alice" → "alice")
       const query = searchQuery.startsWith('@') ? searchQuery.slice(1) : searchQuery;
-      if (query.length > 2 && onSearchNetwork) {
+      if (query.length >= 2 && onSearchNetwork) {
         setIsSearchingNetwork(true);
         try {
           const results = await onSearchNetwork(query);

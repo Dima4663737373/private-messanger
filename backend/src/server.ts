@@ -809,9 +809,16 @@ app.get('/profiles/search', searchLimiter, async (req, res) => {
     const sanitized = sanitizeSearchQuery(q);
     if (sanitized.length < 1) return res.json([]);
 
+    // Search by username OR address (case-insensitive)
+    const lowerQ = sanitized.toLowerCase();
+    const isAddress = lowerQ.startsWith('aleo1');
+    const lowerFn = sequelize.fn('LOWER', sequelize.col('username'));
     const profiles = await Profile.findAll({
       where: {
-        username: { [Op.like]: `%${sanitized}%` }
+        [Op.or]: [
+          sequelize.where(lowerFn, { [Op.like]: `%${lowerQ}%` }),
+          ...(isAddress ? [{ address: { [Op.like]: `%${lowerQ}%` } }] : [])
+        ]
       },
       attributes: ['address', 'username', 'bio', 'address_hash'],
       limit: 10
