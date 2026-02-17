@@ -28,7 +28,7 @@ export function useSync(
   onPinUpdate?: (contextId: string, pins: PinnedMessage[]) => void,
   onRoomMessageDeleted?: (roomId: string, messageId: string) => void,
   onRoomMessageEdited?: (roomId: string, messageId: string, text: string) => void,
-  onDMSent?: (tempId: string, realId: string) => void,
+  onDMSent?: (tempId: string, realId: string, dialogHash?: string) => void,
   onReadReceipt?: (dialogHash: string, messageIds: string[], readAt?: number) => void,
   onProfileUpdated?: (address: string, username?: string, showAvatar?: boolean, avatarCid?: string) => void
 ) {
@@ -170,14 +170,22 @@ export function useSync(
                 try {
                     const decrypted = await decryptAsSender(payload, otherKey, myKeys.secretKey);
                     if (decrypted) return decrypted;
-                } catch (e) { /* ignore */ }
+                    logger.warn(`[Decrypt] decryptAsSender returned null for otherParty=${otherParty?.slice(0,10)}`);
+                } catch (e) {
+                    logger.warn(`[Decrypt] decryptAsSender error for otherParty=${otherParty?.slice(0,10)}:`, e);
+                }
             } else {
                 // I am the recipient, decrypt using sender public + my secret
                 try {
                     const decrypted = await decrypt(payload, otherKey, myKeys.secretKey);
                     if (decrypted) return decrypted;
-                } catch (e) { /* ignore */ }
+                    logger.warn(`[Decrypt] decrypt returned null for sender=${otherParty?.slice(0,10)}`);
+                } catch (e) {
+                    logger.warn(`[Decrypt] decrypt error for sender=${otherParty?.slice(0,10)}:`, e);
+                }
             }
+        } else {
+            logger.warn(`[Decrypt] No encryption key for otherParty=${otherParty?.slice(0,10)} isMine=${isMine}`);
         }
 
         // Decryption failed — show clean placeholder for encrypted payloads
@@ -593,9 +601,9 @@ export function useSync(
             }
 
             if (data.type === 'dm_sent') {
-              const { tempId, id } = data.payload;
+              const { tempId, id, dialogHash } = data.payload;
               if (callbacksRef.current.onDMSent) {
-                callbacksRef.current.onDMSent(tempId, id);
+                callbacksRef.current.onDMSent(tempId, id, dialogHash);
               }
               return;
             }
@@ -663,6 +671,8 @@ export function useSync(
               }
 
               const rawMsg = data.payload;
+              const isMine = rawMsg.sender === address;
+              logger.debug(`[WS] message_detected id=${rawMsg.id?.slice(0,8)} from=${rawMsg.sender?.slice(0,10)} to=${rawMsg.recipient?.slice(0,10)} isMine=${isMine} hasEncKey=${!!rawMsg.senderEncryptionKey}`);
 
               // Cache sender's encryption key from payload (avoids extra REST call)
               // Only cache non-empty keys — empty means profile wasn't ready yet
@@ -686,6 +696,10 @@ export function useSync(
                  if (text) {
                    cacheSet(decryptionCache.current, rawMsg.id, text, MAX_CACHE_SIZE);
                    cacheMessage(rawMsg.id, text, Number(rawMsg.timestamp)).catch(() => {});
+                 }
+                 // Log decryption result for debugging
+                 if (!text || text.includes('[Encrypted')) {
+                   logger.warn(`[Decrypt] Failed for msg ${rawMsg.id?.slice(0,8)}: sender=${rawMsg.sender?.slice(0,10)} recipient=${rawMsg.recipient?.slice(0,10)} isMine=${isMine} hasSenderKey=${!!rawMsg.senderEncryptionKey}`);
                  }
               } else if (!decryptionCache.current.has(rawMsg.id)) {
                  cacheSet(decryptionCache.current, rawMsg.id, text, MAX_CACHE_SIZE);

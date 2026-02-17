@@ -616,18 +616,43 @@ wss.on('connection', (ws: any, req: any) => {
 
         const msgId = uuidv4();
 
-        // Resolve recipient address from hash
+        // Resolve recipient address from hash (multiple strategies)
         let resolvedRecipient = 'unknown';
+        // Strategy 1: Look up profile by address_hash
         const recipientProfile = await Profile.findOne({ where: { address_hash: recipientHash } });
         if (recipientProfile) {
           resolvedRecipient = recipientProfile.address;
-        } else {
-          // Fallback: check connected WS clients for matching hash
+        }
+        // Strategy 2: Check connected WS clients for matching subscribedHash
+        if (resolvedRecipient === 'unknown') {
           wss.clients.forEach((client: any) => {
             if (client.subscribedHash === recipientHash && client.authenticatedAddress) {
               resolvedRecipient = client.authenticatedAddress;
             }
           });
+        }
+        // Strategy 3: Check previous messages in this dialog for the recipient's address
+        if (resolvedRecipient === 'unknown') {
+          try {
+            const prevMsg = await Message.findOne({
+              where: { dialog_hash: dialogHash, recipient_hash: recipientHash, recipient: { [Op.ne]: 'unknown' } },
+              attributes: ['recipient'],
+              order: [['timestamp', 'DESC']]
+            });
+            if (prevMsg?.recipient) {
+              resolvedRecipient = prevMsg.recipient;
+            } else {
+              // Also check if recipient was a sender in this dialog
+              const prevSenderMsg = await Message.findOne({
+                where: { dialog_hash: dialogHash, sender_hash: recipientHash },
+                attributes: ['sender'],
+                order: [['timestamp', 'DESC']]
+              });
+              if (prevSenderMsg?.sender) {
+                resolvedRecipient = prevSenderMsg.sender;
+              }
+            }
+          } catch { /* non-critical fallback */ }
         }
 
         // Use findOrCreate to prevent duplicate messages (unique index: sender_hash + recipient_hash + timestamp)
@@ -702,22 +727,29 @@ wss.on('connection', (ws: any, req: any) => {
           ws.send(JSON.stringify({ type: 'blocked_by_user', payload: { address: resolvedRecipient } }));
         }
 
-        // Broadcast to recipient (and sender's other sessions)
+        // Broadcast to recipient and sender's sessions (including sender for state sync)
+        let deliveredTo: string[] = [];
         wss.clients.forEach((client: any) => {
-          if (client.readyState === WebSocket.OPEN && client !== ws) {
-            const subHash = client.subscribedHash;
-            if (subHash === senderHash) {
-              // Always deliver to sender's other sessions
-              client.send(JSON.stringify({ type: 'message_detected', payload: messagePayload }));
-            } else if (subHash === recipientHash && !recipientBlocked) {
-              // Only deliver to recipient if not blocked
-              client.send(JSON.stringify({ type: 'message_detected', payload: messagePayload }));
-            }
+          if (client.readyState !== WebSocket.OPEN) return;
+          const subHash = client.subscribedHash;
+          if (client === ws) {
+            // Skip sender's own socket — they get dm_sent instead
+            return;
+          }
+          if (subHash === senderHash) {
+            // Deliver to sender's other sessions
+            client.send(JSON.stringify({ type: 'message_detected', payload: messagePayload }));
+            deliveredTo.push(`sender-session:${client.authenticatedAddress?.slice(0, 10)}`);
+          } else if (subHash === recipientHash && !recipientBlocked) {
+            // Deliver to recipient if not blocked
+            client.send(JSON.stringify({ type: 'message_detected', payload: messagePayload }));
+            deliveredTo.push(`recipient:${client.authenticatedAddress?.slice(0, 10)}`);
           }
         });
+        console.log(`[DM] ${sender.slice(0, 10)}→${resolvedRecipient.slice(0, 10)} id=${realId.slice(0, 8)} delivered=[${deliveredTo.join(',')}] clients=${wss.clients.size} encKey=${senderEncKey ? 'yes' : 'NO'}`);
 
-        // Confirm to sender with real ID
-        ws.send(JSON.stringify({ type: 'dm_sent', payload: { tempId, id: realId, timestamp } }));
+        // Confirm to sender with real ID + dialogHash (so sender can set it on contact)
+        ws.send(JSON.stringify({ type: 'dm_sent', payload: { tempId, id: realId, timestamp, dialogHash } }));
       }
 
       // Heartbeat — update lastSeen (in-memory + database)

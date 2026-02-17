@@ -107,23 +107,14 @@ const InnerApp: React.FC = () => {
 
   // Contacts State — persisted to backend via savedContacts preference
   const [contacts, setContacts] = useState<Contact[]>([]);
-  const contactsSyncedRef = useRef(false); // Prevent saving on initial load
+  const sessionInitDone = useRef(false); // True after initSession completes (contacts populated)
 
   // Sync contacts to backend whenever they change (debounced via usePreferences)
   useEffect(() => {
-    // Skip before preferences are loaded
-    if (!publicKey || !preferencesLoaded) return;
+    // Skip before preferences are loaded OR before initSession has populated contacts
+    // This prevents saving [] to backend and wiping saved chats
+    if (!publicKey || !preferencesLoaded || !sessionInitDone.current) return;
 
-    // Mark as synced after first successful run when fully loaded
-    if (!contactsSyncedRef.current) {
-      contactsSyncedRef.current = true;
-      // Save contacts immediately after initial load
-      const toSave = contacts.map(c => ({ address: c.address, name: c.name }));
-      setBackendSavedContacts(toSave);
-      return;
-    }
-
-    // Subsequent updates: save contacts
     const toSave = contacts.map(c => ({ address: c.address, name: c.name }));
     setBackendSavedContacts(toSave);
   }, [contacts, publicKey, preferencesLoaded, setBackendSavedContacts]);
@@ -459,7 +450,7 @@ const InnerApp: React.FC = () => {
     });
   }, []);
 
-  const handleDMSent = React.useCallback((tempId: string, realId: string) => {
+  const handleDMSent = React.useCallback((tempId: string, realId: string, dialogHash?: string) => {
     // Replace tempId with real ID in all histories
     setHistories(prev => {
       const next = { ...prev };
@@ -470,6 +461,12 @@ const InnerApp: React.FC = () => {
           next[chatId] = msgs.map(m => m.id === tempId ? { ...m, id: realId, status: 'sent' as const } : m);
           // Mark realId as processed so handleNewMessage deduplicates
           processedMsgIds.current.add(realId);
+          // Ensure dialogHash is set on the contact (critical for message loading)
+          if (dialogHash) {
+            setContacts(prev => prev.map(c =>
+              c.id === chatId ? { ...c, dialogHash: dialogHash || c.dialogHash } : c
+            ));
+          }
           break;
         }
       }
@@ -607,6 +604,9 @@ const InnerApp: React.FC = () => {
       // 3. Sync Dialogs (keys are now guaranteed to be cached)
       await loadDialogs();
 
+      // Mark session as initialized — enables contacts auto-save to backend
+      sessionInitDone.current = true;
+
       // Push a system notification for session start
       pushNotification('system', 'Connected', 'Encrypted session established. Keys loaded.');
     };
@@ -614,7 +614,9 @@ const InnerApp: React.FC = () => {
     const loadDialogs = async () => {
       try {
         const addressHash = hashAddress(publicKey);
+        logger.debug(`[loadDialogs] Fetching dialogs for hash: ${addressHash.slice(0, 20)}...`);
         const dialogs = await fetchDialogs(addressHash);
+        logger.debug(`[loadDialogs] Received ${dialogs.length} dialogs`);
         if (dialogs.length === 0) return;
 
         const newContacts: Contact[] = [];
@@ -892,6 +894,8 @@ const InnerApp: React.FC = () => {
       clearKeyCache(publicKey);
       clearSessionKeys(publicKey);
     }
+    // Reset session state so contacts auto-save doesn't wipe on reconnect
+    sessionInitDone.current = false;
     // Disconnect wallet
     if (disconnect) disconnect();
   };
@@ -985,9 +989,9 @@ const InnerApp: React.FC = () => {
         [activeChatId]: [...(prev[activeChatId] || []), newMessage]
       }));
 
-      // Update sidebar preview with sent message text
+      // Update sidebar preview with sent message text + ensure dialogHash is set
       setContacts(prev => prev.map(c =>
-        c.id === activeChatId ? { ...c, lastMessage: text, lastMessageTime: new Date() } : c
+        c.id === activeChatId ? { ...c, lastMessage: text, lastMessageTime: new Date(), dialogHash: prepared.dialogHash || c.dialogHash } : c
       ));
 
       // Cache the plaintext so deduplication works when dm_sent / message_detected arrives
