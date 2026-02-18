@@ -414,7 +414,15 @@ export function useSync(
                     if (res.error) {
                       logger.warn('Auto profile registration failed:', res.error);
                     } else {
-                      logger.info('Session upgraded to full access');
+                      logger.info('✅ Profile updated with new encryption key — reconnecting...');
+                      toast.success('Encryption keys updated. Reconnecting...', { duration: 3000 });
+                      // Reconnect to get proper AUTH_CHALLENGE with updated key
+                      setTimeout(() => {
+                        if (socket && socket.readyState === WebSocket.OPEN) {
+                          socket.close();
+                          // Will auto-reconnect via reconnection logic
+                        }
+                      }, 1000);
                     }
                   }).catch(e => logger.error('Auto profile registration error:', e));
                 } else {
