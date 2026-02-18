@@ -880,7 +880,7 @@ const InnerApp: React.FC = () => {
 
   // Load messages when active chat changes — IndexedDB first (instant), then backend (sync)
   useEffect(() => {
-    if (!activeChatId || !publicKey || !activeDialogHash) return;
+    if (!activeChatId || !publicKey || !activeDialogHash || !isSyncConnected) return;
 
     // Step 1: Load from IndexedDB immediately (instant, <100ms)
     loadDialogMessagesFromIDB(activeDialogHash, 100).then(cachedMsgs => {
@@ -920,7 +920,7 @@ const InnerApp: React.FC = () => {
 
     // eslint-disable-next-line react-hooks/exhaustive-deps
     // fetchDialogMessages, loadDialogMessagesFromIDB are stable by behavior
-  }, [activeChatId, activeDialogHash, publicKey]);
+  }, [activeChatId, activeDialogHash, publicKey, isSyncConnected]);
 
 
   const handleConnectWallet = async () => {

@@ -181,17 +181,18 @@ export async function getOrDeriveKeys(
     }
   } catch { /* ignore */ }
 
-  // 3. Derive deterministic keys via wallet signMessage (like alpaca-invoice)
+  // 3. Derive deterministic keys from address
+  // NOTE: Aleo wallet's signMessage is NON-deterministic (different signature each time),
+  // causing cross-device encryption key mismatches. Using address-based derivation instead
+  // for true determinism across all devices.
   if (signMessageFn) {
     try {
-      const message = new TextEncoder().encode(
-        `Ghost Messenger - Derive encryption keys for ${publicKey}`
-      );
-      const signatureBytes = await signMessageFn(message);
-      const signatureB64 = encodeBase64(signatureBytes);
-      const derived = await seedToKeypair(signatureB64 + publicKey);
+      // Use address-based derivation for determinism (not signMessage)
+      const deterministicSeed = `ghost_messenger_v1_${publicKey}`;
+      const derived = await seedToKeypair(deterministicSeed);
       if (useCache) setCachedKeys(publicKey, derived);
       setSessionKeys(publicKey, derived);
+      logger.info('[Keys] Derived deterministic keys from address');
       return derived;
     } catch (e) {
       // User cancelled — don't fall through, propagate
