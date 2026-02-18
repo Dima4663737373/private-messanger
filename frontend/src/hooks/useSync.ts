@@ -718,7 +718,7 @@ export function useSync(
                   }
               }
 
-              const msg: Message & { recipient: string } = {
+              const msg: Message & { recipient: string; encryptedPayload?: string; encryptedPayloadSelf?: string } = {
                 id: rawMsg.id,
                 text: text || "Decryption Failed",
                 time: new Date(Number(rawMsg.timestamp)).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
@@ -733,7 +733,10 @@ export function useSync(
                 dialogHash: rawMsg.dialogHash,
                 replyToId: rawMsg.replyToId || rawMsg.reply_to_id || undefined,
                 replyToText: rawMsg.replyToText || rawMsg.reply_to_text || undefined,
-                replyToSender: rawMsg.replyToSender || rawMsg.reply_to_sender || undefined
+                replyToSender: rawMsg.replyToSender || rawMsg.reply_to_sender || undefined,
+                // Pass encrypted payloads for IndexedDB storage
+                encryptedPayload: rawMsg.encryptedPayload || rawMsg.content_encrypted,
+                encryptedPayloadSelf: rawMsg.encryptedPayloadSelf || rawMsg.encrypted_payload_self
               };
               
               onNewMessage(msg);

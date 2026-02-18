@@ -36,6 +36,7 @@ import {
   MAX_FILENAME_LENGTH,
   buildAvatarUrl
 } from './constants';
+import { useMessageStorage } from './hooks/useMessageStorage';
 
 const mapContactToChat = (contact: Contact, isActive: boolean): Chat => ({
   id: contact.id,
@@ -73,6 +74,29 @@ const InnerApp: React.FC = () => {
     settings: userSettings,
     updateSetting
   } = usePreferences(publicKey);
+
+  // IndexedDB Storage (persistent message storage)
+  const {
+    loadDialogMessages: loadDialogMessagesFromIDB,
+    saveMessage: saveMessageToIDB,
+    saveContact: saveContactToIDB,
+    updateDialog: updateDialogInIDB,
+  } = useMessageStorage({
+    address: publicKey,
+    onContactsLoaded: (contacts) => {
+      // Merge IndexedDB contacts with existing contacts on init
+      setContacts(prev => {
+        const combined = [...prev];
+        contacts.forEach(idbContact => {
+          const existing = combined.find(c => c.id === idbContact.id);
+          if (!existing) {
+            combined.push(idbContact);
+          }
+        });
+        return combined;
+      });
+    }
+  });
 
   // System theme detection
   const systemTheme = useSystemTheme();
@@ -195,7 +219,7 @@ const InnerApp: React.FC = () => {
   }, []);
 
   // SYNC
-  const handleNewMessage = React.useCallback((msg: Message & { recipient?: string, recipientHash?: string, dialogHash?: string }) => {
+  const handleNewMessage = React.useCallback((msg: Message & { recipient?: string, recipientHash?: string, dialogHash?: string, encryptedPayload?: string, encryptedPayloadSelf?: string }) => {
     // Determine counterparty
     let counterpartyAddress = msg.isMine ? msg.recipient : msg.senderId;
 
@@ -214,6 +238,18 @@ const InnerApp: React.FC = () => {
 
     const isDuplicate = processedMsgIds.current.has(msg.id);
     processedMsgIds.current.add(msg.id);
+
+    // Save to IndexedDB for persistence (with encrypted payloads)
+    if (msg.dialogHash && msg.encryptedPayload && publicKey) {
+      saveMessageToIDB({
+        ...msg,
+        dialogHash: msg.dialogHash,
+        sender: msg.isMine ? publicKey : msg.senderId,
+        recipient: msg.isMine ? (msg.recipient || counterpartyAddress) : publicKey,
+        encryptedPayload: msg.encryptedPayload,
+        encryptedPayloadSelf: msg.encryptedPayloadSelf,
+      }).catch(err => logger.error('[IndexedDB] Failed to save message:', err));
+    }
 
     // Toast & notification only for new messages (not duplicates)
     if (!isDuplicate && settingsRef.current.notifEnabled) {
@@ -248,7 +284,7 @@ const InnerApp: React.FC = () => {
     // Always update contact sidebar preview (even for duplicates — ensures lastMessage is set)
     setContacts(prevContacts => {
       // Try to find by address OR dialogHash
-      const existingIndex = prevContacts.findIndex(c => 
+      const existingIndex = prevContacts.findIndex(c =>
           c.address === counterpartyAddress || (msg.dialogHash && c.dialogHash === msg.dialogHash)
       );
 
@@ -266,6 +302,16 @@ const InnerApp: React.FC = () => {
           lastMessage: msg.text,
           lastMessageTime: new Date()
         };
+        // Save new contact to IndexedDB
+        saveContactToIDB({
+          address: counterpartyAddress,
+          name: newContact.name,
+          dialogHash: msg.dialogHash,
+          lastMessage: msg.text,
+          lastMessageTime: msg.timestamp || Date.now(),
+          unreadCount: newContact.unreadCount
+        }).catch(err => logger.error('[IndexedDB] Failed to save contact:', err));
+
         // Fetch profile for this new contact
         if (counterpartyAddress.startsWith('aleo1')) {
             syncProfile(counterpartyAddress).then(profile => {
@@ -280,20 +326,31 @@ const InnerApp: React.FC = () => {
         }
         return [...prevContacts, newContact];
       }
-      
+
       // Update existing
-      return prevContacts.map((c, idx) => {
+      const updatedContacts = prevContacts.map((c, idx) => {
           if (idx === existingIndex) {
-              return { 
-                  ...c, 
+              const updated = {
+                  ...c,
                   dialogHash: msg.dialogHash || c.dialogHash, // Ensure dialogHash is set
-                  lastMessage: msg.text, 
+                  lastMessage: msg.text,
                   lastMessageTime: new Date(),
                   unreadCount: msg.isMine ? c.unreadCount : (c.unreadCount || 0) + 1
               };
+              // Save updated contact to IndexedDB
+              saveContactToIDB({
+                address: updated.address || updated.id,
+                name: updated.name,
+                dialogHash: updated.dialogHash,
+                lastMessage: updated.lastMessage,
+                lastMessageTime: msg.timestamp || Date.now(),
+                unreadCount: updated.unreadCount
+              }).catch(err => logger.error('[IndexedDB] Failed to update contact:', err));
+              return updated;
           }
           return c;
       });
+      return updatedContacts;
     });
 
     // Use counterpartyAddress directly as contactId (matches contact.id we set above)
@@ -821,14 +878,36 @@ const InnerApp: React.FC = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeChatId, activeRoomId]);
 
-  // Load messages when active chat changes
+  // Load messages when active chat changes — IndexedDB first (instant), then backend (sync)
   useEffect(() => {
     if (!activeChatId || !publicKey || !activeDialogHash) return;
 
+    // Step 1: Load from IndexedDB immediately (instant, <100ms)
+    loadDialogMessagesFromIDB(activeDialogHash, 100).then(cachedMsgs => {
+      if (cachedMsgs && cachedMsgs.length > 0) {
+        const sorted = cachedMsgs.sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
+        setHistories(prev => ({ ...prev, [activeChatId]: sorted }));
+        logger.debug(`[IndexedDB] Loaded ${cachedMsgs.length} cached messages for ${activeChatId.slice(0, 10)}`);
+      }
+    }).catch(err => logger.error('[IndexedDB] Failed to load messages:', err));
+
+    // Step 2: Fetch from backend in background (sync any new messages)
     fetchDialogMessages(activeDialogHash, { limit: 100 }).then(msgs => {
       if (msgs && msgs.length > 0) {
-        const sorted = msgs.sort((a, b) => a.timestamp - b.timestamp);
-        setHistories(prev => ({ ...prev, [activeChatId]: sorted }));
+        const sorted = msgs.sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
+        setHistories(prev => {
+          // Merge backend messages with IndexedDB messages, removing duplicates
+          const existing = prev[activeChatId] || [];
+          const existingIds = new Set(existing.map(m => m.id));
+          const newMessages = sorted.filter(m => !existingIds.has(m.id));
+
+          if (newMessages.length > 0) {
+            logger.debug(`[Backend] Synced ${newMessages.length} new messages from backend`);
+            return { ...prev, [activeChatId]: [...existing, ...newMessages].sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0)) };
+          }
+          return prev;
+        });
+
         // Send read receipts for unread messages from counterparty (if readReceipts enabled)
         if (settingsRef.current.readReceipts) {
           const unreadIds = sorted.filter(m => !m.isMine && m.status !== 'read').map(m => m.id);
@@ -837,9 +916,10 @@ const InnerApp: React.FC = () => {
           }
         }
       }
-    });
+    }).catch(err => logger.error('[Backend] Failed to fetch messages:', err));
+
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    // fetchDialogMessages is from useSync — stable by behavior
+    // fetchDialogMessages, loadDialogMessagesFromIDB are stable by behavior
   }, [activeChatId, activeDialogHash, publicKey]);
 
 
