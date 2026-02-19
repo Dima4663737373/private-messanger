@@ -238,6 +238,8 @@ const InnerApp: React.FC = () => {
 
     const isDuplicate = processedMsgIds.current.has(msg.id);
     processedMsgIds.current.add(msg.id);
+    // Silent flag: set for messages pushed on SUBSCRIBE (offline catch-up). No toasts/sounds.
+    const isSilent = !!(msg as any)._silent;
 
     // Save to IndexedDB for persistence (with encrypted payloads)
     if (msg.dialogHash && msg.encryptedPayload && publicKey) {
@@ -251,8 +253,8 @@ const InnerApp: React.FC = () => {
       }).catch(err => logger.error('[IndexedDB] Failed to save message:', err));
     }
 
-    // Toast & notification only for new messages (not duplicates)
-    if (!isDuplicate && settingsRef.current.notifEnabled) {
+    // Toast & notification only for new real-time messages (not duplicates, not offline catch-up)
+    if (!isDuplicate && !isSilent && settingsRef.current.notifEnabled) {
       toast(`New message ${msg.isMine ? 'sent' : 'received'}`, { icon: '📨' });
 
       // Play notification sound if enabled
@@ -298,7 +300,7 @@ const InnerApp: React.FC = () => {
           description: 'Discovered from network',
           context: 'Network',
           initials: 'UK',
-          unreadCount: msg.isMine ? 0 : 1,
+          unreadCount: (msg.isMine || isSilent) ? 0 : 1,
           lastMessage: msg.text,
           lastMessageTime: new Date()
         };
@@ -335,7 +337,8 @@ const InnerApp: React.FC = () => {
                   dialogHash: msg.dialogHash || c.dialogHash, // Ensure dialogHash is set
                   lastMessage: msg.text,
                   lastMessageTime: new Date(),
-                  unreadCount: msg.isMine ? c.unreadCount : (c.unreadCount || 0) + 1
+                  // Silent (offline catch-up) messages don't bump unread — user sees them in chat
+                  unreadCount: (msg.isMine || isSilent) ? c.unreadCount : (c.unreadCount || 0) + 1
               };
               // Save updated contact to IndexedDB
               saveContactToIDB({

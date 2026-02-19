@@ -511,6 +511,60 @@ wss.on('connection', (ws: any, req: any) => {
             ws.subscribedRooms.add(m.room_id);
           }
         }
+
+        // Push messages received while offline (last 30 days, max 500)
+        if (ws.subscribedHash) {
+          try {
+            const thirtyDaysAgo = Date.now() - 30 * 24 * 60 * 60 * 1000;
+            const pending = await Message.findAll({
+              where: {
+                recipient_hash: ws.subscribedHash,
+                timestamp: { [Op.gte]: thirtyDaysAgo }
+              },
+              order: [['timestamp', 'ASC']],
+              limit: 500
+            });
+
+            if (pending.length > 0) {
+              // Batch-fetch sender encryption keys
+              const senderAddresses = [...new Set(pending.map(m => m.sender).filter(Boolean))];
+              const profiles = await Profile.findAll({
+                where: { address: senderAddresses },
+                attributes: ['address', 'encryption_public_key']
+              });
+              const encKeyMap = new Map<string, string>(
+                profiles
+                  .filter(p => p.encryption_public_key)
+                  .map(p => [p.address, p.encryption_public_key!])
+              );
+
+              ws.send(JSON.stringify({
+                type: 'pending_messages',
+                payload: pending.map(msg => ({
+                  id: msg.id,
+                  dialogHash: msg.dialog_hash,
+                  recipientHash: msg.recipient_hash,
+                  senderHash: msg.sender_hash,
+                  sender: msg.sender,
+                  recipient: msg.recipient,
+                  encryptedPayload: msg.encrypted_payload,
+                  encryptedPayloadSelf: msg.encrypted_payload_self || '',
+                  timestamp: msg.timestamp,
+                  attachmentPart1: msg.attachment_part1 || '',
+                  attachmentPart2: msg.attachment_part2 || '',
+                  replyToId: msg.reply_to_id || '',
+                  replyToText: msg.reply_to_text || '',
+                  replyToSender: msg.reply_to_sender || '',
+                  senderEncryptionKey: encKeyMap.get(msg.sender) || '',
+                  status: msg.status
+                }))
+              }));
+              console.log(`[SUBSCRIBE] Pushed ${pending.length} pending DMs to ${ws.authenticatedAddress?.slice(0, 10)}`);
+            }
+          } catch (err) {
+            console.error('[SUBSCRIBE] Failed to push pending messages:', err);
+          }
+        }
       }
 
       // Subscribe to a specific room (cap at 100, verify membership for private rooms)

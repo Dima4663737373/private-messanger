@@ -665,6 +665,57 @@ export function useSync(
                  if (text) cacheSet(decryptionCache.current, id, text, MAX_CACHE_SIZE);
                  if (onMessageUpdated) onMessageUpdated(id, text || "Decryption Failed", editedAt, editCount);
             }
+            else if (data.type === 'pending_messages' && Array.isArray(data.payload)) {
+              // Bulk delivery of messages received while offline — process silently (no toasts/sounds)
+              for (const rawMsg of data.payload) {
+                // Cache encryption key if provided
+                if (rawMsg.senderEncryptionKey && rawMsg.senderEncryptionKey.length > 10 && rawMsg.sender !== address) {
+                  cacheSet(keyCache.current, rawMsg.sender, rawMsg.senderEncryptionKey, MAX_KEY_CACHE_SIZE);
+                }
+
+                // Decrypt (check caches first to avoid redundant work)
+                let text = decryptionCache.current.get(rawMsg.id);
+                if (!text) {
+                  text = await getCachedMessage(rawMsg.id).catch(() => null) || undefined;
+                }
+                if (!text) {
+                  text = await decryptPayload(
+                    rawMsg.encryptedPayload,
+                    rawMsg.sender,
+                    rawMsg.recipient,
+                    rawMsg.timestamp,
+                    rawMsg.encryptedPayloadSelf
+                  );
+                  if (text) {
+                    cacheSet(decryptionCache.current, rawMsg.id, text, MAX_CACHE_SIZE);
+                    cacheMessage(rawMsg.id, text, Number(rawMsg.timestamp)).catch(() => {});
+                  }
+                } else if (!decryptionCache.current.has(rawMsg.id)) {
+                  cacheSet(decryptionCache.current, rawMsg.id, text, MAX_CACHE_SIZE);
+                }
+
+                const msg = {
+                  id: rawMsg.id,
+                  text: text || '[Encrypted message]',
+                  time: new Date(Number(rawMsg.timestamp)).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+                  senderId: rawMsg.sender === address ? 'me' : rawMsg.sender,
+                  isMine: rawMsg.sender === address,
+                  status: rawMsg.status || 'included',
+                  recipient: rawMsg.recipient,
+                  timestamp: Number(rawMsg.timestamp),
+                  senderHash: rawMsg.senderHash,
+                  recipientHash: rawMsg.recipientHash,
+                  dialogHash: rawMsg.dialogHash,
+                  replyToId: rawMsg.replyToId || undefined,
+                  replyToText: rawMsg.replyToText || undefined,
+                  replyToSender: rawMsg.replyToSender || undefined,
+                  encryptedPayload: rawMsg.encryptedPayload,
+                  encryptedPayloadSelf: rawMsg.encryptedPayloadSelf,
+                  _silent: true, // suppress toasts/sounds in handleNewMessage
+                };
+                onNewMessage(msg as any);
+              }
+            }
             else if (data.type === 'message_detected' || data.type === 'tx_confirmed') {
               // If it's just a confirmation of an existing message, we might handle it differently
               // But here we just update the message content/status
