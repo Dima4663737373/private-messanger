@@ -4,7 +4,7 @@ import { Message, Room, PinnedMessage, RawMessage, RawRoom, RawRoomMessage } fro
 import { getQueuedMessages, dequeueMessage, enqueueMessage } from '../utils/offline-queue';
 import { getCachedMessage, getCachedMessages, cacheMessage, removeCachedMessage, pruneExpired } from '../utils/message-cache';
 import { fieldToString, fieldsToString } from '../utils/messageUtils';
-import { encryptMessage, KeyPair, encryptRoomMessage, decryptRoomMessage, generateRoomKey, encryptRoomKeyForMember, decryptRoomKey } from '../utils/crypto';
+import { encryptMessage, encryptRoomMessage, decryptRoomMessage, generateRoomKey, encryptRoomKeyForMember, decryptRoomKey } from '../utils/crypto';
 import { getCachedKeys } from '../utils/key-derivation';
 import { toast } from 'react-hot-toast';
 import { API_CONFIG } from '../config';
@@ -13,7 +13,8 @@ import { useEncryptionWorker } from './useEncryptionWorker';
 import { logger } from '../utils/logger';
 import { setSessionToken } from '../utils/auth-store';
 import nacl from 'tweetnacl';
-import { decodeBase64, encodeBase64 } from 'tweetnacl-util';
+import { decodeBase64 } from 'tweetnacl-util';
+import { io, Socket } from 'socket.io-client';
 
 export function useSync(
   address: string | null,
@@ -32,12 +33,11 @@ export function useSync(
   onReadReceipt?: (dialogHash: string, messageIds: string[], readAt?: number) => void,
   onProfileUpdated?: (address: string, username?: string, showAvatar?: boolean, avatarCid?: string) => void
 ) {
-  const ws = useRef<WebSocket | null>(null);
+  const ws = useRef<Socket | null>(null);
   const [isConnected, setIsConnected] = useState(false);
   const [typingUsers, setTypingUsers] = useState<Record<string, { ts: number; sender?: string }>>({}); // key -> { timestamp, sender? }
   const [blockedByUsers, setBlockedByUsers] = useState<string[]>([]); // addresses of users who blocked me
   const { decrypt, decryptAsSender } = useEncryptionWorker();
-  const sessionSecretRef = useRef<string | null>(null);
 
   // In-Memory Caches (bounded, cleared on refresh)
   const MAX_CACHE_SIZE = 1000;
@@ -53,46 +53,6 @@ export function useSync(
       if (firstKey !== undefined) cache.delete(firstKey);
     }
     cache.set(key, value);
-  };
-
-  // HMAC generation for WebSocket message authentication
-  const generateHMAC = async (sessionSecret: string, message: string): Promise<string> => {
-    const encoder = new TextEncoder();
-    const keyData = encoder.encode(sessionSecret);
-    const messageData = encoder.encode(message);
-
-    const cryptoKey = await crypto.subtle.importKey(
-      'raw',
-      keyData,
-      { name: 'HMAC', hash: 'SHA-256' },
-      false,
-      ['sign']
-    );
-
-    const signature = await crypto.subtle.sign('HMAC', cryptoKey, messageData);
-    return Array.from(new Uint8Array(signature))
-      .map(b => b.toString(16).padStart(2, '0'))
-      .join('');
-  };
-
-  // Send authenticated WebSocket message with HMAC
-  const sendAuthenticatedMessage = async (socket: WebSocket, messageData: any) => {
-    if (!sessionSecretRef.current) {
-      // No session secret yet (during AUTH flow) - send without HMAC
-      socket.send(JSON.stringify(messageData));
-      return;
-    }
-
-    try {
-      const messageStr = JSON.stringify(messageData);
-      const hmac = await generateHMAC(sessionSecretRef.current, messageStr);
-      const authenticatedMessage = { ...messageData, hmac };
-      socket.send(JSON.stringify(authenticatedMessage));
-    } catch (e) {
-      logger.error('Failed to generate HMAC:', e);
-      // Fallback: send without HMAC (will be rejected by server, but won't crash client)
-      socket.send(JSON.stringify(messageData));
-    }
   };
 
   // Helper to get sender's encryption key (with retry for race conditions)
@@ -288,559 +248,452 @@ export function useSync(
       callbacksRef.current = { onNewMessage, onMessageDeleted, onMessageUpdated, onReactionUpdate, onRoomMessage, onRoomCreated, onRoomDeleted, onDMCleared, onPinUpdate, onRoomMessageDeleted, onRoomMessageEdited, onDMSent, onReadReceipt, onProfileUpdated };
   }, [onNewMessage, onMessageDeleted, onMessageUpdated, onReactionUpdate, onRoomMessage, onRoomCreated, onRoomDeleted, onDMCleared, onPinUpdate, onRoomMessageDeleted, onRoomMessageEdited, onDMSent, onReadReceipt, onProfileUpdated]);
 
+  // ── Socket.io Connection ──────────────────────────────
   useEffect(() => {
     if (!address) return;
 
-    let reconnectTimer: ReturnType<typeof setTimeout>;
-    let reconnectDelay = 1000; // Start at 1s, backoff to 30s
+    const socket = io(API_CONFIG.BACKEND_BASE, {
+      reconnection: true,
+      reconnectionDelay: 1000,
+      reconnectionDelayMax: 30000,
+      timeout: 10000,
+    });
+    ws.current = socket;
 
-    const connect = () => {
-        const socket = new WebSocket(API_CONFIG.WS_URL);
-        ws.current = socket;
+    // ── Connection established — start auth flow ──
+    socket.on('connect', () => {
+      logger.debug('Socket.io Connected - Authenticating...');
+      socket.emit('AUTH', { address });
+    });
 
-        // Connection timeout: if not connected within 10s, close and retry
-        const connectTimeout = setTimeout(() => {
-          if (socket.readyState !== WebSocket.OPEN) {
-            logger.warn('WS connection timeout (10s) — closing and retrying');
-            socket.close();
-          }
-        }, 10000);
+    // ── Step 2a: Server sends NaCl-encrypted challenge ──
+    socket.on('AUTH_CHALLENGE', async (data: { encryptedChallenge: string; nonce: string; serverPublicKey: string }) => {
+      try {
+        const myKeys = getCachedKeys(address);
+        if (!myKeys) {
+          logger.warn('Cannot respond to AUTH_CHALLENGE — keys not derived yet, requesting limited token');
+          socket.emit('AUTH_KEY_MISMATCH', { address });
+          return;
+        }
+        const encrypted = decodeBase64(data.encryptedChallenge);
+        const nonce = decodeBase64(data.nonce);
+        const serverPubKey = decodeBase64(data.serverPublicKey);
+        const mySecretKey = decodeBase64(myKeys.secretKey);
 
-        socket.onopen = () => {
-          clearTimeout(connectTimeout);
-          logger.debug('WS Connected - Authenticating...');
-          reconnectDelay = 1000; // Reset backoff on successful connect
+        const decrypted = nacl.box.open(encrypted, nonce, serverPubKey, mySecretKey);
+        if (!decrypted) {
+          logger.warn('AUTH_CHALLENGE decryption failed (keys may have changed), requesting limited token');
+          socket.emit('AUTH_KEY_MISMATCH', { address });
+          return;
+        }
+        const decryptedChallenge = new TextDecoder().decode(decrypted);
+        socket.emit('AUTH_RESPONSE', { decryptedChallenge });
+      } catch (e) {
+        logger.error('AUTH_CHALLENGE handling failed:', e);
+        socket.emit('AUTH_KEY_MISMATCH', { address });
+      }
+    });
 
-          // Step 1: Authenticate with server before subscribing
-          if (socket.readyState === WebSocket.OPEN) {
-             socket.send(JSON.stringify({ type: 'AUTH', address }));
-          }
-        };
+    // ── Step 2b: Authentication succeeded ──
+    socket.on('AUTH_SUCCESS', async (data: { token?: string; requiresProfile?: boolean }) => {
+      logger.debug('Socket.io Authenticated successfully');
+      if (data.token) {
+        setSessionToken(data.token);
+      }
+      setIsConnected(true);
 
-        socket.onmessage = async (event) => {
+      // Limited session — auto-register profile to upgrade to full access
+      if (data.requiresProfile) {
+        logger.info('Limited session — auto-registering profile to upgrade...');
+        const keys = getCachedKeys(address);
+        if (keys?.publicKey) {
+          let addrHash = '';
+          try { addrHash = hashAddress(address); } catch { /* ignore */ }
+          safeBackendFetch('profiles', {
+            method: 'POST',
+            body: {
+              address,
+              encryptionPublicKey: keys.publicKey,
+              addressHash: addrHash,
+            }
+          }).then(res => {
+            if (res.error) {
+              logger.warn('Auto profile registration failed:', res.error);
+            } else {
+              logger.info('✅ Profile updated with new encryption key — reconnecting...');
+              toast.success('Encryption keys updated. Reconnecting...', { duration: 3000 });
+              // Disconnect and reconnect to get proper AUTH_CHALLENGE with updated key
+              setTimeout(() => { socket.disconnect(); socket.connect(); }, 1000);
+            }
+          }).catch(e => logger.error('Auto profile registration error:', e));
+        } else {
+          logger.warn('No encryption keys cached — cannot upgrade session');
+        }
+      }
+
+      // Step 3: Subscribe to channels after successful auth
+      try {
+        const addressHash = hashAddress(address);
+        socket.emit('SUBSCRIBE', { address, addressHash });
+      } catch (e) {
+        logger.error("Failed to hash address for WS subscription:", e);
+        socket.emit('SUBSCRIBE', { address });
+      }
+
+      // Fetch who blocked me
+      safeBackendFetch<{ blockedBy: string[] }>(`blocked-by/${address}`)
+        .then(res => { if (res.data?.blockedBy) setBlockedByUsers(res.data.blockedBy); })
+        .catch(() => {});
+
+      // Flush offline queue after reconnection
+      getQueuedMessages().then(async (queued) => {
+        if (queued.length === 0) return;
+        logger.info(`[OfflineQueue] Flushing ${queued.length} queued messages...`);
+        for (const msg of queued) {
           try {
-            const data = JSON.parse(event.data);
-            const { onNewMessage, onMessageDeleted, onMessageUpdated } = callbacksRef.current;
-
-            // WebSocket Authentication — Challenge-Response Flow
-
-            // Step 2a: Server sends challenge for existing users
-            if (data.type === 'AUTH_CHALLENGE') {
-              try {
-                const myKeys = getCachedKeys(address);
-                if (!myKeys) {
-                  logger.warn('Cannot respond to AUTH_CHALLENGE — keys not derived yet, requesting limited token');
-                  socket.send(JSON.stringify({ type: 'AUTH_KEY_MISMATCH', address }));
-                  return;
-                }
-                const encrypted = decodeBase64(data.encryptedChallenge);
-                const nonce = decodeBase64(data.nonce);
-                const serverPubKey = decodeBase64(data.serverPublicKey);
-                const mySecretKey = decodeBase64(myKeys.secretKey);
-
-                const decrypted = nacl.box.open(encrypted, nonce, serverPubKey, mySecretKey);
-                if (!decrypted) {
-                  logger.warn('AUTH_CHALLENGE decryption failed (keys may have changed), requesting limited token');
-                  socket.send(JSON.stringify({ type: 'AUTH_KEY_MISMATCH', address }));
-                  return;
-                }
-                const decryptedChallenge = new TextDecoder().decode(decrypted);
-                socket.send(JSON.stringify({ type: 'AUTH_RESPONSE', decryptedChallenge }));
-              } catch (e) {
-                logger.error('AUTH_CHALLENGE handling failed:', e);
-                socket.send(JSON.stringify({ type: 'AUTH_KEY_MISMATCH', address }));
-              }
-              return;
+            if (socket.connected) {
+              socket.emit('DM_MESSAGE', {
+                sender: address,
+                senderHash: msg.senderHash,
+                recipientHash: msg.recipientHash,
+                dialogHash: msg.dialogHash,
+                encryptedPayload: msg.encryptedPayload || '',
+                encryptedPayloadSelf: msg.encryptedPayloadSelf || '',
+                timestamp: msg.timestamp,
+                attachmentPart1: msg.attachmentCID || '',
+                attachmentPart2: '',
+                tempId: msg.id
+              });
+              await dequeueMessage(msg.id);
+              logger.debug(`[OfflineQueue] Flushed message: ${msg.id}`);
             }
-
-            // Step 2b: Authentication succeeded — store session token + secret
-            if (data.type === 'AUTH_SUCCESS') {
-              logger.debug('WS Authenticated successfully');
-              // Store session token for REST API auth
-              if (data.token) {
-                setSessionToken(data.token);
-              }
-              // Store session secret for HMAC message authentication
-              if (data.sessionSecret) {
-                sessionSecretRef.current = data.sessionSecret;
-                logger.debug('Session secret stored for HMAC');
-
-                // Override socket.send to automatically add HMAC to all future messages
-                const originalSend = socket.send.bind(socket);
-                socket.send = function(data: string | ArrayBufferLike | Blob | ArrayBufferView) {
-                  if (typeof data === 'string' && sessionSecretRef.current) {
-                    try {
-                      const messageData = JSON.parse(data);
-                      // Skip HMAC for AUTH messages (they don't have session yet)
-                      if (messageData.type === 'AUTH' || messageData.type === 'AUTH_RESPONSE' || messageData.type === 'AUTH_NEWBIE' || messageData.type === 'AUTH_KEY_MISMATCH') {
-                        originalSend(data);
-                        return;
-                      }
-                      // Add HMAC asynchronously
-                      generateHMAC(sessionSecretRef.current, data).then(hmac => {
-                        const authenticatedMessage = { ...messageData, hmac };
-                        originalSend(JSON.stringify(authenticatedMessage));
-                      }).catch(e => {
-                        logger.error('HMAC generation failed:', e);
-                        originalSend(data); // Fallback without HMAC
-                      });
-                    } catch {
-                      // Not JSON or other error - send as-is
-                      originalSend(data);
-                    }
-                  } else {
-                    originalSend(data);
-                  }
-                };
-              }
-              setIsConnected(true);
-
-              // Step 2c: If session is limited (requiresProfile), auto-register profile
-              // to upgrade the session to full access
-              if (data.requiresProfile) {
-                logger.info('Limited session — auto-registering profile to upgrade...');
-                const keys = getCachedKeys(address);
-                if (keys?.publicKey) {
-                  let addrHash = '';
-                  try { addrHash = hashAddress(address); } catch { /* ignore */ }
-                  safeBackendFetch('profiles', {
-                    method: 'POST',
-                    body: {
-                      address,
-                      encryptionPublicKey: keys.publicKey,
-                      addressHash: addrHash,
-                    }
-                  }).then(res => {
-                    if (res.error) {
-                      logger.warn('Auto profile registration failed:', res.error);
-                    } else {
-                      logger.info('✅ Profile updated with new encryption key — reconnecting...');
-                      toast.success('Encryption keys updated. Reconnecting...', { duration: 3000 });
-                      // Reconnect to get proper AUTH_CHALLENGE with updated key
-                      setTimeout(() => {
-                        if (socket && socket.readyState === WebSocket.OPEN) {
-                          socket.close();
-                          // Will auto-reconnect via reconnection logic
-                        }
-                      }, 1000);
-                    }
-                  }).catch(e => logger.error('Auto profile registration error:', e));
-                } else {
-                  logger.warn('No encryption keys cached — cannot upgrade session');
-                }
-              }
-
-              // Step 3: Subscribe to channels after successful auth
-              try {
-                const addressHash = hashAddress(address);
-                socket.send(JSON.stringify({ type: 'SUBSCRIBE', address, addressHash }));
-              } catch (e) {
-                logger.error("Failed to hash address for WS subscription:", e);
-                socket.send(JSON.stringify({ type: 'SUBSCRIBE', address }));
-              }
-
-              // Step 3b: Fetch who blocked me
-              safeBackendFetch<{ blockedBy: string[] }>(`blocked-by/${address}`)
-                .then(res => { if (res.data?.blockedBy) setBlockedByUsers(res.data.blockedBy); })
-                .catch(() => {});
-
-              // Step 4: Flush offline queue after reconnection
-              getQueuedMessages().then(async (queued) => {
-                if (queued.length === 0) return;
-                logger.info(`[OfflineQueue] Flushing ${queued.length} queued messages...`);
-                for (const msg of queued) {
-                  try {
-                    if (socket.readyState === WebSocket.OPEN) {
-                      socket.send(JSON.stringify({
-                        type: 'DM_MESSAGE',
-                        sender: address,
-                        senderHash: msg.senderHash,
-                        recipientHash: msg.recipientHash,
-                        dialogHash: msg.dialogHash,
-                        encryptedPayload: msg.encryptedPayload || '',
-                        encryptedPayloadSelf: msg.encryptedPayloadSelf || '',
-                        timestamp: msg.timestamp,
-                        attachmentPart1: msg.attachmentCID || '',
-                        attachmentPart2: '',
-                        tempId: msg.id
-                      }));
-                      await dequeueMessage(msg.id);
-                      logger.debug(`[OfflineQueue] Flushed message: ${msg.id}`);
-                    }
-                  } catch (err) {
-                    logger.error('[OfflineQueue] Failed to flush message:', err);
-                  }
-                }
-              }).catch(err => logger.error('[OfflineQueue] Flush error:', err));
-
-              return;
-            }
-
-            if (data.type === 'AUTH_FAILED') {
-              logger.error('WS Authentication failed:', data.message);
-              setSessionToken(null);
-              toast.error('WebSocket authentication failed');
-              setIsConnected(false);
-              socket.close();
-              return;
-            }
-
-            // Reaction update — broadcast from backend
-            if (data.type === 'REACTION_UPDATE') {
-              const { messageId, reactions } = data.payload;
-              if (callbacksRef.current.onReactionUpdate) {
-                callbacksRef.current.onReactionUpdate(messageId, reactions);
-              }
-              return;
-            }
-
-            // Typing indicator from another user
-            if (data.type === 'TYPING') {
-              const { dialogHash } = data.payload;
-              setTypingUsers(prev => ({ ...prev, [dialogHash]: { ts: Date.now() } }));
-              // Auto-clear after 3s
-              setTimeout(() => {
-                setTypingUsers(prev => {
-                  const copy = { ...prev };
-                  if (copy[dialogHash] && Date.now() - copy[dialogHash].ts > 2500) {
-                    delete copy[dialogHash];
-                  }
-                  return copy;
-                });
-              }, 3000);
-              return;
-            }
-
-            // Room events
-            if (data.type === 'room_message') {
-              const { roomId, id, sender, senderName, text, timestamp } = data.payload;
-              if (callbacksRef.current.onRoomMessage) {
-                // Decrypt room message (handles both encrypted and legacy plaintext)
-                const decryptedText = await decryptRoomText(roomId, text);
-                callbacksRef.current.onRoomMessage(roomId, {
-                  id,
-                  text: decryptedText,
-                  time: new Date(Number(timestamp)).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-                  senderId: sender === address ? 'me' : sender,
-                  isMine: sender === address,
-                  status: 'sent',
-                  timestamp: Number(timestamp),
-                  senderHash: senderName || sender?.slice(0, 10)
-                });
-              }
-              return;
-            }
-
-            if (data.type === 'room_created') {
-              if (callbacksRef.current.onRoomCreated) {
-                const r = data.payload.room || data.payload;
-                callbacksRef.current.onRoomCreated({
-                  id: r.id, name: r.name, createdBy: r.created_by,
-                  isPrivate: r.is_private, type: r.type, memberCount: r.memberCount || 1
-                });
-              }
-              return;
-            }
-
-            if (data.type === 'room_deleted') {
-              if (callbacksRef.current.onRoomDeleted) {
-                callbacksRef.current.onRoomDeleted(data.payload.roomId);
-              }
-              // Clean up cached room key
-              roomKeyCache.current.delete(data.payload.roomId);
-              return;
-            }
-
-            // When a new member joins — distribute room key to them if I have it
-            if (data.type === 'room_member_joined') {
-              const { roomId, address: joinedAddress } = data.payload;
-              if (joinedAddress !== address) {
-                // I'm an existing member — share my room key with the new member
-                const cachedKey = roomKeyCache.current.get(roomId);
-                if (cachedKey) {
-                  distributeRoomKey(roomId, cachedKey).catch(e => logger.warn('distributeRoomKey failed:', e));
-                }
-              }
-              return;
-            }
-
-            if (data.type === 'dm_cleared') {
-              if (callbacksRef.current.onDMCleared) {
-                callbacksRef.current.onDMCleared(data.payload.dialogHash);
-              }
-              return;
-            }
-
-            if (data.type === 'room_message_deleted') {
-              const { roomId, messageId } = data.payload;
-              if (callbacksRef.current.onRoomMessageDeleted) {
-                callbacksRef.current.onRoomMessageDeleted(roomId, messageId);
-              }
-              return;
-            }
-
-            if (data.type === 'room_message_edited') {
-              const { roomId, messageId, text } = data.payload;
-              if (callbacksRef.current.onRoomMessageEdited) {
-                const decryptedText = await decryptRoomText(roomId, text);
-                callbacksRef.current.onRoomMessageEdited(roomId, messageId, decryptedText);
-              }
-              return;
-            }
-
-            if (data.type === 'room_typing') {
-              const key = `room:${data.payload.roomId}`;
-              setTypingUsers(prev => ({ ...prev, [key]: { ts: Date.now(), sender: data.payload.sender } }));
-              setTimeout(() => {
-                setTypingUsers(prev => {
-                  const copy = { ...prev };
-                  if (copy[key] && Date.now() - copy[key].ts > 2500) delete copy[key];
-                  return copy;
-                });
-              }, 3000);
-              return;
-            }
-
-            if (data.type === 'pin_update') {
-              if (callbacksRef.current.onPinUpdate) {
-                callbacksRef.current.onPinUpdate(data.payload.contextId, data.payload.pins);
-              }
-              return;
-            }
-
-            if (data.type === 'dm_sent') {
-              const { tempId, id, dialogHash } = data.payload;
-              if (callbacksRef.current.onDMSent) {
-                callbacksRef.current.onDMSent(tempId, id, dialogHash);
-              }
-              return;
-            }
-
-            // Read receipt — other user read our messages
-            if (data.type === 'READ_RECEIPT') {
-              const { dialogHash, messageIds, readAt } = data.payload;
-              if (callbacksRef.current.onReadReceipt) {
-                callbacksRef.current.onReadReceipt(dialogHash, messageIds, readAt);
-              }
-              return;
-            }
-
-            if (data.type === 'profile_detected') {
-                 toast(`${data.payload.username || 'User'} updated their profile`, { icon: '👤' });
-                 if (data.payload.address) {
-                     keyCache.current.delete(data.payload.address);
-                     // Update contact name + avatar visibility in real-time
-                     if (callbacksRef.current.onProfileUpdated) {
-                       callbacksRef.current.onProfileUpdated(data.payload.address, data.payload.username, data.payload.showAvatar, data.payload.avatarCid);
-                     }
-                 }
-            }
-            else if (data.type === 'blocked_by_user') {
-              const blockerAddr = data.payload?.address;
-              if (blockerAddr) {
-                setBlockedByUsers(prev => prev.includes(blockerAddr) ? prev : [...prev, blockerAddr]);
-                toast('A user has blocked you', { icon: '🚫' });
-              }
-            }
-            else if (data.type === 'unblocked_by_user') {
-              const unblockerAddr = data.payload?.address;
-              if (unblockerAddr) {
-                setBlockedByUsers(prev => prev.filter(a => a !== unblockerAddr));
-                toast('A user has unblocked you', { icon: '✅' });
-              }
-            }
-            else if (data.type === 'message_deleted') {
-                 if (onMessageDeleted) onMessageDeleted(data.payload.id);
-                 removeCachedMessage(data.payload.id).catch(() => {});
-            }
-            else if (data.type === 'message_updated') {
-                 const { id, encryptedPayload, sender, recipient, timestamp, encryptedPayloadSelf, editedAt, editCount } = data.payload;
-                 const text = await decryptPayload(
-                     encryptedPayload,
-                     sender,
-                     recipient,
-                     timestamp,
-                     encryptedPayloadSelf
-                 );
-                 if (text) cacheSet(decryptionCache.current, id, text, MAX_CACHE_SIZE);
-                 if (onMessageUpdated) onMessageUpdated(id, text || "Decryption Failed", editedAt, editCount);
-            }
-            else if (data.type === 'pending_messages' && Array.isArray(data.payload)) {
-              // Bulk delivery of messages received while offline — process silently (no toasts/sounds)
-              for (const rawMsg of data.payload) {
-                // Cache encryption key if provided
-                if (rawMsg.senderEncryptionKey && rawMsg.senderEncryptionKey.length > 10 && rawMsg.sender !== address) {
-                  cacheSet(keyCache.current, rawMsg.sender, rawMsg.senderEncryptionKey, MAX_KEY_CACHE_SIZE);
-                }
-
-                // Decrypt (check caches first to avoid redundant work)
-                let text = decryptionCache.current.get(rawMsg.id);
-                if (!text) {
-                  text = await getCachedMessage(rawMsg.id).catch(() => null) || undefined;
-                }
-                if (!text) {
-                  text = await decryptPayload(
-                    rawMsg.encryptedPayload,
-                    rawMsg.sender,
-                    rawMsg.recipient,
-                    rawMsg.timestamp,
-                    rawMsg.encryptedPayloadSelf
-                  );
-                  if (text) {
-                    cacheSet(decryptionCache.current, rawMsg.id, text, MAX_CACHE_SIZE);
-                    cacheMessage(rawMsg.id, text, Number(rawMsg.timestamp)).catch(() => {});
-                  }
-                } else if (!decryptionCache.current.has(rawMsg.id)) {
-                  cacheSet(decryptionCache.current, rawMsg.id, text, MAX_CACHE_SIZE);
-                }
-
-                const msg = {
-                  id: rawMsg.id,
-                  text: text || '[Encrypted message]',
-                  time: new Date(Number(rawMsg.timestamp)).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-                  senderId: rawMsg.sender === address ? 'me' : rawMsg.sender,
-                  isMine: rawMsg.sender === address,
-                  status: rawMsg.status || 'included',
-                  recipient: rawMsg.recipient,
-                  timestamp: Number(rawMsg.timestamp),
-                  senderHash: rawMsg.senderHash,
-                  recipientHash: rawMsg.recipientHash,
-                  dialogHash: rawMsg.dialogHash,
-                  replyToId: rawMsg.replyToId || undefined,
-                  replyToText: rawMsg.replyToText || undefined,
-                  replyToSender: rawMsg.replyToSender || undefined,
-                  encryptedPayload: rawMsg.encryptedPayload,
-                  encryptedPayloadSelf: rawMsg.encryptedPayloadSelf,
-                  _silent: true, // suppress toasts/sounds in handleNewMessage
-                };
-                onNewMessage(msg as any);
-              }
-            }
-            else if (data.type === 'message_detected' || data.type === 'tx_confirmed') {
-              // If it's just a confirmation of an existing message, we might handle it differently
-              // But here we just update the message content/status
-              
-              if (data.type === 'tx_confirmed') {
-                  // Just update status
-                   onNewMessage({
-                      id: data.payload.id,
-                      status: 'included'
-                   } as any);
-                   return;
-              }
-
-              const rawMsg = data.payload;
-              const isMine = rawMsg.sender === address;
-              logger.debug(`[WS] message_detected id=${rawMsg.id?.slice(0,8)} from=${rawMsg.sender?.slice(0,10)} to=${rawMsg.recipient?.slice(0,10)} isMine=${isMine} hasEncKey=${!!rawMsg.senderEncryptionKey}`);
-
-              // Cache sender's encryption key from payload (avoids extra REST call)
-              // Only cache non-empty keys — empty means profile wasn't ready yet
-              if (rawMsg.senderEncryptionKey && rawMsg.senderEncryptionKey.length > 10 && rawMsg.sender && rawMsg.sender !== address) {
-                cacheSet(keyCache.current, rawMsg.sender, rawMsg.senderEncryptionKey, MAX_KEY_CACHE_SIZE);
-              }
-
-              let text = decryptionCache.current.get(rawMsg.id);
-              if (!text) {
-                 // Check IndexedDB persistent cache
-                 text = await getCachedMessage(rawMsg.id).catch(() => null) || undefined;
-              }
-              if (!text) {
-                 text = await decryptPayload(
-                     rawMsg.encryptedPayload || rawMsg.content_encrypted,
-                     rawMsg.sender,
-                     rawMsg.recipient,
-                     rawMsg.timestamp,
-                     rawMsg.encryptedPayloadSelf || rawMsg.encrypted_payload_self
-                 );
-                 if (text) {
-                   cacheSet(decryptionCache.current, rawMsg.id, text, MAX_CACHE_SIZE);
-                   cacheMessage(rawMsg.id, text, Number(rawMsg.timestamp)).catch(() => {});
-                 }
-                 // Log decryption result for debugging
-                 if (!text || text.includes('[Encrypted')) {
-                   logger.warn(`[Decrypt] Failed for msg ${rawMsg.id?.slice(0,8)}: sender=${rawMsg.sender?.slice(0,10)} recipient=${rawMsg.recipient?.slice(0,10)} isMine=${isMine} hasSenderKey=${!!rawMsg.senderEncryptionKey}`);
-                 }
-              } else if (!decryptionCache.current.has(rawMsg.id)) {
-                 cacheSet(decryptionCache.current, rawMsg.id, text, MAX_CACHE_SIZE);
-              }
-              
-              let attachment = undefined;
-              if (rawMsg.attachment_part1 && rawMsg.attachment_part1 !== "0field") {
-                  const cid = fieldsToString([rawMsg.attachment_part1, rawMsg.attachment_part2 || "0field"]);
-                  if (cid) {
-                      attachment = {
-                          type: 'file' as const,
-                          cid: cid,
-                          name: 'Attachment',
-                          size: 0
-                      };
-                  }
-              }
-
-              const msg: Message & { recipient: string; encryptedPayload?: string; encryptedPayloadSelf?: string } = {
-                id: rawMsg.id,
-                text: text || "Decryption Failed",
-                time: new Date(Number(rawMsg.timestamp)).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-                senderId: rawMsg.sender === address ? 'me' : rawMsg.sender,
-                isMine: rawMsg.sender === address,
-                status: data.payload.status || 'included',
-                recipient: rawMsg.recipient,
-                timestamp: Number(rawMsg.timestamp),
-                attachment,
-                senderHash: rawMsg.senderHash,
-                recipientHash: rawMsg.recipientHash,
-                dialogHash: rawMsg.dialogHash,
-                replyToId: rawMsg.replyToId || rawMsg.reply_to_id || undefined,
-                replyToText: rawMsg.replyToText || rawMsg.reply_to_text || undefined,
-                replyToSender: rawMsg.replyToSender || rawMsg.reply_to_sender || undefined,
-                // Pass encrypted payloads for IndexedDB storage
-                encryptedPayload: rawMsg.encryptedPayload || rawMsg.content_encrypted,
-                encryptedPayloadSelf: rawMsg.encryptedPayloadSelf || rawMsg.encrypted_payload_self
-              };
-              
-              onNewMessage(msg);
-
-              // Browser notification when tab is in background
-              if (!msg.isMine && document.hidden && Notification.permission === 'granted') {
-                try {
-                  const senderName = rawMsg.senderName || rawMsg.sender?.slice(0, 10) || 'Someone';
-                  new Notification('Ghost Messenger', {
-                    body: `${senderName}: ${(text || '').slice(0, 60)}`,
-                    icon: '/ghost-icon.png',
-                    tag: `msg-${rawMsg.id}`,
-                  });
-                } catch { /* ignore */ }
-              }
-            }
-          } catch (e) {
-            logger.error('WS Message Error:', e);
+          } catch (err) {
+            logger.error('[OfflineQueue] Failed to flush message:', err);
           }
-        };
+        }
+      }).catch(err => logger.error('[OfflineQueue] Flush error:', err));
+    });
 
-        socket.onclose = () => {
-            setIsConnected(false);
-            setSessionToken(null);
-            if (ws.current === socket) {
-                reconnectTimer = setTimeout(connect, reconnectDelay);
-                reconnectDelay = Math.min(reconnectDelay * 2, 30000);
-            }
-        };
-        
-        socket.onerror = (err) => {
-            logger.error('WS Error:', err);
-            socket.close();
-        };
-    };
+    socket.on('AUTH_FAILED', (data: { message?: string }) => {
+      logger.error('Socket.io Authentication failed:', data.message);
+      setSessionToken(null);
+      toast.error('WebSocket authentication failed');
+      setIsConnected(false);
+      socket.disconnect();
+    });
 
-    connect();
+    // ── Reaction update ──
+    socket.on('REACTION_UPDATE', (data: { messageId: string; reactions: Record<string, string[]> }) => {
+      if (callbacksRef.current.onReactionUpdate) {
+        callbacksRef.current.onReactionUpdate(data.messageId, data.reactions);
+      }
+    });
+
+    // ── Typing indicator ──
+    socket.on('TYPING', (data: { dialogHash: string }) => {
+      const { dialogHash } = data;
+      setTypingUsers(prev => ({ ...prev, [dialogHash]: { ts: Date.now() } }));
+      setTimeout(() => {
+        setTypingUsers(prev => {
+          const copy = { ...prev };
+          if (copy[dialogHash] && Date.now() - copy[dialogHash].ts > 2500) {
+            delete copy[dialogHash];
+          }
+          return copy;
+        });
+      }, 3000);
+    });
+
+    // ── Room events ──
+    socket.on('room_message', async (data: { roomId: string; id: string; sender: string; senderName: string; text: string; timestamp: number }) => {
+      const { roomId, id, sender, senderName, text, timestamp } = data;
+      if (callbacksRef.current.onRoomMessage) {
+        const decryptedText = await decryptRoomText(roomId, text);
+        callbacksRef.current.onRoomMessage(roomId, {
+          id,
+          text: decryptedText,
+          time: new Date(Number(timestamp)).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+          senderId: sender === address ? 'me' : sender,
+          isMine: sender === address,
+          status: 'sent',
+          timestamp: Number(timestamp),
+          senderHash: senderName || sender?.slice(0, 10)
+        });
+      }
+    });
+
+    socket.on('room_created', (data: any) => {
+      if (callbacksRef.current.onRoomCreated) {
+        const r = data.room || data;
+        callbacksRef.current.onRoomCreated({
+          id: r.id, name: r.name, createdBy: r.created_by,
+          isPrivate: r.is_private, type: r.type, memberCount: r.memberCount || 1
+        });
+      }
+    });
+
+    socket.on('room_deleted', (data: { roomId: string }) => {
+      if (callbacksRef.current.onRoomDeleted) {
+        callbacksRef.current.onRoomDeleted(data.roomId);
+      }
+      roomKeyCache.current.delete(data.roomId);
+    });
+
+    // When a new member joins — distribute room key to them if I have it
+    socket.on('room_member_joined', (data: { roomId: string; address: string }) => {
+      if (data.address !== address) {
+        const cachedKey = roomKeyCache.current.get(data.roomId);
+        if (cachedKey) {
+          distributeRoomKey(data.roomId, cachedKey).catch(e => logger.warn('distributeRoomKey failed:', e));
+        }
+      }
+    });
+
+    socket.on('dm_cleared', (data: { dialogHash: string }) => {
+      if (callbacksRef.current.onDMCleared) {
+        callbacksRef.current.onDMCleared(data.dialogHash);
+      }
+    });
+
+    socket.on('room_message_deleted', (data: { roomId: string; messageId: string }) => {
+      if (callbacksRef.current.onRoomMessageDeleted) {
+        callbacksRef.current.onRoomMessageDeleted(data.roomId, data.messageId);
+      }
+    });
+
+    socket.on('room_message_edited', async (data: { roomId: string; messageId: string; text: string }) => {
+      if (callbacksRef.current.onRoomMessageEdited) {
+        const decryptedText = await decryptRoomText(data.roomId, data.text);
+        callbacksRef.current.onRoomMessageEdited(data.roomId, data.messageId, decryptedText);
+      }
+    });
+
+    socket.on('room_typing', (data: { roomId: string; sender: string }) => {
+      const key = `room:${data.roomId}`;
+      setTypingUsers(prev => ({ ...prev, [key]: { ts: Date.now(), sender: data.sender } }));
+      setTimeout(() => {
+        setTypingUsers(prev => {
+          const copy = { ...prev };
+          if (copy[key] && Date.now() - copy[key].ts > 2500) delete copy[key];
+          return copy;
+        });
+      }, 3000);
+    });
+
+    socket.on('pin_update', (data: { contextId: string; pins: PinnedMessage[] }) => {
+      if (callbacksRef.current.onPinUpdate) {
+        callbacksRef.current.onPinUpdate(data.contextId, data.pins);
+      }
+    });
+
+    socket.on('dm_sent', (data: { tempId: string; id: string; dialogHash: string }) => {
+      if (callbacksRef.current.onDMSent) {
+        callbacksRef.current.onDMSent(data.tempId, data.id, data.dialogHash);
+      }
+    });
+
+    // ── Read receipt ──
+    socket.on('READ_RECEIPT', (data: { dialogHash: string; messageIds: string[]; readAt?: number }) => {
+      if (callbacksRef.current.onReadReceipt) {
+        callbacksRef.current.onReadReceipt(data.dialogHash, data.messageIds, data.readAt);
+      }
+    });
+
+    socket.on('profile_detected', (data: any) => {
+      toast(`${data.username || 'User'} updated their profile`, { icon: '👤' });
+      if (data.address) {
+        keyCache.current.delete(data.address);
+        if (callbacksRef.current.onProfileUpdated) {
+          callbacksRef.current.onProfileUpdated(data.address, data.username, data.showAvatar, data.avatarCid);
+        }
+      }
+    });
+
+    socket.on('blocked_by_user', (data: { address: string }) => {
+      const blockerAddr = data.address;
+      if (blockerAddr) {
+        setBlockedByUsers(prev => prev.includes(blockerAddr) ? prev : [...prev, blockerAddr]);
+        toast('A user has blocked you', { icon: '🚫' });
+      }
+    });
+
+    socket.on('unblocked_by_user', (data: { address: string }) => {
+      const unblockerAddr = data.address;
+      if (unblockerAddr) {
+        setBlockedByUsers(prev => prev.filter(a => a !== unblockerAddr));
+        toast('A user has unblocked you', { icon: '✅' });
+      }
+    });
+
+    socket.on('message_deleted', (data: { id: string }) => {
+      if (callbacksRef.current.onMessageDeleted) {
+        callbacksRef.current.onMessageDeleted(data.id);
+      }
+      removeCachedMessage(data.id).catch(() => {});
+    });
+
+    socket.on('message_updated', async (data: { id: string; encryptedPayload: string; sender: string; recipient: string; timestamp: number; encryptedPayloadSelf?: string; editedAt?: number; editCount?: number }) => {
+      const { id, encryptedPayload, sender, recipient, timestamp, encryptedPayloadSelf, editedAt, editCount } = data;
+      const text = await decryptPayload(encryptedPayload, sender, recipient, timestamp, encryptedPayloadSelf);
+      if (text) cacheSet(decryptionCache.current, id, text, MAX_CACHE_SIZE);
+      if (callbacksRef.current.onMessageUpdated) {
+        callbacksRef.current.onMessageUpdated(id, text || "Decryption Failed", editedAt, editCount);
+      }
+    });
+
+    // ── Bulk delivery of messages received while offline ──
+    socket.on('pending_messages', async (messages: any[]) => {
+      if (!Array.isArray(messages)) return;
+      for (const rawMsg of messages) {
+        // Cache encryption key if provided
+        if (rawMsg.senderEncryptionKey && rawMsg.senderEncryptionKey.length > 10 && rawMsg.sender !== address) {
+          cacheSet(keyCache.current, rawMsg.sender, rawMsg.senderEncryptionKey, MAX_KEY_CACHE_SIZE);
+        }
+
+        // Decrypt (check caches first)
+        let text = decryptionCache.current.get(rawMsg.id);
+        if (!text) {
+          text = await getCachedMessage(rawMsg.id).catch(() => null) || undefined;
+        }
+        if (!text) {
+          text = await decryptPayload(
+            rawMsg.encryptedPayload,
+            rawMsg.sender,
+            rawMsg.recipient,
+            rawMsg.timestamp,
+            rawMsg.encryptedPayloadSelf
+          );
+          if (text) {
+            cacheSet(decryptionCache.current, rawMsg.id, text, MAX_CACHE_SIZE);
+            cacheMessage(rawMsg.id, text, Number(rawMsg.timestamp)).catch(() => {});
+          }
+        } else if (!decryptionCache.current.has(rawMsg.id)) {
+          cacheSet(decryptionCache.current, rawMsg.id, text, MAX_CACHE_SIZE);
+        }
+
+        const msg = {
+          id: rawMsg.id,
+          text: text || '[Encrypted message]',
+          time: new Date(Number(rawMsg.timestamp)).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+          senderId: rawMsg.sender === address ? 'me' : rawMsg.sender,
+          isMine: rawMsg.sender === address,
+          status: rawMsg.status || 'included',
+          recipient: rawMsg.recipient,
+          timestamp: Number(rawMsg.timestamp),
+          senderHash: rawMsg.senderHash,
+          recipientHash: rawMsg.recipientHash,
+          dialogHash: rawMsg.dialogHash,
+          replyToId: rawMsg.replyToId || undefined,
+          replyToText: rawMsg.replyToText || undefined,
+          replyToSender: rawMsg.replyToSender || undefined,
+          encryptedPayload: rawMsg.encryptedPayload,
+          encryptedPayloadSelf: rawMsg.encryptedPayloadSelf,
+          _silent: true, // suppress toasts/sounds in handleNewMessage
+        };
+        callbacksRef.current.onNewMessage(msg as any);
+      }
+    });
+
+    // ── New message detected (real-time DM or blockchain) ──
+    socket.on('message_detected', async (rawMsg: any) => {
+      const isMine = rawMsg.sender === address;
+      logger.debug(`[WS] message_detected id=${rawMsg.id?.slice(0,8)} from=${rawMsg.sender?.slice(0,10)} to=${rawMsg.recipient?.slice(0,10)} isMine=${isMine} hasEncKey=${!!rawMsg.senderEncryptionKey}`);
+
+      // Cache sender's encryption key from payload (avoids extra REST call)
+      if (rawMsg.senderEncryptionKey && rawMsg.senderEncryptionKey.length > 10 && rawMsg.sender && rawMsg.sender !== address) {
+        cacheSet(keyCache.current, rawMsg.sender, rawMsg.senderEncryptionKey, MAX_KEY_CACHE_SIZE);
+      }
+
+      let text = decryptionCache.current.get(rawMsg.id);
+      if (!text) {
+        text = await getCachedMessage(rawMsg.id).catch(() => null) || undefined;
+      }
+      if (!text) {
+        text = await decryptPayload(
+            rawMsg.encryptedPayload || rawMsg.content_encrypted,
+            rawMsg.sender,
+            rawMsg.recipient,
+            rawMsg.timestamp,
+            rawMsg.encryptedPayloadSelf || rawMsg.encrypted_payload_self
+        );
+        if (text) {
+          cacheSet(decryptionCache.current, rawMsg.id, text, MAX_CACHE_SIZE);
+          cacheMessage(rawMsg.id, text, Number(rawMsg.timestamp)).catch(() => {});
+        }
+        if (!text || text.includes('[Encrypted')) {
+          logger.warn(`[Decrypt] Failed for msg ${rawMsg.id?.slice(0,8)}: sender=${rawMsg.sender?.slice(0,10)} recipient=${rawMsg.recipient?.slice(0,10)} isMine=${isMine} hasSenderKey=${!!rawMsg.senderEncryptionKey}`);
+        }
+      } else if (!decryptionCache.current.has(rawMsg.id)) {
+        cacheSet(decryptionCache.current, rawMsg.id, text, MAX_CACHE_SIZE);
+      }
+
+      let attachment = undefined;
+      if (rawMsg.attachment_part1 && rawMsg.attachment_part1 !== "0field") {
+          const cid = fieldsToString([rawMsg.attachment_part1, rawMsg.attachment_part2 || "0field"]);
+          if (cid) {
+              attachment = {
+                  type: 'file' as const,
+                  cid: cid,
+                  name: 'Attachment',
+                  size: 0
+              };
+          }
+      }
+
+      const msg: Message & { recipient: string; encryptedPayload?: string; encryptedPayloadSelf?: string } = {
+        id: rawMsg.id,
+        text: text || "Decryption Failed",
+        time: new Date(Number(rawMsg.timestamp)).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        senderId: rawMsg.sender === address ? 'me' : rawMsg.sender,
+        isMine: rawMsg.sender === address,
+        status: rawMsg.status || 'included',
+        recipient: rawMsg.recipient,
+        timestamp: Number(rawMsg.timestamp),
+        attachment,
+        senderHash: rawMsg.senderHash,
+        recipientHash: rawMsg.recipientHash,
+        dialogHash: rawMsg.dialogHash,
+        replyToId: rawMsg.replyToId || rawMsg.reply_to_id || undefined,
+        replyToText: rawMsg.replyToText || rawMsg.reply_to_text || undefined,
+        replyToSender: rawMsg.replyToSender || rawMsg.reply_to_sender || undefined,
+        encryptedPayload: rawMsg.encryptedPayload || rawMsg.content_encrypted,
+        encryptedPayloadSelf: rawMsg.encryptedPayloadSelf || rawMsg.encrypted_payload_self
+      };
+
+      callbacksRef.current.onNewMessage(msg);
+
+      // Browser notification when tab is in background
+      if (!msg.isMine && document.hidden && Notification.permission === 'granted') {
+        try {
+          const senderName = rawMsg.senderName || rawMsg.sender?.slice(0, 10) || 'Someone';
+          new Notification('Ghost Messenger', {
+            body: `${senderName}: ${(text || '').slice(0, 60)}`,
+            icon: '/ghost-icon.png',
+            tag: `msg-${rawMsg.id}`,
+          });
+        } catch { /* ignore */ }
+      }
+    });
+
+    // ── Blockchain confirmation ──
+    socket.on('tx_confirmed', (data: { id: string; blockHeight: number }) => {
+      callbacksRef.current.onNewMessage({ id: data.id, status: 'included' } as any);
+    });
+
+    socket.on('connect_error', (err: Error) => {
+      logger.error('Socket.io connect error:', err.message);
+    });
+
+    socket.on('disconnect', (reason: string) => {
+      logger.debug('Socket.io disconnected:', reason);
+      setIsConnected(false);
+      setSessionToken(null);
+    });
 
     return () => {
-      if (reconnectTimer) clearTimeout(reconnectTimer);
-      if (ws.current) {
-         ws.current.close();
-         ws.current = null;
-      }
-      setSessionToken(null); // Clear session token on cleanup
+      socket.disconnect();
+      ws.current = null;
+      setSessionToken(null);
     };
   }, [address]);
 
@@ -857,19 +710,19 @@ export function useSync(
     if (opts.offset) params.append('offset', String(opts.offset));
 
     const { data: rawMessages } = await safeBackendFetch<any[]>(`messages/${address}?${params.toString()}`);
-    
+
     if (!rawMessages || !Array.isArray(rawMessages)) return [];
-    
+
     // Async Map for Decryption
     const decryptedMessages = await Promise.all(rawMessages.map(async (rawMsg: RawMessage) => {
         let text = decryptionCache.current.get(rawMsg.id);
-        
+
         if (!text) {
              const payload = rawMsg.encrypted_payload || rawMsg.content_encrypted;
              text = await decryptPayload(
-                 payload, 
-                 rawMsg.sender, 
-                 rawMsg.recipient, 
+                 payload,
+                 rawMsg.sender,
+                 rawMsg.recipient,
                  rawMsg.timestamp,
                  rawMsg.encrypted_payload_self
             );
@@ -1043,7 +896,6 @@ export function useSync(
 
 
 
-
   const searchProfiles = async (query: string) => {
     const { data } = await safeBackendFetch<any[]>(`profiles/search?q=${encodeURIComponent(query)}`);
     return data || [];
@@ -1055,7 +907,7 @@ export function useSync(
     });
     return data && data.exists ? data.profile : null;
   };
-  
+
   const notifyProfileUpdate = async (name: string, bio: string, txId: string, privacySettings?: { showLastSeen?: boolean; showProfilePhoto?: boolean }, extra?: { avatarCid?: string | null }) => {
     if (!address) return;
     const keys = getCachedKeys(address);
@@ -1124,20 +976,20 @@ export function useSync(
 
   // Send typing indicator (debounced by caller)
   const sendTyping = (dialogHash: string) => {
-    if (ws.current && ws.current.readyState === WebSocket.OPEN && address) {
+    if (ws.current?.connected && address) {
       try {
         const senderHash = hashAddress(address);
-        ws.current.send(JSON.stringify({ type: 'TYPING', dialogHash, senderHash }));
+        ws.current.emit('TYPING', { dialogHash, senderHash });
       } catch { /* ignore */ }
     }
   };
 
   // Send read receipt for messages in a dialog
   const sendReadReceipt = (dialogHash: string, messageIds: string[]) => {
-    if (ws.current && ws.current.readyState === WebSocket.OPEN && address && messageIds.length > 0) {
+    if (ws.current?.connected && address && messageIds.length > 0) {
       try {
         const senderHash = hashAddress(address);
-        ws.current.send(JSON.stringify({ type: 'READ_RECEIPT', dialogHash, senderHash, messageIds }));
+        ws.current.emit('READ_RECEIPT', { dialogHash, senderHash, messageIds });
       } catch { /* ignore */ }
     }
   };
@@ -1235,23 +1087,22 @@ export function useSync(
   };
 
   const sendRoomMessage = async (roomId: string, text: string, senderName?: string) => {
-    if (ws.current && ws.current.readyState === WebSocket.OPEN && address) {
+    if (ws.current?.connected && address) {
       // Encrypt the message with the room symmetric key
       let encryptedText = text;
       const roomSymKey = await getRoomKey(roomId);
       if (roomSymKey) {
         encryptedText = encryptRoomMessage(text, roomSymKey);
       }
-      ws.current.send(JSON.stringify({
-        type: 'ROOM_MESSAGE',
+      ws.current.emit('ROOM_MESSAGE', {
         roomId, sender: address, senderName: senderName || '', text: encryptedText, timestamp: Date.now()
-      }));
+      });
     }
   };
 
   const subscribeRoom = (roomId: string) => {
-    if (ws.current && ws.current.readyState === WebSocket.OPEN) {
-      ws.current.send(JSON.stringify({ type: 'SUBSCRIBE_ROOM', roomId }));
+    if (ws.current?.connected) {
+      ws.current.emit('SUBSCRIBE_ROOM', { roomId });
     }
   };
 
@@ -1279,8 +1130,8 @@ export function useSync(
   };
 
   const sendRoomTyping = (roomId: string) => {
-    if (ws.current && ws.current.readyState === WebSocket.OPEN && address) {
-      ws.current.send(JSON.stringify({ type: 'ROOM_TYPING', roomId, sender: address }));
+    if (ws.current?.connected && address) {
+      ws.current.emit('ROOM_TYPING', { roomId, sender: address });
     }
   };
 
@@ -1298,7 +1149,7 @@ export function useSync(
 
   // Prepare encrypted payload without sending (for wallet-first flow)
   const prepareDMMessage = async (recipientAddress: string, text: string, attachmentCID?: string, replyTo?: { id: string; text: string; sender: string }): Promise<{ tempId: string; encryptedPayload: string; encryptedPayloadSelf: string; timestamp: number; senderHash: string; recipientHash: string; dialogHash: string; replyToId?: string; replyToText?: string; replyToSender?: string } | null> => {
-    if (!ws.current || ws.current.readyState !== WebSocket.OPEN || !address) return null;
+    if (!ws.current?.connected || !address) return null;
 
     const myKeys = getCachedKeys(address);
     if (!myKeys) { logger.error('Encryption keys not available'); return null; }
@@ -1334,7 +1185,7 @@ export function useSync(
     return { tempId, encryptedPayload, encryptedPayloadSelf, timestamp, senderHash, recipientHash, dialogHash, replyToId: replyTo?.id, replyToText: replyTo?.text, replyToSender: replyTo?.sender };
   };
 
-  // Actually send the prepared message via WebSocket (queues to offline queue on failure)
+  // Actually send the prepared message via Socket.io (queues to offline queue on failure)
   const commitDMMessage = (prepared: NonNullable<Awaited<ReturnType<typeof prepareDMMessage>>>, attachmentCID?: string): boolean => {
     const queueMsg = () => {
       enqueueMessage({
@@ -1353,15 +1204,14 @@ export function useSync(
       logger.info('[OfflineQueue] Message queued for later delivery');
     };
 
-    if (!ws.current || ws.current.readyState !== WebSocket.OPEN || !address) {
-      logger.warn('WebSocket not connected — queuing message offline');
+    if (!ws.current?.connected || !address) {
+      logger.warn('Socket.io not connected — queuing message offline');
       queueMsg();
       return false;
     }
 
     try {
-      ws.current.send(JSON.stringify({
-        type: 'DM_MESSAGE',
+      ws.current.emit('DM_MESSAGE', {
         sender: address,
         senderHash: prepared.senderHash,
         recipientHash: prepared.recipientHash,
@@ -1375,10 +1225,10 @@ export function useSync(
         replyToId: prepared.replyToId || '',
         replyToText: prepared.replyToText || '',
         replyToSender: prepared.replyToSender || ''
-      }));
+      });
       return true;
     } catch (e) {
-      logger.error('Failed to send WebSocket message — queuing offline:', e);
+      logger.error('Failed to send Socket.io message — queuing offline:', e);
       queueMsg();
       return false;
     }
@@ -1481,8 +1331,8 @@ export function useSync(
   useEffect(() => {
     if (!isConnected) return;
     const interval = setInterval(() => {
-      if (ws.current && ws.current.readyState === WebSocket.OPEN) {
-        ws.current.send(JSON.stringify({ type: 'HEARTBEAT' }));
+      if (ws.current?.connected) {
+        ws.current.emit('HEARTBEAT');
       }
     }, 30000);
     return () => clearInterval(interval);

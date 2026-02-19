@@ -179,8 +179,23 @@ const InnerApp: React.FC = () => {
   // Data State
   const [chats, setChats] = useState<Chat[]>([]);
   const [histories, setHistories] = useState<Record<string, Message[]>>({});
-  const [myProfile, setMyProfile] = useState<{username?: string, bio?: string} | null>(null);
+  const [myProfile, setMyProfile] = useState<{username?: string, bio?: string} | null>(() => {
+    // Eagerly restore from localStorage so profile is available before WS connects
+    // (overwritten once syncProfile() resolves from backend)
+    return null;
+  });
   const [myAvatarCid, setMyAvatarCid] = useState<string | null>(null);
+
+  // Restore cached profile from localStorage when publicKey becomes available
+  useEffect(() => {
+    if (!publicKey) return;
+    try {
+      const stored = localStorage.getItem(`ghost_profile_${publicKey}`);
+      if (stored) {
+        setMyProfile(JSON.parse(stored));
+      }
+    } catch { /* ignore parse errors */ }
+  }, [publicKey]);
   const [viewingProfile, setViewingProfile] = useState<Contact | NetworkProfile | null>(null);
 
   // Room State (Channels & Groups)
@@ -642,7 +657,9 @@ const InnerApp: React.FC = () => {
       syncProfile(publicKey).then(profile => {
         if (profile) {
           logger.debug("Synced profile:", profile);
-          setMyProfile({ username: profile.username, bio: profile.bio });
+          const profileData = { username: profile.username, bio: profile.bio };
+          setMyProfile(profileData);
+          try { localStorage.setItem(`ghost_profile_${publicKey}`, JSON.stringify(profileData)); } catch {}
           if (profile.avatar_cid) setMyAvatarCid(profile.avatar_cid);
         }
       }).catch(() => { /* own profile fetch failed, non-critical */ });
@@ -1207,6 +1224,7 @@ const InnerApp: React.FC = () => {
       // 2. Save profile to backend (single call with ALL data: name, bio, key, txId)
       await notifyProfileUpdate(name, bio, txId || 'off-chain');
       setMyProfile({ username: name, bio });
+      try { localStorage.setItem(`ghost_profile_${publicKey}`, JSON.stringify({ username: name, bio })); } catch {}
 
       toast.success('Profile created on-chain');
       logger.debug('On-chain profile registered');
@@ -1215,6 +1233,7 @@ const InnerApp: React.FC = () => {
       logger.error("Failed to create profile", e);
       toast.error('Profile creation failed: ' + (e?.message || 'Unknown error'));
       setMyProfile(null);
+      try { localStorage.removeItem(`ghost_profile_${publicKey}`); } catch {}
     } finally {
       setIsProcessing(false);
     }
@@ -1235,6 +1254,7 @@ const InnerApp: React.FC = () => {
       // 2. Save profile to backend (single call with ALL data)
       await notifyProfileUpdate(name, bio, txId || 'off-chain');
       setMyProfile({ username: name, bio });
+      try { localStorage.setItem(`ghost_profile_${publicKey}`, JSON.stringify({ username: name, bio })); } catch {}
 
       toast.success('Profile updated on-chain');
       logger.debug('On-chain profile updated');

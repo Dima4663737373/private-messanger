@@ -1,6 +1,6 @@
 import axios from 'axios';
 import { SyncStatus, Profile, Message, sequelize } from '../database';
-import { WebSocketServer, WebSocket } from 'ws';
+import { Server as SocketIOServer } from 'socket.io';
 import { Op } from 'sequelize';
 
 // CONSTANTS
@@ -42,12 +42,12 @@ interface AleoBlock {
 
 export class IndexerService {
   private isSyncing = false;
-  private wss: WebSocketServer;
+  private io: SocketIOServer;
   private apiUrl: string;
   private sdk: any;
 
-  constructor(wss: WebSocketServer) {
-    this.wss = wss;
+  constructor(io: SocketIOServer) {
+    this.io = io;
     this.apiUrl = ALEO_API_URL;
   }
 
@@ -325,47 +325,16 @@ export class IndexerService {
   }
 
   broadcastEvent(type: string, payload: any) {
-    this.wss.clients.forEach((client: any) => {
-      if (client.readyState === WebSocket.OPEN) {
-         const subscribedHash = client.subscribedHash; // Client subscribed to their Recipient Hash
-         const subscribedDialog = client.subscribedDialog; // Client subscribed to a Dialog Hash (optional)
-
-         if (type === 'message_detected') {
-            const { recipientHash, senderHash, dialogHash } = payload;
-            
-            // Route to:
-            // 1. Recipient (if they subscribed to their own hash)
-            // 2. Sender (if they subscribed to their own hash - for sync)
-            // 3. Anyone subscribed to this specific dialog (if enabled)
-            
-            const matchesUser = subscribedHash && (subscribedHash === recipientHash || subscribedHash === senderHash);
-            const matchesDialog = subscribedDialog && subscribedDialog === dialogHash;
-
-            if (matchesUser || matchesDialog) {
-                client.send(JSON.stringify({ type, payload }));
-            }
-         } else if (type === 'tx_confirmed') {
-            // Confirmations might need to go to sender
-            // We might need to track who sent it, or just broadcast to relevant hash
-            // Payload has { id, blockHeight }
-            // We don't have hashes in payload here?
-            // If we don't have hashes, we can't route efficiently.
-            // Maybe we should include hashes in tx_confirmed event?
-            // For now, let's just send to all or skip?
-            // User said "DO NOT broadcast to all clients".
-            // If we can't route, maybe we shouldn't send?
-            // But client needs confirmation.
-            // Let's rely on message_detected for sync.
-            // Or if we look up the message by ID... too slow.
-            client.send(JSON.stringify({ type, payload }));
-         } else if (type === 'profile_updated') {
-             // Profiles are public, can broadcast to all or just interested?
-             // Maybe broadcast to all is fine for discovery.
-             client.send(JSON.stringify({ type, payload }));
-         } else {
-             client.send(JSON.stringify({ type, payload }));
-         }
-      }
-    });
+    if (type === 'message_detected') {
+      const { recipientHash, senderHash, dialogHash } = payload;
+      if (recipientHash) this.io.to('user:' + recipientHash).emit(type, payload);
+      if (senderHash && senderHash !== recipientHash) this.io.to('user:' + senderHash).emit(type, payload);
+      if (dialogHash) this.io.to('dialog:' + dialogHash).emit(type, payload);
+    } else if (type === 'tx_confirmed') {
+      // Broadcast to all — tx IDs are public and clients filter by relevance
+      this.io.emit(type, payload);
+    } else {
+      this.io.emit(type, payload);
+    }
   }
 }
