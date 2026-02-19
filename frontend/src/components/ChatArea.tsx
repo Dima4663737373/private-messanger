@@ -206,7 +206,7 @@ const ChatArea: React.FC<ChatAreaProps> = ({
   onBlockUser,
   onUnblockUser,
   fontSize = 'medium',
-  chatTheme = 'dark',
+  chatTheme = 'light',
   bubbleStyle = 'rounded',
   compactMode = false,
   sendOnEnter = true

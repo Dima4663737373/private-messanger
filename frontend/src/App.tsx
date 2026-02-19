@@ -28,7 +28,7 @@ import { safeBackendFetch } from './utils/api-client';
 import { playNotificationSound } from './utils/notification-sound';
 // lucide icons removed - FAB is now in Sidebar
 import ProfileView from './components/ProfileView';
-import { useSystemTheme, applyTheme } from './hooks/useSystemTheme';
+import { applyTheme } from './hooks/useSystemTheme';
 import {
   ADDRESS_DISPLAY,
   MESSAGE_PREVIEW,
@@ -102,14 +102,10 @@ const InnerApp: React.FC = () => {
     }
   });
 
-  // System theme detection
-  const systemTheme = useSystemTheme();
-
-  // Apply theme to document root when chatTheme or systemTheme changes
+  // Apply theme to document root only when user manually changes chatTheme
   useEffect(() => {
-    const theme = userSettings.chatTheme || 'light';
-    applyTheme(theme as any, systemTheme);
-  }, [userSettings.chatTheme, systemTheme]);
+    applyTheme((userSettings.chatTheme || 'light') as any);
+  }, [userSettings.chatTheme]);
 
   // Derive encryption keys EARLY — before WS connects, so AUTH_CHALLENGE can be answered
   // Uses signMessage from useWallet() context for deterministic derivation (like alpaca-invoice)

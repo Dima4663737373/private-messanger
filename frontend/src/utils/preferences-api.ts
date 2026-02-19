@@ -51,7 +51,7 @@ export const DEFAULT_SETTINGS: UserSettings = {
   notifPreview: true,
   avatarColor: '#FF8C00',
   fontSize: 'medium',
-  chatTheme: 'dark',
+  chatTheme: 'light',
   bubbleStyle: 'rounded',
   compactMode: false,
   sendOnEnter: true,
