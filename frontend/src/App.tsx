@@ -2124,9 +2124,7 @@ const InnerApp: React.FC = () => {
               onKeyDown={e => {
                 if (e.key === 'Enter' && newMsgAddress.startsWith('aleo1') && newMsgAddress.length >= 60) {
                   const name = newMsgName.trim() || `User ${newMsgAddress.slice(0, ADDRESS_DISPLAY.SHORT_PREFIX)}...`;
-                  if (!contacts.some(c => c.address === newMsgAddress)) {
-                    handleAddContact(newMsgAddress, name);
-                  }
+                  ensureChatExists(newMsgAddress, name);
                   setActiveChatId(newMsgAddress);
                   setActiveRoomId(null);
                   setCurrentView('chats');
@@ -2143,9 +2141,7 @@ const InnerApp: React.FC = () => {
                 onClick={() => {
                   if (newMsgAddress.startsWith('aleo1') && newMsgAddress.length >= 60) {
                     const name = newMsgName.trim() || `User ${newMsgAddress.slice(0, ADDRESS_DISPLAY.SHORT_PREFIX)}...`;
-                    if (!contacts.some(c => c.address === newMsgAddress)) {
-                      handleAddContact(newMsgAddress, name);
-                    }
+                    ensureChatExists(newMsgAddress, name);
                     setActiveChatId(newMsgAddress);
                     setActiveRoomId(null);
                     setCurrentView('chats');
