@@ -45,6 +45,8 @@ export function useSync(
   const decryptionCache = useRef<Map<string, string>>(new Map());
   const keyCache = useRef<Map<string, string>>(new Map());
   const roomKeyCache = useRef<Map<string, string>>(new Map()); // roomId -> decrypted symmetric key (base64)
+  // Messages that failed to decrypt — retried when sender's key becomes available
+  const decryptionPendingRef = useRef<Map<string, { payload: string; sender: string; recipient: string; timestamp: number; payloadSelf?: string }>>(new Map());
 
   // Bounded cache set — evicts oldest entries when full
   const cacheSet = (cache: Map<string, string>, key: string, value: string, maxSize: number) => {
@@ -509,6 +511,33 @@ export function useSync(
       }
     });
 
+    // ── Retry failed decryptions when a sender registers their encryption key ──
+    socket.on('encryption_key_updated', async (data: { address: string; encryptionPublicKey: string }) => {
+      const { address: keyAddr, encryptionPublicKey } = data;
+      if (!encryptionPublicKey || !keyAddr || keyAddr === address) return;
+      // Cache the new key
+      cacheSet(keyCache.current, keyAddr, encryptionPublicKey, MAX_KEY_CACHE_SIZE);
+      logger.info(`[KeyUpdate] Received encryption key for ${keyAddr.slice(0, 10)} — retrying ${decryptionPendingRef.current.size} pending decryptions`);
+      // Retry all pending decryptions for this sender
+      for (const [msgId, pending] of decryptionPendingRef.current) {
+        if (pending.sender !== keyAddr) continue;
+        try {
+          const decrypted = await decryptPayload(pending.payload, pending.sender, pending.recipient, pending.timestamp, pending.payloadSelf);
+          if (decrypted && !decrypted.startsWith('[Encrypted')) {
+            decryptionPendingRef.current.delete(msgId);
+            cacheSet(decryptionCache.current, msgId, decrypted, MAX_CACHE_SIZE);
+            cacheMessage(msgId, decrypted, Number(pending.timestamp)).catch(() => {});
+            if (callbacksRef.current.onMessageUpdated) {
+              callbacksRef.current.onMessageUpdated(msgId, decrypted);
+            }
+            logger.info(`[KeyUpdate] Retried decrypt for msg ${msgId.slice(0, 8)} ✓`);
+          }
+        } catch (e) {
+          logger.warn('[KeyUpdate] Retry decrypt failed for msg', msgId.slice(0, 8), e);
+        }
+      }
+    });
+
     socket.on('blocked_by_user', (data: { address: string }) => {
       const blockerAddr = data.address;
       if (blockerAddr) {
@@ -550,10 +579,12 @@ export function useSync(
           cacheSet(keyCache.current, rawMsg.sender, rawMsg.senderEncryptionKey, MAX_KEY_CACHE_SIZE);
         }
 
-        // Decrypt (check caches first)
+        // Decrypt (check caches first — skip cached failures so retry is possible)
         let text = decryptionCache.current.get(rawMsg.id);
+        if (text?.startsWith('[Encrypted')) text = undefined;
         if (!text) {
-          text = await getCachedMessage(rawMsg.id).catch(() => null) || undefined;
+          const persisted = await getCachedMessage(rawMsg.id).catch(() => null);
+          if (persisted && !persisted.startsWith('[Encrypted')) text = persisted;
         }
         if (!text) {
           text = await decryptPayload(
@@ -563,9 +594,18 @@ export function useSync(
             rawMsg.timestamp,
             rawMsg.encryptedPayloadSelf
           );
-          if (text) {
+          if (text && !text.startsWith('[Encrypted')) {
             cacheSet(decryptionCache.current, rawMsg.id, text, MAX_CACHE_SIZE);
             cacheMessage(rawMsg.id, text, Number(rawMsg.timestamp)).catch(() => {});
+          } else if (rawMsg.sender !== address) {
+            // Track for retry when sender registers their encryption key
+            decryptionPendingRef.current.set(rawMsg.id, {
+              payload: rawMsg.encryptedPayload,
+              sender: rawMsg.sender,
+              recipient: rawMsg.recipient,
+              timestamp: rawMsg.timestamp,
+              payloadSelf: rawMsg.encryptedPayloadSelf
+            });
           }
         } else if (!decryptionCache.current.has(rawMsg.id)) {
           cacheSet(decryptionCache.current, rawMsg.id, text, MAX_CACHE_SIZE);
@@ -605,8 +645,10 @@ export function useSync(
       }
 
       let text = decryptionCache.current.get(rawMsg.id);
+      if (text?.startsWith('[Encrypted')) text = undefined;
       if (!text) {
-        text = await getCachedMessage(rawMsg.id).catch(() => null) || undefined;
+        const persisted = await getCachedMessage(rawMsg.id).catch(() => null);
+        if (persisted && !persisted.startsWith('[Encrypted')) text = persisted;
       }
       if (!text) {
         text = await decryptPayload(
@@ -616,12 +658,23 @@ export function useSync(
             rawMsg.timestamp,
             rawMsg.encryptedPayloadSelf || rawMsg.encrypted_payload_self
         );
-        if (text) {
+        if (text && !text.startsWith('[Encrypted')) {
           cacheSet(decryptionCache.current, rawMsg.id, text, MAX_CACHE_SIZE);
           cacheMessage(rawMsg.id, text, Number(rawMsg.timestamp)).catch(() => {});
-        }
-        if (!text || text.includes('[Encrypted')) {
-          logger.warn(`[Decrypt] Failed for msg ${rawMsg.id?.slice(0,8)}: sender=${rawMsg.sender?.slice(0,10)} recipient=${rawMsg.recipient?.slice(0,10)} isMine=${isMine} hasSenderKey=${!!rawMsg.senderEncryptionKey}`);
+        } else {
+          if (!text || text.includes('[Encrypted')) {
+            logger.warn(`[Decrypt] Failed for msg ${rawMsg.id?.slice(0,8)}: sender=${rawMsg.sender?.slice(0,10)} recipient=${rawMsg.recipient?.slice(0,10)} isMine=${isMine} hasSenderKey=${!!rawMsg.senderEncryptionKey}`);
+          }
+          // Track non-mine failed decryptions for retry when sender key becomes available
+          if (!isMine && rawMsg.sender) {
+            decryptionPendingRef.current.set(rawMsg.id, {
+              payload: rawMsg.encryptedPayload || rawMsg.content_encrypted,
+              sender: rawMsg.sender,
+              recipient: rawMsg.recipient,
+              timestamp: rawMsg.timestamp,
+              payloadSelf: rawMsg.encryptedPayloadSelf || rawMsg.encrypted_payload_self
+            });
+          }
         }
       } else if (!decryptionCache.current.has(rawMsg.id)) {
         cacheSet(decryptionCache.current, rawMsg.id, text, MAX_CACHE_SIZE);

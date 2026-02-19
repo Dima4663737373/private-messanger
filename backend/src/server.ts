@@ -1065,6 +1065,10 @@ app.post('/profiles', requireAuth, profileWriteLimiter, async (req: any, res) =>
     if (data.username || typeof showProfilePhoto === 'boolean' || data.avatar_cid !== undefined) {
       io.emit('profile_detected', { address, username: data.username, showAvatar: data.show_avatar, avatarCid: data.avatar_cid });
     }
+    // Notify all clients when an encryption key is registered/updated (triggers retry of failed decryptions)
+    if (data.encryption_public_key) {
+      io.emit('encryption_key_updated', { address, encryptionPublicKey: data.encryption_public_key });
+    }
 
     // If this was a limited session and user just registered with an encryption key,
     // upgrade the session to full access
