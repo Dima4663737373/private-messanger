@@ -29,6 +29,10 @@ interface SettingsViewProps {
   // Block
   blockedUsers?: string[];
   onUnblockUser?: (address: string) => void;
+  // XMTP decentralized messaging status
+  xmtpReady?: boolean;
+  xmtpError?: string | null;
+  xmtpIdentity?: string | null;
 }
 
 type Section = 'main' | 'profile' | 'wallet' | 'privacy' | 'chat_settings' | 'notifications';
@@ -53,7 +57,10 @@ const SettingsView: React.FC<SettingsViewProps> = ({
   avatarCid,
   onAvatarUpload,
   blockedUsers = [],
-  onUnblockUser
+  onUnblockUser,
+  xmtpReady = false,
+  xmtpError = null,
+  xmtpIdentity = null,
 }) => {
   const [activeSection, setActiveSection] = useState<Section>('main');
   const [name, setName] = useState(initialData?.username || '');
@@ -571,6 +578,51 @@ const SettingsView: React.FC<SettingsViewProps> = ({
                   <div className="flex justify-between text-[#666]">
                     <span>Message content</span>
                     <span className="text-[#10B981] font-medium text-xs">End-to-end encrypted</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* XMTP Decentralized Backup */}
+            <div>
+              <div className="flex items-center gap-2 mb-3">
+                <MessageCircle size={16} className="text-[#6366F1]" />
+                <h3 className="text-xs font-bold uppercase tracking-wider text-[#666]">XMTP Decentralized Backup</h3>
+              </div>
+              <div className="bg-[#FAFAFA] border border-[#E5E5E5] rounded-2xl p-5">
+                <div className="space-y-2 text-sm">
+                  <div className="flex justify-between items-center text-[#666]">
+                    <span>Status</span>
+                    {xmtpReady ? (
+                      <span className="flex items-center gap-1 text-[#10B981] font-medium text-xs">
+                        <span className="w-1.5 h-1.5 bg-[#10B981] rounded-full inline-block" />
+                        Active
+                      </span>
+                    ) : xmtpError === 'multi-tab' ? (
+                      <span className="text-[#F59E0B] text-xs">Multi-tab (disabled)</span>
+                    ) : xmtpError ? (
+                      <span className="text-[#EF4444] text-xs">Error</span>
+                    ) : (
+                      <span className="text-[#999] text-xs">Initializing…</span>
+                    )}
+                  </div>
+                  <div className="flex justify-between text-[#666]">
+                    <span>Protocol</span>
+                    <span className="font-mono text-[#333] text-xs">XMTP v3 (MLS)</span>
+                  </div>
+                  <div className="flex justify-between text-[#666]">
+                    <span>Retention</span>
+                    <span className="text-[#333] text-xs">60 days</span>
+                  </div>
+                  {xmtpIdentity && (
+                    <div className="flex justify-between text-[#666]">
+                      <span>XMTP identity</span>
+                      <span className="font-mono text-[#333] text-xs">{xmtpIdentity.slice(0, 6)}…{xmtpIdentity.slice(-4)}</span>
+                    </div>
+                  )}
+                  <div className="flex justify-between text-[#666]">
+                    <span>Transport</span>
+                    <span className="text-[#333] text-xs">Secondary (backup)</span>
                   </div>
                 </div>
               </div>

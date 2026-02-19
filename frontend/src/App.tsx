@@ -37,6 +37,7 @@ import {
   buildAvatarUrl
 } from './constants';
 import { useMessageStorage } from './hooks/useMessageStorage';
+import { useXMTP } from './hooks/useXMTP';
 
 const mapContactToChat = (contact: Contact, isActive: boolean): Chat => ({
   id: contact.id,
@@ -53,6 +54,9 @@ const mapContactToChat = (contact: Contact, isActive: boolean): Chat => ({
 const InnerApp: React.FC = () => {
   const { publicKey, wallet, signMessage, requestTransaction, disconnect, select, wallets } = useWallet();
   const { executeTransaction, sendMessageOnChain, registerProfile: registerProfileOnChain, updateProfile: updateProfileOnChain, deleteMessage: deleteMessageOnChain, editMessage: editMessageOnChain, clearHistoryOnChain, deleteChatOnChain, addContactOnChain, updateContactOnChain, deleteContactOnChain, editMessageProof, deleteMessageProof, loading: contractLoading } = useContract();
+
+  // XMTP decentralized messaging (secondary transport, auto-initialized on wallet connect)
+  const { isXmtpReady, xmtpError, xmtpIdentity, sendXmtpMessage } = useXMTP(publicKey ?? null);
 
   // User Preferences (replaces localStorage)
   const {
@@ -1042,6 +1046,13 @@ const InnerApp: React.FC = () => {
         throw new Error('Failed to send message — WebSocket not connected');
       }
 
+      // 3b. Also send via XMTP (background, decentralized backup, non-blocking)
+      if (isXmtpReady && !file) {
+        sendXmtpMessage(contact.address!, text).catch(() => {
+          // XMTP failures are silent — WebSocket is the primary transport
+        });
+      }
+
       // 4. Show message in UI
       const newMessage: Message = {
         id: tempId,
@@ -2001,6 +2012,9 @@ const InnerApp: React.FC = () => {
             onAvatarUpload={handleAvatarUpload}
             blockedUsers={blockedUsers}
             onUnblockUser={(addr) => { unblockUser(addr); toast.success('User unblocked'); }}
+            xmtpReady={isXmtpReady}
+            xmtpError={xmtpError}
+            xmtpIdentity={xmtpIdentity}
           />
         )}
       </main>

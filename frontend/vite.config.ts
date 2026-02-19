@@ -23,11 +23,14 @@ export default defineConfig(({ mode }) => {
         target: 'esnext',
       },
       optimizeDeps: {
-        exclude: ['@aleohq/sdk', '@aleohq/wasm', '@provablehq/wasm'],
+        exclude: ['@aleohq/sdk', '@aleohq/wasm', '@provablehq/wasm', '@xmtp/browser-sdk', '@xmtp/wasm-bindings'],
         esbuildOptions: {
           target: 'esnext',
         },
       },
       assetsInclude: ['**/*.wasm'],
+      worker: {
+        format: 'es',
+      },
     };
 });
