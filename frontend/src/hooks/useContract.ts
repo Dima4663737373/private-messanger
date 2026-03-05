@@ -1,11 +1,9 @@
-// Contract hook — transaction logic aligned with tipzo (fee 50000, feePrivate false, requestTransactionWithRetry, return txId as-is)
+// Contract hook — Shield Wallet integration (executeTransaction from useWallet)
 
 import { useState } from 'react';
-import { useWallet } from '@demox-labs/aleo-wallet-adapter-react';
-import { WalletAdapterNetwork } from '@demox-labs/aleo-wallet-adapter-base';
+import { useWallet } from '@provablehq/aleo-wallet-adaptor-react';
 import { PROGRAM_ID } from '../deployed_program';
 import { TRANSACTION_FEE } from '../utils/constants';
-import { requestTransactionWithRetry } from '../utils/walletUtils';
 import { logger } from '../utils/logger';
 import { stringToFields } from '../utils/messageUtils';
 import { hashAddress } from '../utils/aleo-utils';
@@ -17,25 +15,53 @@ export interface ExecuteTransactionOptions {
   maxRetries?: number;
 }
 
-// WalletAdapter interface imported from types
-import { WalletAdapter } from '../types';
-
 export function useContract() {
-  const { wallet, publicKey } = useWallet();
-  const adapter = wallet?.adapter as WalletAdapter | undefined;
-  const network = WalletAdapterNetwork.TestnetBeta;
+  const { address, connected, executeTransaction: walletExecuteTransaction, requestRecords, transactionStatus } = useWallet();
+  const publicKey = address; // Alias for backward compatibility
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   /**
-   * Creates transaction with program check bypass
+   * Poll Shield Wallet for the real on-chain transaction ID.
+   * Shield returns a temporary `shield_*` ID; polling resolves to `at1...`.
+   */
+  const pollForOnChainTxId = async (tempTxId: string, maxPolls = 60): Promise<string> => {
+    for (let i = 0; i < maxPolls; i++) {
+      try {
+        const resp = await transactionStatus(tempTxId);
+        const status = resp.status?.toLowerCase() || '';
+        console.log(`[TX Poll #${i + 1}] ${tempTxId} → ${status}`, resp);
+
+        if (status === 'accepted' || status === 'finalized') {
+          const onChainId = resp.transactionId || tempTxId;
+          console.log(`%c🔗 On-chain TX:%c ${onChainId}`, 'color:#10B981;font-weight:bold', 'color:#888');
+          return onChainId;
+        }
+        if (status === 'rejected' || status === 'failed') {
+          throw new Error(resp.error || `Transaction ${status}`);
+        }
+      } catch (err: any) {
+        // If polling itself fails (e.g. not supported), return temp ID after a few tries
+        if (i >= 3 && !err.message?.includes('rejected') && !err.message?.includes('failed')) {
+          logger.warn('[TX Poll] Polling not supported, returning temp ID');
+          return tempTxId;
+        }
+      }
+      await new Promise(r => setTimeout(r, 2000)); // 2s interval
+    }
+    logger.warn('[TX Poll] Timed out, returning temp ID');
+    return tempTxId;
+  };
+
+  /**
+   * Execute a transaction via Shield Wallet
    */
   const executeTransaction = async (
     functionName: string,
     inputs: string[],
     options: ExecuteTransactionOptions = {}
   ) => {
-    if (!wallet || !publicKey || !adapter) {
+    if (!connected || !address) {
       throw new Error('Wallet not connected');
     }
 
@@ -43,35 +69,36 @@ export function useContract() {
     setError(null);
 
     try {
-      // Leo Wallet expects chainId as string; use explicit value to avoid INVALID_PARAMS
-      const chainId = 'testnetbeta'; // Force 'testnetbeta' string
-      const transaction = {
-        address: typeof publicKey === 'string' ? publicKey : String(publicKey),
-        chainId,
-        fee: Number(TRANSACTION_FEE), // Ensure fee is sufficient
-        feePrivate: false,
-        transitions: [
-          {
-            program: String(PROGRAM_ID),
-            functionName: String(functionName),
-            inputs: inputs.map((x) => String(x)),
-          }
-        ]
-      };
-
-      if (transaction.transitions[0].inputs.some((inp: string) =>
+      // Validate inputs
+      if (inputs.some((inp: string) =>
         inp.includes("NaN") || inp === "undefined" || inp === "null")) {
-        throw new Error(`Invalid inputs detected: ${JSON.stringify(transaction.transitions[0].inputs)}`);
+        throw new Error(`Invalid inputs detected: ${JSON.stringify(inputs)}`);
       }
 
-      const txId = await requestTransactionWithRetry(adapter, transaction, {
-        timeout: 30000,
-        maxRetries: options.maxRetries ?? 1,
+      const result = await walletExecuteTransaction({
+        program: String(PROGRAM_ID),
+        function: String(functionName),
+        inputs: inputs.map((x) => String(x)),
+        fee: Number(TRANSACTION_FEE),
+        privateFee: false,
       });
 
-      console.log(`%c✅ ${functionName}%c — ${txId}`, 'color:#10B981;font-weight:bold', 'color:#888');
-      return txId;
-    } catch (err) {
+      const tempTxId = result?.transactionId;
+      if (!tempTxId) {
+        throw new Error("Transaction was rejected or failed");
+      }
+
+      console.log(`%c✅ ${functionName}%c — temp: ${tempTxId}`, 'color:#10B981;font-weight:bold', 'color:#888');
+
+      // Poll for real on-chain txId in background (don't block the return)
+      pollForOnChainTxId(tempTxId).then(onChainId => {
+        if (onChainId !== tempTxId) {
+          console.log(`%c🔗 ${functionName} confirmed:%c ${onChainId}`, 'color:#10B981;font-weight:bold', 'color:#888');
+        }
+      }).catch(() => { /* polling failure is non-critical */ });
+
+      return tempTxId;
+    } catch (err: any) {
       const errorMsg = err?.message || 'Transaction failed';
       console.log(`%c❌ ${functionName}%c — ${errorMsg}`, 'color:#EF4444;font-weight:bold', 'color:#888');
       setError(errorMsg);
@@ -89,11 +116,9 @@ export function useContract() {
   ) => {
     if (!publicKey) throw new Error("Wallet not connected");
 
-    // Get encryption keys from session cache (derived from wallet signature)
     const keys = getCachedKeys(publicKey);
     if (!keys) throw new Error("Encryption keys not available. Please reconnect wallet.");
 
-    // Split public key (base64) into two fields
     const keyFields = stringToFields(keys.publicKey, 2);
 
     const txId = await executeTransaction(
@@ -102,8 +127,6 @@ export function useContract() {
       options
     );
 
-    // Backend profile push is handled by notifyProfileUpdate in App.tsx
-    // which includes name, bio, encryptionPublicKey, and txId in a single call.
     return txId;
   };
 
@@ -111,16 +134,15 @@ export function useContract() {
    * Helper to find a Message record by timestamp
    */
   const findRecordByTimestamp = async (timestamp: number): Promise<string | null> => {
-      if (!adapter || !adapter.requestRecordPlaintexts) {
+      if (!requestRecords) {
           return null;
       }
-      // Try current program ID, then fall back to previous version
       const programIds = [PROGRAM_ID, 'ghost_msg_015.aleo'];
       for (const pid of programIds) {
         try {
-          const response = await adapter.requestRecordPlaintexts(pid);
-          if (response && response.records) {
-            for (const rec of response.records) {
+          const records = await requestRecords(pid);
+          if (records) {
+            for (const rec of records as any[]) {
               const plaintext = rec.plaintext || rec;
               if (typeof plaintext === 'string' && plaintext.includes("record Message")) {
                 const match = plaintext.match(/timestamp:\s*(\d+)u64/);
@@ -142,16 +164,13 @@ export function useContract() {
    */
   const deleteMessage = async (timestamp: number, options?: ExecuteTransactionOptions) => {
       if (!publicKey) throw new Error("Wallet not connected");
-      
+
       const record = await findRecordByTimestamp(timestamp);
       if (!record) {
           throw new Error("Message record not found in wallet. It may have already been spent or synced.");
       }
 
-      // Contract expects only the Message record (no timestamp)
-      const inputs = [
-          record
-      ];
+      const inputs = [record];
 
       return await executeTransaction('delete_message', inputs, options);
   };
@@ -160,9 +179,9 @@ export function useContract() {
    * Edits a message
    */
   const editMessage = async (
-      timestamp: number, 
-      newText: string, 
-      recipientAddress: string, 
+      timestamp: number,
+      newText: string,
+      recipientAddress: string,
       options?: ExecuteTransactionOptions
   ) => {
       if (!publicKey) throw new Error("Wallet not connected");
@@ -172,8 +191,6 @@ export function useContract() {
           throw new Error("Message record not found in wallet.");
       }
 
-      // Encrypt new text for Recipient
-      // We need recipient's public key
       const senderKeys = getCachedKeys(publicKey);
       if (!senderKeys) throw new Error("Encryption keys not available.");
       let recipientPubKey = '';
@@ -192,24 +209,19 @@ export function useContract() {
 
       const encryptedPayload = encryptMessage(newText, recipientPubKey, senderKeys.secretKey);
 
-      // Convert encrypted payload to 4 fields (contract expects [field; 4])
       const newPayloadFields = stringToFields(encryptedPayload).slice(0, 4);
       while (newPayloadFields.length < 4) {
           newPayloadFields.push("0field");
       }
       const payloadInput = `[${newPayloadFields.join(',')}]`;
 
-      const inputs = [
-          record,
-          payloadInput
-      ];
+      const inputs = [record, payloadInput];
 
       return await executeTransaction('update_message', inputs, options);
   };
 
   /**
    * Sends a message on-chain using pre-encrypted payload from off-chain flow.
-   * This avoids double-encryption — reuses the payload already encrypted in sendDMMessage.
    */
   const sendMessageOnChain = async (
     recipientAddress: string,
@@ -266,12 +278,11 @@ export function useContract() {
       options
     );
 
-    // Backend profile push is handled by notifyProfileUpdate in App.tsx
     return txId;
   };
 
   /**
-   * Clear chat history (on-chain proof) — uses clear_history transition
+   * Clear chat history (on-chain proof)
    */
   const clearHistoryOnChain = async (
     recipientAddress: string,
@@ -284,7 +295,7 @@ export function useContract() {
   };
 
   /**
-   * Delete chat (on-chain proof) — uses delete_chat transition
+   * Delete chat (on-chain proof)
    */
   const deleteChatOnChain = async (
     recipientAddress: string,
@@ -297,7 +308,7 @@ export function useContract() {
   };
 
   /**
-   * Add contact on-chain (proof of action) — uses add_contact transition
+   * Add contact on-chain (proof of action)
    */
   const addContactOnChain = async (
     contactAddress: string,
@@ -309,7 +320,7 @@ export function useContract() {
   };
 
   /**
-   * Update contact on-chain (proof of rename) — uses update_contact transition
+   * Update contact on-chain (proof of rename)
    */
   const updateContactOnChain = async (
     contactAddress: string,
@@ -321,7 +332,7 @@ export function useContract() {
   };
 
   /**
-   * Delete contact on-chain (proof of removal) — uses delete_contact transition
+   * Delete contact on-chain (proof of removal)
    */
   const deleteContactOnChain = async (
     contactAddress: string,

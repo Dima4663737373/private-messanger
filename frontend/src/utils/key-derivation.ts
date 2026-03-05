@@ -182,25 +182,17 @@ export async function getOrDeriveKeys(
   } catch { /* ignore */ }
 
   // 3. Derive deterministic keys from address
-  // NOTE: Aleo wallet's signMessage is NON-deterministic (different signature each time),
-  // causing cross-device encryption key mismatches. Using address-based derivation instead
-  // for true determinism across all devices.
-  if (signMessageFn) {
-    try {
-      // Use address-based derivation for determinism (not signMessage)
-      const deterministicSeed = `ghost_messenger_v1_${publicKey}`;
-      const derived = await seedToKeypair(deterministicSeed);
-      if (useCache) setCachedKeys(publicKey, derived);
-      setSessionKeys(publicKey, derived);
-      logger.info('[Keys] Derived deterministic keys from address');
-      return derived;
-    } catch (e) {
-      // User cancelled — don't fall through, propagate
-      if (e?.message?.includes('cancel') || e?.message?.includes('denied') || e?.message?.includes('rejected')) {
-        throw e;
-      }
-      logger.warn('signMessage derivation failed:', e?.message);
-    }
+  // Uses address-based derivation for true determinism across all devices.
+  // Works with any wallet (Shield, Leo, etc.) — no signMessage needed.
+  try {
+    const deterministicSeed = `ghost_messenger_v1_${publicKey}`;
+    const derived = await seedToKeypair(deterministicSeed);
+    if (useCache) setCachedKeys(publicKey, derived);
+    setSessionKeys(publicKey, derived);
+    logger.info('[Keys] Derived deterministic keys from address');
+    return derived;
+  } catch (e: any) {
+    logger.warn('Key derivation failed:', e?.message);
   }
 
   // 4. Fallback: generate random keypair + save to session

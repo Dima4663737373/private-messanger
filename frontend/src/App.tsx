@@ -1,8 +1,10 @@
 
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { WalletProvider, useWallet } from "@demox-labs/aleo-wallet-adapter-react";
-import { LeoWalletAdapter } from "@demox-labs/aleo-wallet-adapter-leo";
-import { WalletAdapterNetwork, DecryptPermission } from "@demox-labs/aleo-wallet-adapter-base";
+import { AleoWalletProvider, useWallet } from "@provablehq/aleo-wallet-adaptor-react";
+import { ShieldWalletAdapter } from "@provablehq/aleo-wallet-adaptor-shield";
+import { DecryptPermission } from "@provablehq/aleo-wallet-adaptor-core";
+import { Network } from "@provablehq/aleo-types";
+import { PROGRAM_ID } from './deployed_program';
 import Sidebar from './components/Sidebar';
 import ChatArea from './components/ChatArea';
 import LandingPage from './components/LandingPage';
@@ -52,7 +54,8 @@ const mapContactToChat = (contact: Contact, isActive: boolean): Chat => ({
 });
 
 const InnerApp: React.FC = () => {
-  const { publicKey, wallet, signMessage, requestTransaction, disconnect, select, wallets } = useWallet();
+  const { address, connected, disconnect, wallets, selectWallet } = useWallet();
+  const publicKey = address; // Alias — avoids touching 68+ references to publicKey
   const { executeTransaction, sendMessageOnChain, registerProfile: registerProfileOnChain, updateProfile: updateProfileOnChain, deleteMessage: deleteMessageOnChain, editMessage: editMessageOnChain, clearHistoryOnChain, deleteChatOnChain, addContactOnChain, updateContactOnChain, deleteContactOnChain, editMessageProof, deleteMessageProof, loading: contractLoading } = useContract();
 
   // XMTP decentralized messaging (secondary transport, auto-initialized on wallet connect)
@@ -108,16 +111,16 @@ const InnerApp: React.FC = () => {
   }, [userSettings.chatTheme]);
 
   // Derive encryption keys EARLY — before WS connects, so AUTH_CHALLENGE can be answered
-  // Uses signMessage from useWallet() context for deterministic derivation (like alpaca-invoice)
+  // Uses address-based deterministic derivation (works with Shield Wallet)
   const [keysReady, setKeysReady] = useState(false);
   useEffect(() => {
-    if (!publicKey || !wallet) return;
+    if (!publicKey || !connected) return;
     if (getCachedKeys(publicKey)) { setKeysReady(true); return; }
 
     (async () => {
       try {
         const { getOrDeriveKeys } = await import('./utils/key-derivation');
-        const keys = await getOrDeriveKeys(signMessage || undefined, publicKey);
+        const keys = await getOrDeriveKeys(undefined, publicKey);
         setCachedKeys(publicKey, keys);
         logger.debug('Encryption keys derived early (before WS)');
       } catch {
@@ -127,7 +130,7 @@ const InnerApp: React.FC = () => {
       }
       setKeysReady(true);
     })();
-  }, [publicKey, wallet, signMessage]);
+  }, [publicKey, connected]);
 
   // Contacts State — persisted to backend via savedContacts preference
   const [contacts, setContacts] = useState<Contact[]>([]);
@@ -944,42 +947,18 @@ const InnerApp: React.FC = () => {
 
 
   const handleConnectWallet = async () => {
-    // If wallet is not selected, select it first
-    if (!wallet && wallets.length > 0) {
-        select(wallets[0].adapter.name);
-        // We need to wait for the wallet to be selected in state
-        // Since we can't await state update in this closure, we'll rely on the user clicking again
-        // OR we can rely on the wallet adapter's internal state if we access it directly from `wallets`
-        
-        // Try to connect directly using the adapter instance if possible
-        const adapter = wallets[0].adapter;
-              if (adapter && !adapter.connected) {
-                   setIsConnecting(true);
-                   try {
-                      await adapter.connect(
-                        DecryptPermission.OnChainHistory,
-                        WalletAdapterNetwork.TestnetBeta
-                      );
-                      toast.success('Wallet connected successfully');
-                   } catch (err) {
-                logger.error("Connection failed:", err);
-                toast.error(mapErrorToUserMessage(err));
-             } finally {
-                setIsConnecting(false);
-             }
-        }
-        return;
-    }
-
-    if (wallet?.adapter && !publicKey) {
-            setIsConnecting(true);
-            try {
-              await wallet.adapter.connect(
-                DecryptPermission.OnChainHistory,
-                WalletAdapterNetwork.TestnetBeta
-              );
-              toast.success('Wallet connected successfully');
-      } catch (err) {
+    if (connected) return;
+    if (wallets && wallets.length > 0) {
+      setIsConnecting(true);
+      try {
+        selectWallet(wallets[0].adapter.name);
+        await wallets[0].adapter.connect(
+          Network.TESTNET,
+          DecryptPermission.UponRequest,
+          [PROGRAM_ID, 'credits.aleo']
+        );
+        toast.success('Wallet connected successfully');
+      } catch (err: any) {
         logger.error("Connection failed:", err);
         toast.error(mapErrorToUserMessage(err));
       } finally {
@@ -2254,7 +2233,7 @@ class ErrorBoundary extends React.Component<{ children: React.ReactNode }, Error
 function App() {
   const wallets = useMemo(
     () => [
-      new LeoWalletAdapter({
+      new ShieldWalletAdapter({
         appName: "Ghost Messenger",
       }),
     ],
@@ -2263,14 +2242,16 @@ function App() {
 
   return (
     <ErrorBoundary>
-      <WalletProvider
+      <AleoWalletProvider
         wallets={wallets}
-        decryptPermission={DecryptPermission.OnChainHistory}
-        network={WalletAdapterNetwork.TestnetBeta}
+        decryptPermission={DecryptPermission.UponRequest}
+        network={Network.TESTNET}
+        programs={[PROGRAM_ID, 'credits.aleo']}
         autoConnect={true}
+        onError={(error: any) => console.error('[Wallet]', error.message)}
       >
         <InnerApp />
-      </WalletProvider>
+      </AleoWalletProvider>
     </ErrorBoundary>
   );
 }

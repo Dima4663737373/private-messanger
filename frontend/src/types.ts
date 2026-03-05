@@ -209,29 +209,3 @@ export interface LinkPreviewResponse {
   url: string;
 }
 
-/** Wallet adapter interface for Aleo transactions */
-export interface WalletAdapter {
-  requestTransaction: (transaction: AleoTransaction) => Promise<string>;
-  signMessage?: (message: Uint8Array) => Promise<Uint8Array>;
-  requestRecordPlaintexts?: (program: string) => Promise<RecordPlaintextsResult>;
-}
-
-/** Aleo transaction structure */
-export interface AleoTransaction {
-  address: string;
-  chainId: string;
-  fee: number;
-  feePrivate: boolean;
-  transitions: Array<{
-    program: string;
-    functionName: string;
-    inputs: string[];
-  }>;
-}
-
-/** Record plaintexts result */
-export interface RecordPlaintextsResult {
-  records?: Array<{
-    plaintext?: string;
-  }>;
-}

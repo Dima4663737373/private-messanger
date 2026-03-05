@@ -1,7 +1,6 @@
-// Wallet utilities with timeout and retry logic (from tipzo)
+// Wallet utilities with timeout and retry logic
 
 import { logger } from './logger';
-import { WalletAdapter, AleoTransaction } from '../types';
 
 const WALLET_TIMEOUT = 30000; // 30 seconds
 const MAX_RETRIES = 1; // No auto-retry — if user rejects, they can retry manually
@@ -34,7 +33,7 @@ export async function withWalletTimeout<T>(
             }
 
             const startTime = Date.now();
-            
+
             // Create a promise that rejects after timeout
             const timeoutPromise = new Promise<never>((_, reject) => {
                 setTimeout(() => {
@@ -44,15 +43,15 @@ export async function withWalletTimeout<T>(
 
             // Race between operation and timeout
             const result = await Promise.race([operation(), timeoutPromise]);
-            
+
             const duration = Date.now() - startTime;
             logger.debug(`[Wallet] Completed in ${(duration / 1000).toFixed(2)}s`);
-            
+
             return result;
         } catch (error) {
             lastError = error;
             const errorMsg = error?.message || String(error);
-            
+
             // Don't retry on user cancellation
             if (errorMsg.includes("User rejected") || errorMsg.includes("User cancelled") ||
                 errorMsg.includes("cancel") || errorMsg.includes("reject") ||
@@ -60,7 +59,7 @@ export async function withWalletTimeout<T>(
                 throw error;
             }
 
-            // Don't retry on invalid parameters (same as tipzo: throw original error)
+            // Don't retry on invalid parameters
             if (errorMsg.includes("INVALID_PARAMS") || errorMsg.includes("Some of the parameters you provided are invalid")) {
                 throw error;
             }
@@ -76,34 +75,4 @@ export async function withWalletTimeout<T>(
     }
 
     throw lastError || new Error("Wallet operation failed");
-}
-
-/**
- * Request transaction with timeout and retry
- */
-export async function requestTransactionWithRetry(
-    adapter: WalletAdapter,
-    transaction: AleoTransaction,
-    options: WalletCallOptions = {}
-): Promise<string> {
-    return withWalletTimeout(
-        async () => {
-            if (!adapter?.requestTransaction) {
-                throw new Error("Wallet adapter does not support requestTransaction");
-            }
-            const txId = await adapter.requestTransaction(transaction);
-            if (!txId) {
-                throw new Error("Transaction was rejected or failed");
-            }
-            return txId;
-        },
-        {
-            ...options,
-            onRetry: (attempt) => {
-                if (options.onRetry) {
-                    options.onRetry(attempt);
-                }
-            }
-        }
-    );
 }
