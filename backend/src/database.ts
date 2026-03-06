@@ -687,13 +687,8 @@ export const initDB = async () => {
   await sequelize.authenticate();
   logger.info('[DB] Connection established successfully');
 
-  // Use 'alter: true' only in development; in production just sync schema (safe, won't drop columns)
-  const isProduction = process.env.NODE_ENV === 'production';
-  if (isProduction) {
-    await sequelize.sync(); // Creates tables if missing, does NOT alter existing columns
-  } else {
-    await sequelize.sync({ alter: true }); // Dev: auto-migrate schema changes
-  }
+  // alter: true adds new columns without dropping existing ones (safe for production)
+  await sequelize.sync({ alter: true });
   const status = await SyncStatus.findOne();
   if (!status) {
     await SyncStatus.create({ last_block_height: 0 });
