@@ -929,14 +929,29 @@ const InnerApp: React.FC = () => {
       if (msgs && msgs.length > 0) {
         const sorted = msgs.sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
         setHistories(prev => {
-          // Merge backend messages with IndexedDB messages, removing duplicates
+          // Merge backend messages with IDB messages — replace garbled/encrypted IDB entries
           const existing = prev[activeChatId] || [];
+          const backendMap = new Map(sorted.map(m => [m.id, m]));
           const existingIds = new Set(existing.map(m => m.id));
+
+          // Update existing messages that have placeholder/garbled text
+          const isGarbled = (t: string) => !t || t.startsWith('[Encrypted') || /[\uFFFD]/.test(t);
+          let updated = false;
+          const merged = existing.map(m => {
+            const backendMsg = backendMap.get(m.id);
+            if (backendMsg && isGarbled(m.text) && !isGarbled(backendMsg.text)) {
+              updated = true;
+              return { ...m, text: backendMsg.text };
+            }
+            return m;
+          });
+
+          // Add truly new messages
           const newMessages = sorted.filter(m => !existingIds.has(m.id));
 
-          if (newMessages.length > 0) {
-            logger.debug(`[Backend] Synced ${newMessages.length} new messages from backend`);
-            return { ...prev, [activeChatId]: [...existing, ...newMessages].sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0)) };
+          if (newMessages.length > 0 || updated) {
+            logger.debug(`[Backend] Synced ${newMessages.length} new, ${updated ? 'updated garbled' : 'no updates'}`);
+            return { ...prev, [activeChatId]: [...merged, ...newMessages].sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0)) };
           }
           return prev;
         });
