@@ -634,9 +634,12 @@ export function useSync(
           cacheSet(decryptionCache.current, rawMsg.id, text, MAX_CACHE_SIZE);
         }
 
+        // Skip undecryptable messages (indexer duplicates)
+        if (!text || text.startsWith('[Encrypted') || text === 'Decryption Failed') continue;
+
         const msg = {
           id: rawMsg.id,
-          text: text || '[Encrypted message]',
+          text,
           time: new Date(Number(rawMsg.timestamp)).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
           senderId: rawMsg.sender === address ? 'me' : rawMsg.sender,
           isMine: rawMsg.sender === address,
@@ -716,9 +719,15 @@ export function useSync(
           }
       }
 
+      // Skip undecryptable messages (indexer duplicates with garbled payload)
+      if (!text || text.startsWith('[Encrypted') || text === 'Decryption Failed') {
+        logger.debug(`[WS] Skipping undecryptable message_detected id=${rawMsg.id?.slice(0,8)}`);
+        return;
+      }
+
       const msg: Message & { recipient: string; encryptedPayload?: string; encryptedPayloadSelf?: string } = {
         id: rawMsg.id,
-        text: text || "Decryption Failed",
+        text,
         time: new Date(Number(rawMsg.timestamp)).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
         senderId: rawMsg.sender === address ? 'me' : rawMsg.sender,
         isMine: rawMsg.sender === address,

@@ -946,8 +946,8 @@ const InnerApp: React.FC = () => {
             return m;
           });
 
-          // Add truly new messages
-          const newMessages = sorted.filter(m => !existingIds.has(m.id));
+          // Add truly new messages (skip [Encrypted] placeholders — they're indexer duplicates)
+          const newMessages = sorted.filter(m => !existingIds.has(m.id) && !isGarbled(m.text));
 
           if (newMessages.length > 0 || updated) {
             logger.debug(`[Backend] Synced ${newMessages.length} new, ${updated ? 'updated garbled' : 'no updates'}`);
