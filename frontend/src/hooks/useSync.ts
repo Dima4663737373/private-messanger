@@ -129,11 +129,11 @@ export function useSync(
       const encrypted = isEncryptedFormat(payload);
       const isMine = sender === address;
 
-      if (!address) return encrypted ? "[Encrypted Message]" : payload;
+      if (!address) return "[Encrypted Message]";
 
       try {
         const myKeys = getCachedKeys(address);
-        if (!myKeys) return encrypted ? "[Encrypted Message]" : payload;
+        if (!myKeys) return "[Encrypted Message]";
         const otherParty = isMine ? recipient : sender;
 
         // Strategy for "Encrypt to Self"
@@ -178,16 +178,10 @@ export function useSync(
             }
         }
 
-        // Decryption failed — show clean placeholder for encrypted payloads
-        if (encrypted) {
-            return isMine ? "[Encrypted Sent Message]" : "[Encrypted Message]";
-        }
-
-        // Legacy plaintext fallback — short messages without NaCl format are likely plain text
-        if (payload.length < 200) return payload;
+        // Decryption failed or payload is garbled indexer output — show placeholder
         return "[Encrypted Message]";
       } catch (e) {
-          return encrypted ? "[Encrypted Message]" : "[Encrypted Message]";
+          return "[Encrypted Message]";
       }
   };
 

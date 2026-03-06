@@ -300,6 +300,48 @@ function sanitizeSearchQuery(q: string): string {
   return q.slice(0, 100).replace(/[%_\\]/g, '');
 }
 
+/**
+ * Remove indexer-created duplicate messages.
+ * When both a WebSocket message and an indexer message exist for the same content,
+ * keep only the WS version (which has encrypted_payload_self for decryption).
+ * Indexer messages are identified by: status='confirmed' + no encrypted_payload_self +
+ * encrypted_payload not in NaCl format (base64.base64).
+ */
+function deduplicateMessages(messages: any[]): any[] {
+  if (messages.length < 2) return messages;
+
+  // NaCl encrypted format: two base64 strings separated by a dot
+  const isNaClFormat = (s: string) => /^[A-Za-z0-9+/=]{20,}\.[A-Za-z0-9+/=]{20,}$/.test(s || '');
+
+  // Identify indexer-only messages (no encrypted_payload_self, non-NaCl payload)
+  const wsMessages = new Set<string>();
+  const indexerMsgIds = new Set<string>();
+
+  for (const msg of messages) {
+    const payload = msg.encrypted_payload || msg.dataValues?.encrypted_payload || '';
+    const payloadSelf = msg.encrypted_payload_self || msg.dataValues?.encrypted_payload_self || '';
+    const hasPayloadSelf = payloadSelf && payloadSelf.length > 0;
+    const isNaCl = isNaClFormat(payload);
+
+    if (hasPayloadSelf || isNaCl) {
+      // This is a WS-originated message (has self-decrypt payload or proper NaCl format)
+      const key = `${msg.dialog_hash || msg.dataValues?.dialog_hash}:${msg.sender || msg.dataValues?.sender}`;
+      wsMessages.add(key);
+    } else {
+      // This is likely an indexer-created message (garbled payload, no self-decrypt)
+      indexerMsgIds.add(msg.id || msg.dataValues?.id);
+    }
+  }
+
+  // Remove indexer messages that have a WS counterpart in the same dialog+sender
+  return messages.filter(msg => {
+    const id = msg.id || msg.dataValues?.id;
+    if (!indexerMsgIds.has(id)) return true; // keep WS messages
+    const key = `${msg.dialog_hash || msg.dataValues?.dialog_hash}:${msg.sender || msg.dataValues?.sender}`;
+    return !wsMessages.has(key); // remove indexer msg if WS version exists for same sender in dialog
+  });
+}
+
 // --- Socket.io Connection ---
 
 // Per-socket WS message rate limit
@@ -966,7 +1008,11 @@ app.get('/messages/:dialogHash', requireAuth, async (req: any, res) => {
       limit,
       offset
     });
-    res.json(messages);
+
+    // Deduplicate: remove indexer-created messages when a WS version exists
+    // Indexer messages have empty encrypted_payload_self and garbled encrypted_payload
+    const deduped = deduplicateMessages(messages);
+    res.json(deduped);
   } catch (e) {
     logger.error('GET /messages/:dialogHash error:', e);
     res.status(500).json({ error: 'Failed to fetch messages' });
@@ -988,7 +1034,8 @@ app.get('/messages/dialog/:dialogHash', requireAuth, async (req: any, res) => {
       limit,
       offset
     });
-    res.json(messages);
+    const deduped = deduplicateMessages(messages);
+    res.json(deduped);
   } catch (e) {
     logger.error(`GET /messages/dialog error:`, e);
     res.status(500).json({ error: 'Failed to fetch dialog messages' });
