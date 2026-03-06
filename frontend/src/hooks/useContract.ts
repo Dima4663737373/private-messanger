@@ -240,9 +240,13 @@ export function useContract() {
     const senderHash = hashAddress(publicKey);
     const recipientHash = hashAddress(cleanRecipient);
 
-    const messageFields = stringToFields(encryptedPayload).slice(0, 4);
-    while (messageFields.length < 4) messageFields.push("0field");
-    const payloadInput = `[${messageFields.join(',')}]`;
+    // Send only a hash on-chain (proof that message exists), NOT the encrypted payload.
+    // The actual encrypted content goes via WebSocket only.
+    // Sending the NaCl payload on-chain is pointless: it gets truncated to 4 fields (~124 bytes)
+    // while the full payload is ~400+ bytes, making it unrecoverable and producing garbled text.
+    const msgHash = stringToFields(`msg_${timestamp}_${senderHash.slice(0, 20)}`).slice(0, 4);
+    while (msgHash.length < 4) msgHash.push("0field");
+    const payloadInput = `[${msgHash.join(',')}]`;
 
     const attachmentFields = attachmentCID
       ? stringToFields(attachmentCID, 2)
