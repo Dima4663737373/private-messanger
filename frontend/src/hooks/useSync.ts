@@ -169,6 +169,13 @@ export function useSync(
             }
         } else {
             logger.warn(`[Decrypt] No encryption key for otherParty=${otherParty?.slice(0,10)} isMine=${isMine}`);
+            // Last resort for own messages: try decrypting main payload with own keys
+            if (isMine && encrypted) {
+                try {
+                    const selfDecrypt = await decrypt(payload, myKeys.publicKey, myKeys.secretKey);
+                    if (selfDecrypt) return selfDecrypt;
+                } catch { /* ignore */ }
+            }
         }
 
         // Decryption failed — show clean placeholder for encrypted payloads
@@ -176,10 +183,12 @@ export function useSync(
             return isMine ? "[Encrypted Sent Message]" : "[Encrypted Message]";
         }
 
-        // Legacy plaintext fallback — only return payload if it's human-readable text
-        // Avoid fieldToString which produces garbled output from non-field data
-        const isPrintable = /^[\x20-\x7E\u00A0-\uFFFF]+$/.test(payload);
-        if (isPrintable && payload.length < 500) return payload;
+        // Legacy plaintext fallback — only return if clean readable text
+        // Reject control chars, replacement char (\uFFFD), and base64/NaCl-like blobs
+        const isCleanText = payload.length < 500
+          && !/[\x00-\x1F\x7F-\x9F\uFFFD]/.test(payload)
+          && !/^[A-Za-z0-9+/=]{20,}/.test(payload);
+        if (isCleanText) return payload;
         return "[Encrypted Message]";
       } catch (e) {
           return encrypted ? "[Encrypted Message]" : "[Encrypted Message]";
