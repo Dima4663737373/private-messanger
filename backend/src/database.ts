@@ -1,4 +1,4 @@
-import { Sequelize, DataTypes, Model } from 'sequelize';
+import { Sequelize, DataTypes, Model, Op } from 'sequelize';
 import path from 'path';
 import { logger } from './utils/logger';
 
@@ -689,6 +689,24 @@ export const initDB = async () => {
 
   // alter: true adds new columns without dropping existing ones (safe for production)
   await sequelize.sync({ alter: true });
+
+  // One-time cleanup: remove indexer-created duplicate messages
+  // These have empty encrypted_payload_self and their id starts with 'at1' (txId format)
+  try {
+    const deleted = await Message.destroy({
+      where: {
+        [Op.or]: [
+          { encrypted_payload_self: '' },
+          { encrypted_payload_self: null as any },
+        ],
+        id: { [Op.like]: 'at1%' },
+      }
+    });
+    if (deleted > 0) logger.info(`[DB Cleanup] Removed ${deleted} indexer duplicate messages`);
+  } catch (e) {
+    logger.warn('[DB Cleanup] Failed:', e);
+  }
+
   const status = await SyncStatus.findOne();
   if (!status) {
     await SyncStatus.create({ last_block_height: 0 });

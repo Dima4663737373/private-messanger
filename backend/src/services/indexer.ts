@@ -221,56 +221,36 @@ export class IndexerService {
             return;
         }
 
-        // Deduplication — check if WS already stored this message (by tx_id or same dialog + timestamp)
+        // Try to find the WS-originated message and confirm it.
+        // On-chain payload is truncated (4 fields ≈ 124 bytes) so it can NEVER be decrypted.
+        // We only use the indexer to mark WS messages as blockchain-confirmed.
+        // Search broadly: by tx_id, or by dialog + sender (timestamp may differ WS vs block).
         const wsExisting = await Message.findOne({
             where: {
                 [Op.or]: [
                     { tx_id: txId },
-                    { dialog_hash: dialogHash, timestamp: finalTimestamp, sender: sender },
+                    { dialog_hash: dialogHash, sender: sender },
                 ],
-            }
+            },
+            order: [['timestamp', 'DESC']], // most recent WS message from this sender in dialog
         });
         if (wsExisting) {
-            // Mark the existing WS message as confirmed and store the txId
-            if (wsExisting.status !== 'confirmed') {
-                wsExisting.status = 'confirmed';
-                wsExisting.block_height = height;
-                wsExisting.tx_id = txId;
-                await wsExisting.save();
-                this.broadcastEvent('tx_confirmed', { id: wsExisting.id, txId, blockHeight: height });
-            }
+            wsExisting.status = 'confirmed';
+            wsExisting.block_height = height;
+            wsExisting.tx_id = txId;
+            await wsExisting.save();
+            this.broadcastEvent('tx_confirmed', { id: wsExisting.id, txId, blockHeight: height });
             return;
         }
 
-        // Store Message (new — no WS duplicate found)
-        await Message.create({
+        // No WS message found — skip creating a record.
+        // On-chain payload is truncated and can never be decrypted, so storing it is pointless.
+        logger.warn(`[Indexer] No WS message found for tx ${txId.slice(0,10)}... in dialog ${dialogHash.slice(0,20)}... — skipping (truncated on-chain payload cannot be decrypted)`);
+        this.broadcastEvent('tx_confirmed', {
             id: txId,
-            sender: sender,
-            recipient: resolvedRecipient, // Resolved from hash
-            sender_hash: senderHash,
-            recipient_hash: recipientHash,
-            dialog_hash: dialogHash,
-            encrypted_payload: encryptedPayload,
-            encrypted_payload_self: '', 
-            attachment_part1: att1,
-            attachment_part2: att2,
-            timestamp: finalTimestamp,
-            block_height: height,
-            status: 'confirmed'
-        });
-
-        // Broadcast to relevant clients
-        this.broadcastEvent('message_detected', { 
-            id: txId, 
             dialogHash,
             recipientHash,
             senderHash,
-            sender: sender, // Send resolved addresses
-            recipient: resolvedRecipient,
-            encryptedPayload,
-            timestamp: finalTimestamp,
-            attachmentPart1: att1,
-            attachmentPart2: att2,
             status: 'confirmed'
         });
         
