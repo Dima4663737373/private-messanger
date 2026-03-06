@@ -935,7 +935,7 @@ const InnerApp: React.FC = () => {
           const existingIds = new Set(existing.map(m => m.id));
 
           // Update existing messages that have placeholder/garbled text
-          const isGarbled = (t: string) => !t || t.startsWith('[Encrypted') || /[\uFFFD]/.test(t);
+          const isGarbled = (t: string) => !t || t.startsWith('[Encrypted') || !/^[\x20-\x7E\s\u0400-\u04FF\u0100-\u024F]+$/.test(t);
           let updated = false;
           const merged = existing.map(m => {
             const backendMsg = backendMap.get(m.id);

@@ -183,12 +183,9 @@ export function useSync(
             return isMine ? "[Encrypted Sent Message]" : "[Encrypted Message]";
         }
 
-        // Legacy plaintext fallback — only return if clean readable text
-        // Reject control chars, replacement char (\uFFFD), and base64/NaCl-like blobs
-        const isCleanText = payload.length < 500
-          && !/[\x00-\x1F\x7F-\x9F\uFFFD]/.test(payload)
-          && !/^[A-Za-z0-9+/=]{20,}/.test(payload);
-        if (isCleanText) return payload;
+        // Legacy plaintext fallback — ASCII-only, short messages
+        // Garbled indexer output contains non-ASCII unicode, so strict ASCII check filters it
+        if (payload.length < 200 && /^[\x20-\x7E\s]+$/.test(payload)) return payload;
         return "[Encrypted Message]";
       } catch (e) {
           return encrypted ? "[Encrypted Message]" : "[Encrypted Message]";
