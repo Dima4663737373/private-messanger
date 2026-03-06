@@ -176,8 +176,11 @@ export function useSync(
             return isMine ? "[Encrypted Sent Message]" : "[Encrypted Message]";
         }
 
-        // Legacy plaintext fallback (non-encrypted Aleo field format)
-        return fieldToString(payload);
+        // Legacy plaintext fallback — only return payload if it's human-readable text
+        // Avoid fieldToString which produces garbled output from non-field data
+        const isPrintable = /^[\x20-\x7E\u00A0-\uFFFF]+$/.test(payload);
+        if (isPrintable && payload.length < 500) return payload;
+        return "[Encrypted Message]";
       } catch (e) {
           return encrypted ? "[Encrypted Message]" : "[Encrypted Message]";
       }
@@ -1266,7 +1269,7 @@ export function useSync(
   };
 
   // Actually send the prepared message via Socket.io (queues to offline queue on failure)
-  const commitDMMessage = (prepared: NonNullable<Awaited<ReturnType<typeof prepareDMMessage>>>, attachmentCID?: string): boolean => {
+  const commitDMMessage = (prepared: NonNullable<Awaited<ReturnType<typeof prepareDMMessage>>>, attachmentCID?: string, txId?: string): boolean => {
     const queueMsg = () => {
       enqueueMessage({
         id: prepared.tempId,
@@ -1304,7 +1307,8 @@ export function useSync(
         tempId: prepared.tempId,
         replyToId: prepared.replyToId || '',
         replyToText: prepared.replyToText || '',
-        replyToSender: prepared.replyToSender || ''
+        replyToSender: prepared.replyToSender || '',
+        txId: txId || ''
       });
       return true;
     } catch (e) {

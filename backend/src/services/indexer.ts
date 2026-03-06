@@ -209,7 +209,7 @@ export class IndexerService {
             await Profile.create({ address: sender, address_hash: senderHash });
         }
 
-        // Deduplication
+        // Deduplication — check by txId first
         const existing = await Message.findByPk(txId);
         if (existing) {
             if (existing.status !== 'confirmed') {
@@ -221,7 +221,28 @@ export class IndexerService {
             return;
         }
 
-        // Store Message
+        // Deduplication — check if WS already stored this message (by tx_id or same dialog + timestamp)
+        const wsExisting = await Message.findOne({
+            where: {
+                [Op.or]: [
+                    { tx_id: txId },
+                    { dialog_hash: dialogHash, timestamp: finalTimestamp, sender: sender },
+                ],
+            }
+        });
+        if (wsExisting) {
+            // Mark the existing WS message as confirmed and store the txId
+            if (wsExisting.status !== 'confirmed') {
+                wsExisting.status = 'confirmed';
+                wsExisting.block_height = height;
+                wsExisting.tx_id = txId;
+                await wsExisting.save();
+                this.broadcastEvent('tx_confirmed', { id: wsExisting.id, txId, blockHeight: height });
+            }
+            return;
+        }
+
+        // Store Message (new — no WS duplicate found)
         await Message.create({
             id: txId,
             sender: sender,

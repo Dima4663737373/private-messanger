@@ -150,6 +150,7 @@ export class Message extends Model {
   declare read_at: number;
   declare edited_at: number;
   declare edit_count: number;
+  declare tx_id: string;
 }
 
 Message.init({
@@ -236,6 +237,10 @@ Message.init({
   edit_count: {
     type: DataTypes.INTEGER,
     defaultValue: 0,
+  },
+  tx_id: {
+    type: DataTypes.STRING,
+    allowNull: true,
   },
 }, {
   sequelize,

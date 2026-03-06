@@ -648,7 +648,7 @@ io.on('connection', (socket) => {
     if (!rlOk() || !authOk()) return;
     try {
       const { senderHash, recipientHash, dialogHash, encryptedPayload, encryptedPayloadSelf, timestamp,
-              attachmentPart1, attachmentPart2, tempId, replyToId, replyToText, replyToSender } = data || {};
+              attachmentPart1, attachmentPart2, tempId, replyToId, replyToText, replyToSender, txId: aleoTxId } = data || {};
       const sender = socket.data.authenticatedAddress;
 
       if (!sender || !senderHash || !recipientHash || !dialogHash || !encryptedPayload || !timestamp) {
@@ -711,6 +711,7 @@ io.on('connection', (socket) => {
           encrypted_payload: encryptedPayload.slice(0, 50000),
           encrypted_payload_self: (encryptedPayloadSelf || '').slice(0, 50000),
           nonce: '', timestamp, block_height: 0, status: 'confirmed',
+          tx_id: (aleoTxId && typeof aleoTxId === 'string' && aleoTxId.startsWith('at1')) ? aleoTxId.slice(0, 100) : undefined,
           attachment_part1: (attachmentPart1 || '').slice(0, 500),
           attachment_part2: (attachmentPart2 || '').slice(0, 500),
           reply_to_id: (replyToId || '').slice(0, 300),

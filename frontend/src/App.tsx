@@ -1038,6 +1038,8 @@ const InnerApp: React.FC = () => {
       try {
         txId = await sendMessageOnChain(contact.address!, encryptedPayload, timestamp, attachmentCID);
         toast.dismiss('tx-approval');
+        // Pre-register txId for dedup — prevents indexer's message_detected from adding garbled duplicate
+        if (txId) processedMsgIds.current.add(txId);
       } catch (e) {
         toast.dismiss('tx-approval');
         logger.error('On-chain transaction failed:', e?.message);
@@ -1046,7 +1048,7 @@ const InnerApp: React.FC = () => {
       }
 
       // 3. Wallet approved → send off-chain via WebSocket
-      const sent = commitDMMessage(prepared, attachmentCID);
+      const sent = commitDMMessage(prepared, attachmentCID, txId);
       if (!sent) {
         throw new Error('Failed to send message — WebSocket not connected');
       }
