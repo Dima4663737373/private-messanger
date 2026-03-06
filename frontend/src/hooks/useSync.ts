@@ -183,9 +183,8 @@ export function useSync(
             return isMine ? "[Encrypted Sent Message]" : "[Encrypted Message]";
         }
 
-        // Legacy plaintext fallback — ASCII-only, short messages
-        // Garbled indexer output contains non-ASCII unicode, so strict ASCII check filters it
-        if (payload.length < 200 && /^[\x20-\x7E\s]+$/.test(payload)) return payload;
+        // Legacy plaintext fallback — short messages without NaCl format are likely plain text
+        if (payload.length < 200) return payload;
         return "[Encrypted Message]";
       } catch (e) {
           return encrypted ? "[Encrypted Message]" : "[Encrypted Message]";
