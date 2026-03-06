@@ -291,58 +291,66 @@ program ghost_msg_018.aleo {
     // ── Channel/Group Transitions ───────────────────────────
 
     /// Create channel on-chain (proof of creation).
+    /// Uses salted key (name_hash + creator_hash) to prevent name collisions.
     async transition create_channel(
-        channel_hash: field,
+        channel_name_hash: field,
         creator_hash: field
     ) -> Future {
-        return finalize_create_channel(channel_hash, creator_hash);
+        // Salt the channel key with creator_hash to avoid collisions
+        let channel_key: field = BHP256::hash_to_field(DialogPair { a: channel_name_hash, b: creator_hash });
+        return finalize_create_channel(channel_key, creator_hash);
     }
 
-    async function finalize_create_channel(channel_hash: field, creator_hash: field) {
-        let exists: bool = Mapping::contains(channels, channel_hash);
+    async function finalize_create_channel(channel_key: field, creator_hash: field) {
+        let exists: bool = Mapping::contains(channels, channel_key);
         assert(!exists);
-        Mapping::set(channels, channel_hash, creator_hash);
+        Mapping::set(channels, channel_key, creator_hash);
     }
 
     /// Create group on-chain (proof of creation).
+    /// Uses salted key (name_hash + creator_hash) to prevent name collisions.
     async transition create_group(
-        group_hash: field,
+        group_name_hash: field,
         creator_hash: field
     ) -> Future {
-        return finalize_create_group(group_hash, creator_hash);
+        // Salt the group key with creator_hash to avoid collisions
+        let group_key: field = BHP256::hash_to_field(DialogPair { a: group_name_hash, b: creator_hash });
+        return finalize_create_group(group_key, creator_hash);
     }
 
-    async function finalize_create_group(group_hash: field, creator_hash: field) {
-        let exists: bool = Mapping::contains(groups, group_hash);
+    async function finalize_create_group(group_key: field, creator_hash: field) {
+        let exists: bool = Mapping::contains(groups, group_key);
         assert(!exists);
-        Mapping::set(groups, group_hash, creator_hash);
+        Mapping::set(groups, group_key, creator_hash);
     }
 
     /// Delete channel (only creator can delete).
     async transition delete_channel(
-        channel_hash: field,
+        channel_name_hash: field,
         creator_hash: field
     ) -> Future {
-        return finalize_delete_channel(channel_hash, creator_hash);
+        let channel_key: field = BHP256::hash_to_field(DialogPair { a: channel_name_hash, b: creator_hash });
+        return finalize_delete_channel(channel_key, creator_hash);
     }
 
-    async function finalize_delete_channel(channel_hash: field, creator_hash: field) {
-        let stored_creator: field = Mapping::get(channels, channel_hash);
+    async function finalize_delete_channel(channel_key: field, creator_hash: field) {
+        let stored_creator: field = Mapping::get(channels, channel_key);
         assert_eq(stored_creator, creator_hash);
-        Mapping::remove(channels, channel_hash);
+        Mapping::remove(channels, channel_key);
     }
 
     /// Delete group (only creator can delete).
     async transition delete_group(
-        group_hash: field,
+        group_name_hash: field,
         creator_hash: field
     ) -> Future {
-        return finalize_delete_group(group_hash, creator_hash);
+        let group_key: field = BHP256::hash_to_field(DialogPair { a: group_name_hash, b: creator_hash });
+        return finalize_delete_group(group_key, creator_hash);
     }
 
-    async function finalize_delete_group(group_hash: field, creator_hash: field) {
-        let stored_creator: field = Mapping::get(groups, group_hash);
+    async function finalize_delete_group(group_key: field, creator_hash: field) {
+        let stored_creator: field = Mapping::get(groups, group_key);
         assert_eq(stored_creator, creator_hash);
-        Mapping::remove(groups, group_hash);
+        Mapping::remove(groups, group_key);
     }
 }

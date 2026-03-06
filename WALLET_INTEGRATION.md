@@ -1,338 +1,186 @@
 # Wallet Integration Guide — Ghost Messenger
 
-## Supported Wallets
+## Shield Wallet
 
-Ghost Messenger supports multiple Aleo wallets through the [Demox Labs Aleo Wallet Adapter](https://github.com/demox-labs/aleo-wallet-adapter):
+Ghost Messenger uses [Shield Wallet](https://shieldwallet.app) via the `@provablehq/aleo-wallet-adaptor-*` packages.
 
-| Wallet | Status | Website |
-|--------|--------|---------|
-| **Leo Wallet** | ✅ Active | [leo.app](https://leo.app) |
-| **Puzzle Wallet** | 🔄 Ready to add | [puzzle.online](https://puzzle.online) |
-| **Fox Wallet** | 🔄 Ready to add | [foxwallet.com](https://foxwallet.com) |
-| **Soter Wallet** | 🔄 Ready to add | - |
-| **Shield Wallet** | 🔜 Q1 2026 | [shield.app](https://shield.app) |
-
-**Current:** Only Leo Wallet is configured. Multi-wallet support coming soon.
+| Feature | Details |
+|---------|---------|
+| **Wallet** | Shield Wallet |
+| **Adapter** | `@provablehq/aleo-wallet-adaptor-shield` |
+| **Proving** | Delegated (server-side, ~14s) |
+| **Network** | Aleo Testnet Beta |
+| **Permissions** | `DECRYPT_UPON_REQUEST` |
 
 ---
 
-## Current Implementation
-
-### Dependencies
+## Dependencies
 
 ```json
 {
-  "@demox-labs/aleo-wallet-adapter-base": "^0.0.23",
-  "@demox-labs/aleo-wallet-adapter-leo": "^0.0.25",
-  "@demox-labs/aleo-wallet-adapter-react": "^0.0.22"
+  "@provablehq/aleo-types": "^0.3.0-alpha.3",
+  "@provablehq/aleo-wallet-adaptor-core": "^0.3.0-alpha.3",
+  "@provablehq/aleo-wallet-adaptor-react": "^0.3.0-alpha.3",
+  "@provablehq/aleo-wallet-adaptor-react-ui": "^0.3.0-alpha.3",
+  "@provablehq/aleo-wallet-adaptor-shield": "^0.3.0-alpha.3",
+  "@provablehq/aleo-wallet-standard": "^0.3.0-alpha.3"
 }
-```
-
-### App.tsx — Wallet Connection
-
-**Connection trigger:** User clicks "Connect Wallet" on landing page.
-
-```typescript
-// App.tsx
-const connectWallet = async () => {
-  try {
-    const { publicKey } = await (window as any).leoWallet.connect();
-    setPublicKey(publicKey);
-    setIsConnected(true);
-    toast.success('Wallet connected');
-  } catch (e: any) {
-    toast.error('Failed to connect wallet: ' + (e?.message || 'Unknown error'));
-  }
-};
-```
-
-**Disconnect:**
-```typescript
-const disconnectWallet = () => {
-  setPublicKey(null);
-  setIsConnected(false);
-  setMyProfile(null);
-  toast.success('Wallet disconnected');
-};
-```
-
-### useContract.ts — Transaction Execution
-
-All on-chain operations use `window.leoWallet.requestTransaction()`:
-
-```typescript
-const executeTransaction = async (functionName: string, inputs: string[]): Promise<string> => {
-  if (!window.leoWallet) throw new Error('Leo wallet not available');
-
-  const txId = await window.leoWallet.requestTransaction({
-    address: publicKey,
-    network: NETWORK,
-    program: PROGRAM_ID,
-    functionName,
-    inputs,
-    fee: 50000,        // 0.05 ALEO
-    feePrivate: false
-  });
-
-  return txId;
-};
-```
-
-**Example — Send Message:**
-```typescript
-const sendMessageOnChain = async (
-  recipientAddr: string,
-  payload: [string, string, string, string],
-  timestamp: number,
-  attachmentCID?: string
-): Promise<string> => {
-  const senderHash = await getAddressHash(publicKey!);
-  const recipientHash = await getAddressHash(recipientAddr);
-
-  const inputs = [
-    senderHash,
-    recipientHash,
-    recipientAddr,
-    `[${payload.join(',')}]`,
-    `${timestamp}u64`,
-    attachmentCID ? `${attachmentCID.slice(0, 31)}field` : '0field',
-    attachmentCID ? `${attachmentCID.slice(31)}field` : '0field'
-  ];
-
-  return await executeTransaction('send_message', inputs);
-};
 ```
 
 ---
 
-## Adding Multi-Wallet Support
+## Provider Setup (App.tsx)
 
-### Step 1: Install Additional Adapters
-
-```bash
-cd frontend
-npm install --legacy-peer-deps \
-  @demox-labs/aleo-wallet-adapter-puzzlewallet \
-  @demox-labs/aleo-wallet-adapter-foxwallet \
-  @demox-labs/aleo-wallet-adapter-soter
-```
-
-### Step 2: Wrap App with WalletProvider
-
-**Update `frontend/src/main.tsx`:**
-
-```typescript
-import React from 'react';
-import ReactDOM from 'react-dom/client';
-import App from './App';
-import './index.css';
-import { WalletProvider } from '@demox-labs/aleo-wallet-adapter-react';
-import { WalletModalProvider } from '@demox-labs/aleo-wallet-adapter-reactui';
-import { LeoWalletAdapter } from '@demox-labs/aleo-wallet-adapter-leo';
-import { PuzzleWalletAdapter } from '@demox-labs/aleo-wallet-adapter-puzzlewallet';
-import { FoxWalletAdapter } from '@demox-labs/aleo-wallet-adapter-foxwallet';
-import { SoterWalletAdapter } from '@demox-labs/aleo-wallet-adapter-soter';
-
-const wallets = [
-  new LeoWalletAdapter({ appName: 'Ghost Messenger' }),
-  new PuzzleWalletAdapter({ appName: 'Ghost Messenger' }),
-  new FoxWalletAdapter({ appName: 'Ghost Messenger' }),
-  new SoterWalletAdapter({ appName: 'Ghost Messenger' }),
-];
-
-const rootElement = document.getElementById('root');
-if (!rootElement) throw new Error("Could not find root element");
-
-const root = ReactDOM.createRoot(rootElement);
-root.render(
-  <React.StrictMode>
-    <WalletProvider wallets={wallets} autoConnect>
-      <WalletModalProvider>
-        <App />
-      </WalletModalProvider>
-    </WalletProvider>
-  </React.StrictMode>
-);
-```
-
-### Step 3: Use `useWallet` Hook
-
-**Update `frontend/src/App.tsx`:**
-
-```typescript
-import { useWallet } from '@demox-labs/aleo-wallet-adapter-react';
+```tsx
+import { AleoWalletProvider, useWallet } from "@provablehq/aleo-wallet-adaptor-react";
+import { ShieldWalletAdapter } from "@provablehq/aleo-wallet-adaptor-shield";
+import { DecryptPermission } from "@provablehq/aleo-wallet-adaptor-core";
+import { Network } from "@provablehq/aleo-types";
+import { PROGRAM_ID } from './deployed_program';
 
 function App() {
-  const {
-    wallet,
-    publicKey,
-    connect,
-    disconnect,
-    requestTransaction
-  } = useWallet();
-
-  const connectWallet = async () => {
-    try {
-      await connect();
-      toast.success(`Connected: ${wallet?.adapter.name}`);
-    } catch (e: any) {
-      toast.error('Failed to connect: ' + e?.message);
-    }
-  };
-
-  const disconnectWallet = () => {
-    disconnect();
-    toast.success('Wallet disconnected');
-  };
-
-  // Rest of component...
-}
-```
-
-### Step 4: Replace Direct `window.leoWallet` Calls
-
-**Update `frontend/src/hooks/useContract.ts`:**
-
-```typescript
-import { useWallet } from '@demox-labs/aleo-wallet-adapter-react';
-
-export function useContract(publicKey: string | null) {
-  const { requestTransaction } = useWallet();
-
-  const executeTransaction = async (
-    functionName: string,
-    inputs: string[]
-  ): Promise<string> => {
-    if (!requestTransaction) throw new Error('Wallet not connected');
-
-    const txId = await requestTransaction({
-      address: publicKey!,
-      network: NETWORK,
-      program: PROGRAM_ID,
-      functionName,
-      inputs,
-      fee: 50000,
-      feePrivate: false
-    });
-
-    return txId;
-  };
-
-  // Rest of hook...
-}
-```
-
-### Step 5: Add WalletMultiButton Component
-
-**Update `frontend/src/components/LandingPage.tsx`:**
-
-```typescript
-import { WalletMultiButton } from '@demox-labs/aleo-wallet-adapter-reactui';
-
-export default function LandingPage({ onConnect }: LandingPageProps) {
   return (
-    <div className="min-h-screen flex items-center justify-center">
-      <div className="text-center">
-        <h1 className="text-5xl font-bold mb-8">👻 Ghost Messenger</h1>
-        <p className="text-xl mb-8">Private messaging on Aleo</p>
-
-        {/* Multi-wallet button */}
-        <WalletMultiButton />
-      </div>
-    </div>
+    <AleoWalletProvider
+      wallets={[new ShieldWalletAdapter({ appName: "Ghost Messenger" })]}
+      decryptPermission={DecryptPermission.UponRequest}
+      network={Network.TESTNET}
+      programs={[PROGRAM_ID, 'credits.aleo']}
+      autoConnect={true}
+      onError={(error) => console.error('[Wallet]', error.message)}
+    >
+      <InnerApp />
+    </AleoWalletProvider>
   );
 }
 ```
 
 ---
 
-## Shield Wallet Integration (Q1 2026)
+## Wallet Hook (useWallet)
 
-Shield Wallet is launching in Q1 2026 with focus on **private transactions** and **private stablecoins** on Aleo.
+```tsx
+import { useWallet } from "@provablehq/aleo-wallet-adaptor-react";
 
-**When available:**
-1. Install adapter (if provided by Shield team or Demox Labs)
-2. Add to `wallets` array in `main.tsx`
-3. No code changes needed — wallet adapter handles everything
+const {
+  address,           // Connected wallet address (string | null)
+  connected,         // Boolean connection status
+  connecting,        // Boolean connecting status
+  disconnect,        // () => Promise<void>
+  wallets,           // Available wallet adapters
+  selectWallet,      // (name: WalletName) => void
+  executeTransaction,// (options: TransactionOptions) => Promise<{transactionId: string}>
+  transactionStatus, // (txId: string) => Promise<TransactionStatusResponse>
+  requestRecords,    // (program: string) => Promise<unknown[]>
+  signMessage,       // (message: Uint8Array) => Promise<Uint8Array>
+} = useWallet();
+```
 
-**Resources:**
-- [Shield Wallet Website](https://shield.app)
-- [Aleo Wallet Integration Docs](https://docs.leo.app/aleo-wallet-adapter)
-- [Demox Labs GitHub](https://github.com/demox-labs/aleo-wallet-adapter)
+---
+
+## Transaction Execution (useContract.ts)
+
+```tsx
+const result = await executeTransaction({
+  program: PROGRAM_ID,          // e.g. 'ghost_msg_018.aleo'
+  function: 'send_message',     // Transition name
+  inputs: [                     // Array of Leo-typed arguments
+    senderHash,
+    recipientHash,
+    recipientAddress,
+    payloadArray,
+    `${timestamp}u64`,
+    attachmentField1,
+    attachmentField2
+  ],
+  fee: 350_000,                 // Fee in microcredits
+  privateFee: false              // Use public fee
+});
+
+const tempTxId = result?.transactionId; // Returns shield_* temporary ID
+```
+
+### Transaction ID Resolution
+
+Shield Wallet returns temporary `shield_*` IDs. The `pollForOnChainTxId` function polls `transactionStatus()` every 2 seconds to resolve the real on-chain `at1...` transaction ID:
+
+```tsx
+const pollForOnChainTxId = async (tempTxId: string): Promise<string> => {
+  for (let i = 0; i < 60; i++) {
+    const resp = await transactionStatus(tempTxId);
+    if (resp.status === 'accepted' || resp.status === 'finalized') {
+      return resp.transactionId || tempTxId;
+    }
+    if (resp.status === 'rejected' || resp.status === 'failed') {
+      throw new Error(`Transaction ${resp.status}`);
+    }
+    await new Promise(r => setTimeout(r, 2000));
+  }
+  return tempTxId;
+};
+```
+
+---
+
+## Wallet Connection Flow
+
+1. User clicks "Connect Wallet"
+2. `selectWallet(wallets[0].adapter.name)` selects Shield Wallet
+3. `adapter.connect(Network.TESTNET, DecryptPermission.UponRequest, programs)` opens Shield popup
+4. User confirms connection in Shield Wallet
+5. `address` becomes available, `connected = true`
+6. Encryption keys are deterministically derived from the address
+7. Profile is registered/updated on the backend
+
+---
+
+## Key Derivation
+
+Encryption keys are derived deterministically from the wallet address (no `signMessage` required):
+
+```tsx
+import { getOrDeriveKeys } from '../utils/key-derivation';
+
+// Derives NaCl Curve25519 keypair from wallet address
+const keys = await getOrDeriveKeys(address, undefined);
+// keys.publicKey — encryption public key (shared with recipients)
+// keys.secretKey — encryption secret key (stays on device)
+```
 
 ---
 
 ## Testing
 
-### Local Testing
-1. Install Leo Wallet extension
-2. Create/import test wallet
+1. Install [Shield Wallet](https://shieldwallet.app) browser extension
+2. Create or import a test wallet
 3. Get testnet ALEO from [faucet](https://faucet.aleo.org)
-4. Run `npm run dev` in frontend
-5. Click "Connect Wallet" → Sign transactions
-
-### Multi-Wallet Testing
-- Use different browsers for different wallets
-- Test wallet switching (disconnect → connect different wallet)
-- Verify transaction signing works across all wallets
+4. Run frontend locally: `cd frontend && npm run dev`
+5. Click "Connect Wallet" → Approve in Shield popup
+6. Send a message → Approve transaction in Shield popup
 
 ---
 
 ## Troubleshooting
 
-### "Wallet not found" error
-- Ensure browser extension is installed and enabled
-- Refresh page after installing extension
-- Check console for wallet detection logs
+### "Wallet not found"
+- Ensure Shield Wallet extension is installed and enabled
+- Refresh page after installing
+- Check browser console for wallet detection logs
 
-### Transaction fails with "Insufficient funds"
-- Get testnet ALEO from [faucet](https://faucet.aleo.org)
-- Minimum ~0.5 ALEO needed for testing
-- Each message costs ~0.05 ALEO
+### Transaction timeout
+- Shield Wallet uses delegated proving (~14s average)
+- If >60s, check Shield Wallet popup for errors
+- Verify sufficient ALEO balance (minimum ~0.5 ALEO)
 
-### "Network mismatch" error
-- Ensure wallet is on **Testnet Beta** network
-- Check `NETWORK` constant in `useContract.ts` matches wallet network
-
----
-
-## API Reference
-
-### Wallet Adapter Hooks
-
-```typescript
-import { useWallet } from '@demox-labs/aleo-wallet-adapter-react';
-
-const {
-  wallet,            // Current wallet adapter
-  publicKey,         // Connected address (string | null)
-  connected,         // Boolean connection status
-  connect,           // () => Promise<void>
-  disconnect,        // () => void
-  requestTransaction // Transaction request function
-} = useWallet();
-```
-
-### Transaction Request
-
-```typescript
-const txId = await requestTransaction({
-  address: 'aleo1...',           // Sender address
-  network: 'testnet',            // 'testnet' | 'mainnet'
-  program: 'program.aleo',       // Program ID
-  functionName: 'function_name', // Transition name
-  inputs: ['arg1', 'arg2'],      // Array of arguments
-  fee: 50000,                    // Fee in microcredits
-  feePrivate: false              // Use private fee record
-});
-```
+### "502 Bad Gateway" on backend
+- Render free tier spins down after 15 min of inactivity
+- First request after spin-down takes ~30s (cold start)
+- Subsequent requests are instant
 
 ---
 
-## Sources
+## Resources
 
-- [Aleo Wallet Adapter Docs](https://docs.leo.app/aleo-wallet-adapter)
-- [Demox Labs GitHub](https://github.com/demox-labs/aleo-wallet-adapter)
-- [Aleo Developer Docs](https://developer.aleo.org/guides/wallets/)
-- [Shield Wallet](https://shield.app)
-- [Leo Wallet](https://leo.app)
+- [Shield Wallet](https://shieldwallet.app)
+- [Provable Wallet Adapter](https://github.com/provablehq/aleo-wallet-adaptor)
+- [Aleo Developer Docs](https://developer.aleo.org)
+- [Provable API](https://docs.explorer.provable.com)

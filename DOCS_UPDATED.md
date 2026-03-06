@@ -26,8 +26,8 @@
 
 ### 2. [WALLET_INTEGRATION.md](WALLET_INTEGRATION.md) ✨ NEW
 **Contents:**
-- 📋 Supported wallets table (Leo, Puzzle, Fox, Soter, Shield)
-- 🔧 Current implementation (Leo Wallet only)
+- 📋 Supported wallets table (Shield Wallet)
+- 🔧 Current implementation (Shield Wallet)
 - 📚 Multi-wallet integration guide (step-by-step)
 - 🛠️ Code examples for WalletProvider setup
 - 🔜 Shield Wallet integration prep (Q1 2026)
@@ -87,44 +87,23 @@ ghost/
 
 ## 🔧 Wallet Integration — Next Steps
 
-**To add multi-wallet support:**
+**Current implementation (Shield Wallet):**
 
-1. **Install packages:**
-```bash
-cd frontend
-npm install --legacy-peer-deps \
-  @demox-labs/aleo-wallet-adapter-puzzlewallet \
-  @demox-labs/aleo-wallet-adapter-foxwallet \
-  @demox-labs/aleo-wallet-adapter-soter
-```
-
-2. **Update `main.tsx`:**
 ```typescript
-import { WalletProvider } from '@demox-labs/aleo-wallet-adapter-react';
-import { LeoWalletAdapter } from '@demox-labs/aleo-wallet-adapter-leo';
-import { PuzzleWalletAdapter } from '@demox-labs/aleo-wallet-adapter-puzzlewallet';
-// ... etc
+import { AleoWalletProvider, useWallet } from "@provablehq/aleo-wallet-adaptor-react";
+import { ShieldWalletAdapter } from "@provablehq/aleo-wallet-adaptor-shield";
 
-const wallets = [
-  new LeoWalletAdapter({ appName: 'Ghost Messenger' }),
-  new PuzzleWalletAdapter({ appName: 'Ghost Messenger' }),
-  // ... etc
-];
+// Provider
+<AleoWalletProvider
+  wallets={[new ShieldWalletAdapter({ appName: "Ghost Messenger" })]}
+  network={Network.TESTNET}
+  autoConnect={true}
+>
+  <App />
+</AleoWalletProvider>
 
-root.render(
-  <WalletProvider wallets={wallets} autoConnect>
-    <WalletModalProvider>
-      <App />
-    </WalletModalProvider>
-  </WalletProvider>
-);
-```
-
-3. **Update `App.tsx`:**
-```typescript
-import { useWallet } from '@demox-labs/aleo-wallet-adapter-react';
-
-const { wallet, publicKey, connect, disconnect } = useWallet();
+// Hook
+const { address, connected, executeTransaction, disconnect } = useWallet();
 ```
 
 **Full guide:** [WALLET_INTEGRATION.md](WALLET_INTEGRATION.md)
@@ -141,10 +120,8 @@ const { wallet, publicKey, connect, disconnect } = useWallet();
 - [INCOMPLETE_FEATURES.md](INCOMPLETE_FEATURES.md) — Limitations & roadmap
 
 ### External
-- [Leo Wallet](https://leo.app)
-- [Shield Wallet](https://shield.app)
-- [Aleo Wallet Adapter Docs](https://docs.leo.app/aleo-wallet-adapter)
-- [Demox Labs GitHub](https://github.com/demox-labs/aleo-wallet-adapter)
+- [Shield Wallet](https://shieldwallet.app)
+- [Provable Wallet Adapter](https://github.com/provablehq/aleo-wallet-adaptor)
 - [Aleo Developer Docs](https://developer.aleo.org)
 
 ---
@@ -159,10 +136,8 @@ const { wallet, publicKey, connect, disconnect } = useWallet();
 5. All docs reference Railway + Netlify (not Vercel)
 
 **Sources:**
-- [Wallets in Aleo](https://medium.com/@ur4ix/wallets-in-aleo-94ad15bd33a4)
-- [Demox Labs Wallet Adapter](https://github.com/demox-labs/aleo-wallet-adapter)
-- [Leo Wallet Adapter Docs](https://docs.leo.app/aleo-wallet-adapter)
-- [Shield Wallet](https://shield.app)
+- [Shield Wallet](https://shieldwallet.app)
+- [Provable Wallet Adapter](https://github.com/provablehq/aleo-wallet-adaptor)
 - [Aleo Developer Guide](https://developer.aleo.org/guides/wallets/)
 
 ---

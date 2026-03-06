@@ -4,7 +4,7 @@ services:
     runtime: node
     region: oregon
     rootDir: backend
-    buildCommand: npm install
+    buildCommand: npm install && npm run build
     startCommand: npm start
     envVars:
       - key: NODE_ENV
@@ -15,6 +15,14 @@ services:
         fromDatabase:
           name: ghost-db
           property: connectionString
+      - key: ALEO_API_URL
+        value: https://api.explorer.provable.com/v1
+      - key: ALEO_PROGRAM_ID
+        value: ghost_msg_018.aleo
+      - key: PINATA_JWT
+        sync: false
+      - key: HMAC_MASTER_SECRET
+        generateValue: true
 
 databases:
   - name: ghost-db

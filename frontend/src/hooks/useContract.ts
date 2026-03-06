@@ -30,11 +30,11 @@ export function useContract() {
       try {
         const resp = await transactionStatus(tempTxId);
         const status = resp.status?.toLowerCase() || '';
-        console.log(`[TX Poll #${i + 1}] ${tempTxId} → ${status}`, resp);
+        logger.debug(`[TX Poll #${i + 1}] ${tempTxId} → ${status}`, resp);
 
         if (status === 'accepted' || status === 'finalized') {
           const onChainId = resp.transactionId || tempTxId;
-          console.log(`%c🔗 On-chain TX:%c ${onChainId}`, 'color:#10B981;font-weight:bold', 'color:#888');
+          logger.debug(`[TX] On-chain TX: ${onChainId}`);
           return onChainId;
         }
         if (status === 'rejected' || status === 'failed') {
@@ -88,19 +88,19 @@ export function useContract() {
         throw new Error("Transaction was rejected or failed");
       }
 
-      console.log(`%c✅ ${functionName}%c — temp: ${tempTxId}`, 'color:#10B981;font-weight:bold', 'color:#888');
+      logger.debug(`[TX] ${functionName} submitted — temp: ${tempTxId}`);
 
       // Poll for real on-chain txId in background (don't block the return)
       pollForOnChainTxId(tempTxId).then(onChainId => {
         if (onChainId !== tempTxId) {
-          console.log(`%c🔗 ${functionName} confirmed:%c ${onChainId}`, 'color:#10B981;font-weight:bold', 'color:#888');
+          logger.debug(`[TX] ${functionName} confirmed: ${onChainId}`);
         }
-      }).catch(() => { /* polling failure is non-critical */ });
+      }).catch(e => logger.warn(`[TX] ${functionName} polling failed:`, e));
 
       return tempTxId;
     } catch (err: any) {
       const errorMsg = err?.message || 'Transaction failed';
-      console.log(`%c❌ ${functionName}%c — ${errorMsg}`, 'color:#EF4444;font-weight:bold', 'color:#888');
+      logger.error(`[TX] ${functionName} failed — ${errorMsg}`);
       setError(errorMsg);
       throw err;
     } finally {
@@ -137,7 +137,7 @@ export function useContract() {
       if (!requestRecords) {
           return null;
       }
-      const programIds = [PROGRAM_ID, 'ghost_msg_015.aleo'];
+      const programIds = [PROGRAM_ID];
       for (const pid of programIds) {
         try {
           const records = await requestRecords(pid);

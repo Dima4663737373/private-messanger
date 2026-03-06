@@ -60,6 +60,8 @@ export interface Message {
   readAt?: number;
   // Aleo transaction ID (blockchain proof)
   txId?: string;
+  // Internal flag: suppress toasts/sounds for offline catch-up messages
+  _silent?: boolean;
 }
 
 export type DisappearTimer = 'off' | '30s' | '5m' | '1h' | '24h';

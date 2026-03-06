@@ -82,42 +82,88 @@ export const validateKeyPair = (keyPair: KeyPair): { valid: boolean; error?: str
   }
 };
 
-// Encrypt a message for a recipient
+/**
+ * Validate a received public key (from server/peer) before using for encryption.
+ * Checks base64 format, correct length, non-zero, and non-uniform.
+ */
+export const isValidPublicKey = (publicKeyB64: string): boolean => {
+  try {
+    if (!publicKeyB64 || typeof publicKeyB64 !== 'string') return false;
+    const pk = decodeBase64(publicKeyB64);
+    if (pk.length !== nacl.box.publicKeyLength) return false;
+    if (pk.every(b => b === 0)) return false;
+    if (pk.every(b => b === pk[0])) return false;
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+/**
+ * Pad a message to the next power-of-2 bucket (min 256 bytes).
+ * Prevents ciphertext length from leaking plaintext length.
+ * Format: [2-byte big-endian real length][message bytes][random padding]
+ */
+const padMessage = (msg: Uint8Array): Uint8Array => {
+  const MIN_BUCKET = 256;
+  const totalNeeded = 2 + msg.length; // 2-byte length prefix + message
+  let bucket = MIN_BUCKET;
+  while (bucket < totalNeeded) bucket *= 2;
+  const padded = new Uint8Array(bucket);
+  padded[0] = (msg.length >> 8) & 0xff;
+  padded[1] = msg.length & 0xff;
+  padded.set(msg, 2);
+  const randomPad = nacl.randomBytes(bucket - totalNeeded);
+  padded.set(randomPad, totalNeeded);
+  return padded;
+};
+
+/**
+ * Remove padding from a decrypted message.
+ * Reads the 2-byte length prefix and extracts the real message.
+ * Falls back to returning raw bytes if not padded (backward compatible).
+ */
+export const unpadMessage = (padded: Uint8Array): Uint8Array => {
+  if (padded.length < 2) return padded;
+  const realLength = (padded[0] << 8) | padded[1];
+  if (realLength <= 0 || realLength + 2 > padded.length) return padded;
+  return padded.slice(2, 2 + realLength);
+};
+
+// Encrypt a message for a recipient (with padding to prevent length analysis)
 export const encryptMessage = (
   message: string | Uint8Array,
   recipientPublicKeyB64: string,
   senderSecretKeyB64: string
 ): string => {
   const nonce = nacl.randomBytes(nacl.box.nonceLength);
-  
+
   const recipientPublicKey = decodeBase64(recipientPublicKeyB64);
   const senderSecretKey = decodeBase64(senderSecretKeyB64);
-  
+
   let messageUint8: Uint8Array;
-  
+
   if (typeof message === 'string') {
     messageUint8 = textEncoder.encode(message);
   } else if (message instanceof Uint8Array) {
     messageUint8 = message;
   } else {
-    // Attempt to convert if it's an array-like object but not Uint8Array
     try {
         messageUint8 = new Uint8Array(message as any);
     } catch (e) {
         throw new TypeError('unexpected type, use Uint8Array or string');
     }
   }
-  
-  // Double check keys are Uint8Array (handling potential polyfill issues)
-  // We explicitly create new Uint8Array instances to ensure they match the current realm's Uint8Array
-  // This fixes "TypeError: unexpected type, use Uint8Array" which can occur if types mismatch
+
+  // Pad message to fixed-size bucket to prevent length analysis
+  const paddedMsg = padMessage(messageUint8);
+
   const pk = new Uint8Array(recipientPublicKey instanceof Uint8Array ? recipientPublicKey : new Uint8Array(recipientPublicKey));
   const sk = new Uint8Array(senderSecretKey instanceof Uint8Array ? senderSecretKey : new Uint8Array(senderSecretKey));
-  const msgBytes = new Uint8Array(messageUint8);
   const nonceBytes = new Uint8Array(nonce);
 
   const encrypted = nacl.box(
-    msgBytes,
+    paddedMsg,
     nonceBytes,
     pk,
     sk
@@ -150,7 +196,9 @@ export const decryptMessage = (
     );
 
     if (!decrypted) return null;
-    return textDecoder.decode(decrypted);
+    // Try unpadding (new padded messages); falls back for old unpadded ones
+    const unpadded = unpadMessage(decrypted);
+    return textDecoder.decode(unpadded);
   } catch (e) {
     logger.error("Decryption failed:", e);
     return null;
@@ -183,7 +231,8 @@ export const decryptMessageAsSender = (
     );
 
     if (!decrypted) return null;
-    return textDecoder.decode(decrypted);
+    const unpadded = unpadMessage(decrypted);
+    return textDecoder.decode(unpadded);
   } catch (e) {
     logger.error("Sender Decryption failed:", e);
     return null;

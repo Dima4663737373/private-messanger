@@ -1,4 +1,5 @@
 import { useState, useRef, useCallback } from 'react';
+import { logger } from '../utils/logger';
 
 export interface VoiceRecording {
   blob: Blob;
@@ -46,7 +47,7 @@ export function useVoiceRecorder() {
 
       return true;
     } catch (e) {
-      console.error('Microphone access denied:', e);
+      logger.error('Microphone access denied:', e);
       return false;
     }
   }, []);

@@ -5,6 +5,7 @@ import { Contact } from '../types';
 import { toast } from 'react-hot-toast';
 import { safeBackendFetch } from '../utils/api-client';
 import { buildAvatarUrl } from '../constants';
+import { logger } from '../utils/logger';
 
 interface ProfileViewProps {
   contact: Contact | any;
@@ -36,7 +37,7 @@ const ProfileView: React.FC<ProfileViewProps> = ({
         if (data.profile.bio && !contact.bio) setFetchedBio(data.profile.bio);
         if (data.profile.avatar_cid) setFetchedAvatarCid(data.profile.avatar_cid);
       }
-    }).catch(() => {});
+    }).catch((e: unknown) => { logger.debug('[ProfileView] Profile fetch failed:', e); });
   }, [contact.address, contact.id, contact.bio]);
 
   const handleCopyAddress = async () => {

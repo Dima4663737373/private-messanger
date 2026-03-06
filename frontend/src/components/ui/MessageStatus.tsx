@@ -20,17 +20,17 @@ export const MessageStatus: React.FC<MessageStatusProps> = ({ status, readAt, cl
 
   switch (status) {
     case 'pending':
-      return <Clock className={cn("w-3 h-3 text-white/40", className)} title="Sending..." />;
+      return <span title="Sending..."><Clock className={cn("w-3 h-3 text-white/40", className)} /></span>;
     case 'sent':
-      return <Check className={cn("w-3 h-3 text-white/40", className)} title="Sent" />;
+      return <span title="Sent"><Check className={cn("w-3 h-3 text-white/40", className)} /></span>;
     case 'included':
-      return <CheckCheck className={cn("w-3 h-3 text-[#FF8C00]", className)} title="On-chain confirmed" />;
+      return <span title="On-chain confirmed"><CheckCheck className={cn("w-3 h-3 text-[#FF8C00]", className)} /></span>;
     case 'confirmed':
-      return <CheckCheck className={cn("w-3 h-3 text-[#FF8C00]", className)} title="Blockchain confirmed" />;
+      return <span title="Blockchain confirmed"><CheckCheck className={cn("w-3 h-3 text-[#FF8C00]", className)} /></span>;
     case 'read':
-      return <CheckCheck className={cn("w-3 h-3 text-blue-400", className)} title={readAt ? formatReadAt(readAt) : 'Read'} />;
+      return <span title={readAt ? formatReadAt(readAt) : 'Read'}><CheckCheck className={cn("w-3 h-3 text-blue-400", className)} /></span>;
     case 'failed':
-      return <XCircle className={cn("w-3 h-3 text-red-500", className)} title="Failed" />;
+      return <span title="Failed"><XCircle className={cn("w-3 h-3 text-red-500", className)} /></span>;
     default:
       return null;
   }

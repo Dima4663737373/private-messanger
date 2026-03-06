@@ -152,6 +152,7 @@ const Sidebar: React.FC<SidebarProps> = ({
         : 'text-[#666] hover:bg-[#1A1A1A] hover:text-white'
       }`}
       title={disabled ? `${label} (Soon)` : label}
+      aria-current={currentView === view ? 'page' : undefined}
     >
       <span className="shrink-0 flex items-center justify-center">{icon}</span>
       <span className={`text-sm font-medium truncate transition-[opacity,max-width] duration-300 ${navHovered ? 'opacity-100 max-w-[120px]' : 'opacity-0 max-w-0'} overflow-hidden`}>{label}</span>

@@ -11,7 +11,7 @@ import { EmptyState } from './ui/EmptyState';
 import { toast } from 'react-hot-toast';
 import DOMPurify from 'dompurify';
 import EmojiPicker, { Theme } from 'emoji-picker-react';
-import { IPFS_GATEWAY_URL, ADDRESS_DISPLAY, MESSAGE_PREVIEW, GENERIC_AVATAR, MAX_MESSAGE_LENGTH } from '../constants';
+import { IPFS_GATEWAY_URL, ADDRESS_DISPLAY, MESSAGE_PREVIEW, GENERIC_AVATAR, MAX_MESSAGE_LENGTH, MAX_FILE_SIZE } from '../constants';
 import { applyFormatting } from '../utils/formatText';
 import { safeBackendFetch } from '../utils/api-client';
 import { TypingIndicator } from './ui/TypingIndicator';
@@ -32,7 +32,8 @@ function timeAgo(ts: number): string {
 
 const URL_REGEX = /https?:\/\/[^\s<>"')\]]+/g;
 
-// Inline link preview card component
+// Inline link preview card component (max 100 entries to prevent memory leak)
+const PREVIEW_CACHE_MAX = 100;
 const previewCache = new Map<string, { title: string | null; description: string | null; image: string | null; siteName: string | null }>();
 
 const LinkPreviewCard: React.FC<{
@@ -48,6 +49,10 @@ const LinkPreviewCard: React.FC<{
     if (cached) { setPreview(cached); setLoading(false); return; }
     fetchPreview(url).then(data => {
       if (cancelled) return;
+      if (previewCache.size >= PREVIEW_CACHE_MAX) {
+        const firstKey = previewCache.keys().next().value;
+        if (firstKey !== undefined) previewCache.delete(firstKey);
+      }
       previewCache.set(url, data);
       setPreview(data);
       setLoading(false);
@@ -82,7 +87,7 @@ const LinkPreviewCard: React.FC<{
             src={preview.image}
             alt={preview.title || ''}
             className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
-            onError={e => (e.currentTarget.parentElement!.style.display = 'none')}
+            onError={e => { if (e.currentTarget.parentElement) e.currentTarget.parentElement.style.display = 'none'; }}
           />
         </div>
       )}
@@ -403,7 +408,7 @@ const ChatArea: React.FC<ChatAreaProps> = ({
         // Sanitize URL to prevent javascript: protocol
         const safeUrl = urls[i].match(/^https?:\/\//) ? urls[i] : '#';
         elements.push(
-          <a key={`u${i}`} href={safeUrl} target="_blank" rel="noreferrer" className="text-[#3B82F6] underline break-all hover:text-[#2563EB]">
+          <a key={`u${i}`} href={safeUrl} target="_blank" rel="noreferrer" aria-label={`Open link: ${urls[i]}`} className="text-[#3B82F6] underline break-all hover:text-[#2563EB]">
             {urls[i]}
           </a>
         );
@@ -488,8 +493,6 @@ const ChatArea: React.FC<ChatAreaProps> = ({
     setSelectedFile(null);
     setReplyingTo(null);
   };
-
-  const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
 
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0]) {

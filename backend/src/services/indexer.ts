@@ -2,10 +2,11 @@ import axios from 'axios';
 import { SyncStatus, Profile, Message, sequelize } from '../database';
 import { Server as SocketIOServer } from 'socket.io';
 import { Op } from 'sequelize';
+import { logger } from '../utils/logger';
 
 // CONSTANTS
-const PROGRAM_ID = "priv_messenger_leotest_014.aleo";
-const ALEO_API_URL = "http://localhost:3030/testnet3"; // Default local node
+const PROGRAM_ID = process.env.ALEO_PROGRAM_ID || "ghost_msg_018.aleo";
+const ALEO_API_URL = process.env.ALEO_API_URL || "https://api.explorer.provable.com/v1"; // Production default
 
 interface AleoTransition {
   id: string;
@@ -56,14 +57,14 @@ export class IndexerService {
   private readonly MAX_INTERVAL = 60000;
 
   async start() {
-    console.log("Starting Blockchain Indexer Service...");
+    logger.info("Starting Blockchain Indexer Service...");
 
     // Load SDK dynamically (ESM in CJS context)
     try {
         this.sdk = await (new Function('return import("@provablehq/sdk")'))();
-        console.log("Provable SDK loaded in Indexer.");
+        logger.info("Provable SDK loaded in Indexer.");
     } catch (e) {
-        console.error("Failed to load Provable SDK:", e);
+        logger.error("Failed to load Provable SDK:", e);
     }
 
     await SyncStatus.findOrCreate({ where: { id: 1 }, defaults: { last_block_height: 0 } });
@@ -100,7 +101,7 @@ export class IndexerService {
             hasher.free();
           }
       } catch (e) {
-          console.error("Indexer hash error:", e);
+          logger.error("Indexer hash error:", e);
           return null;
       }
   }
@@ -164,7 +165,7 @@ export class IndexerService {
         }
       }
     } catch (e) {
-      console.error(`Error processing block ${height}:`, e);
+      logger.error(`Error processing block ${height}:`, e);
     }
   }
 
@@ -319,7 +320,7 @@ export class IndexerService {
         const decoder = new TextDecoder();
         return decoder.decode(new Uint8Array(allBytes));
       } catch (e) {
-        console.error("Error decoding fields:", e);
+        logger.error("Error decoding fields:", e);
         return "";
       }
   }

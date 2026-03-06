@@ -47,21 +47,19 @@ export const hashAddress = (address: string): string => {
     // Check for both from_string (snake) and fromString (camel)
     let addr: Address | undefined;
     
-    // @ts-ignore - Check for snake_case method which might exist in WASM bindings
-    if (Address && typeof Address.from_string === 'function') {
+    // WASM bindings may expose either snake_case or camelCase method
+    const AddressAny = Address as unknown as Record<string, unknown>;
+    if (typeof AddressAny.from_string === 'function') {
          try {
-             // @ts-ignore
-             addr = Address.from_string(address);
+             addr = (AddressAny.from_string as (s: string) => Address)(address);
          } catch (e) {
              logger.warn("Address.from_string failed:", e);
          }
     }
-    
-    // @ts-ignore - Check for camelCase method as fallback
-    if (!addr && Address && typeof Address.fromString === 'function') {
+
+    if (!addr && typeof AddressAny.fromString === 'function') {
         try {
-            // @ts-ignore
-            addr = Address.fromString(address);
+            addr = (AddressAny.fromString as (s: string) => Address)(address);
         } catch (e) {
              logger.warn("Address.fromString failed:", e);
         }

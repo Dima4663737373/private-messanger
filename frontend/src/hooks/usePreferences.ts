@@ -14,13 +14,14 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { fetchPreferences, updatePreferences, UserSettings, DEFAULT_SETTINGS, SavedContact } from '../utils/preferences-api';
 import { logger } from '../utils/logger';
+import type { DisappearTimer } from '../types';
 
 export interface Preferences {
   pinnedChats: string[];
   mutedChats: string[];
   deletedChats: string[];
   savedContacts: SavedContact[];
-  disappearTimers: Record<string, string>;
+  disappearTimers: Record<string, DisappearTimer>;
   blockedUsers: string[];
   settings: UserSettings;
 }
@@ -59,7 +60,7 @@ export function usePreferences(publicKey: string | null) {
         mutedChats: prefs.muted_chats || [],
         deletedChats: prefs.deleted_chats || [],
         savedContacts: prefs.saved_contacts || [],
-        disappearTimers: prefs.disappear_timers || {},
+        disappearTimers: (prefs.disappear_timers || {}) as Record<string, DisappearTimer>,
         blockedUsers: prefs.blocked_users || [],
         settings: { ...DEFAULT_SETTINGS, ...(prefs.settings || {}) }
       });
@@ -73,6 +74,10 @@ export function usePreferences(publicKey: string | null) {
 
     return () => {
       isMounted = false;
+      if (debounceTimer.current) {
+        clearTimeout(debounceTimer.current);
+        debounceTimer.current = null;
+      }
     };
   }, [publicKey]);
 
@@ -139,7 +144,7 @@ export function usePreferences(publicKey: string | null) {
   }, [saveToBackend]);
 
   // Update disappear timers
-  const setDisappearTimers = useCallback((timers: Record<string, string> | ((prev: Record<string, string>) => Record<string, string>)) => {
+  const setDisappearTimers = useCallback((timers: Record<string, DisappearTimer> | ((prev: Record<string, DisappearTimer>) => Record<string, DisappearTimer>)) => {
     setPreferences(prev => {
       const next = typeof timers === 'function' ? timers(prev.disappearTimers) : timers;
       saveToBackend({ disappearTimers: next });
@@ -188,7 +193,7 @@ export function usePreferences(publicKey: string | null) {
   }, [setBlockedUsers]);
 
   // Set disappear timer for a specific chat
-  const setDisappearTimer = useCallback((chatId: string, timer: string) => {
+  const setDisappearTimer = useCallback((chatId: string, timer: DisappearTimer) => {
     setDisappearTimers(prev => ({ ...prev, [chatId]: timer }));
   }, [setDisappearTimers]);
 
@@ -196,7 +201,7 @@ export function usePreferences(publicKey: string | null) {
   const updateSetting = useCallback(<K extends keyof UserSettings>(key: K, value: UserSettings[K]) => {
     setPreferences(prev => {
       const nextSettings = { ...prev.settings, [key]: value };
-      saveToBackend({ settings: nextSettings } as any);
+      saveToBackend({ settings: nextSettings as UserSettings });
       return { ...prev, settings: nextSettings };
     });
   }, [saveToBackend]);

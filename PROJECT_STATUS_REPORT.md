@@ -60,7 +60,7 @@
 - ✅ Кешування link preview (200 записів LRU)
 
 ### 5. Smart Contract (Leo 3.4) ⛓️
-- ✅ Програма: `ghost_msg_017.aleo` (deployed)
+- ✅ Програма: `ghost_msg_018.aleo` (deployed)
 - ✅ Transitions: register_profile, update_profile, send_message, update_message, delete_message
 - ✅ Transitions: clear_history, delete_chat, add_contact, update/delete_contact
 - ✅ Mappings: profile_pubkey, dialog_last_block, contacts
@@ -412,7 +412,7 @@ if (pk.length === nacl.box.publicKeyLength) {
 - ✅ Comprehensive error handling
 - ✅ Responsive design
 - ✅ Cross-browser compatibility
-- ✅ Wallet integration (Leo Wallet Adapter)
+- ✅ Wallet integration (Shield Wallet via @provablehq)
 - ✅ IPFS file uploads
 - ✅ Rich message features (reactions, replies, edit, delete, pin)
 - ✅ Privacy controls (disappearing messages, block, hide status)

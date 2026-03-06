@@ -27,7 +27,7 @@
 |-------|-----------|---------|
 | **Frontend** | React 18 + TypeScript + Vite | SPA with Tailwind CSS |
 | **UI** | Lucide icons, Framer Motion, react-hot-toast | Animations + notifications |
-| **Wallet** | Leo Wallet Adapter (@demox-labs) | Aleo wallet integration |
+| **Wallet** | Shield Wallet (@provablehq) | Aleo wallet integration |
 | **Encryption** | tweetnacl (NaCl) | Curve25519 key exchange, Salsa20/Poly1305 |
 | **Backend** | Express 5 + WebSocket (ws) | REST API + real-time messaging |
 | **Database** | PostgreSQL (prod) / SQLite (dev) | Via Sequelize ORM |
@@ -125,8 +125,8 @@
 ### Authentication Flow
 
 ```
-1. User connects Leo Wallet → gets publicKey (aleo1...)
-2. Frontend derives NaCl encryption keys from wallet signMessage()
+1. User connects Shield Wallet → gets address (aleo1...)
+2. Frontend derives NaCl encryption keys deterministically from address
 3. WebSocket sends AUTH { address: "aleo1...", encryptionPublicKey: "base64..." }
 4. Backend generates random 32-byte challenge, encrypts with user's NaCl pubkey
 5. Sends AUTH_CHALLENGE { encrypted challenge }
@@ -593,7 +593,7 @@ npm install --legacy-peer-deps
 npm run dev
 
 # Open http://localhost:5173
-# Connect Leo Wallet (Aleo Testnet)
+# Connect Shield Wallet (Aleo Testnet)
 ```
 
 ### Key Environment Variables

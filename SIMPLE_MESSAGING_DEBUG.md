@@ -220,13 +220,13 @@ DELETE /profiles/{address}
 
 **Комп 1 (User A):**
 1. Відкрити https://твій-сайт.vercel.app
-2. Підключити Leo Wallet
+2. Підключити Shield Wallet
 3. Додати контакт (адреса User B)
 4. Відправити повідомлення
 
 **Комп 2 (User B):**
 1. Відкрити https://твій-сайт.vercel.app
-2. Підключити Leo Wallet
+2. Підключити Shield Wallet
 3. **Має автоматично з'явитись чат з User A** ✅
 4. Має побачити повідомлення ✅
 

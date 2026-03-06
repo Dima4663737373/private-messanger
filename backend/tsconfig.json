@@ -8,5 +8,10 @@
     "esModuleInterop": true,
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true
-  }
+  },
+  "exclude": [
+    "src/test-sdk.ts",
+    "src/**/*.test.ts",
+    "src/**/*.spec.ts"
+  ]
 }

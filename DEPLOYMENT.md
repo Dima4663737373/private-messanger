@@ -1,131 +1,129 @@
 # Ghost Messenger — Deployment Guide
 
-## 🚂 Railway Deployment (Backend)
+## Backend — Render
 
-### Step 1: Deploy Backend to Railway
+### Step 1: Create Web Service
 
-1. **Create Railway project:**
-   ```bash
-   cd backend
-   # Push to GitHub first if not already
-   git init
-   git add .
-   git commit -m "Backend ready for Railway"
-   git remote add origin <your-repo-url>
-   git push -u origin main
-   ```
+1. Go to [render.com](https://render.com) → New → Web Service
+2. Connect GitHub repo: `kravadk/Ghost`
+3. Settings:
+   - **Root Directory:** `backend`
+   - **Build Command:** `npm install`
+   - **Start Command:** `npm start`
+   - **Region:** Oregon (US West)
 
-2. **Deploy on Railway:**
-   - Go to [railway.app](https://railway.app)
-   - New Project → Deploy from GitHub repo
-   - Select `backend` folder (or root + set root directory to `backend`)
-   - Railway auto-detects Node.js + runs `npm start`
+### Step 2: Create PostgreSQL Database
 
-3. **Add Environment Variables in Railway:**
-   ```
-   PORT=3002
-   CORS_ORIGINS=http://localhost:3000,https://your-frontend.vercel.app
-   ALEO_ENDPOINT=https://api.explorer.provable.com/v1
-   ALEO_NETWORK=testnet
-   ```
+1. Render Dashboard → New → PostgreSQL
+2. Name: `ghost-db`, Region: Oregon, Plan: Free
+3. Copy **Internal Database URL** from Connections tab
 
-4. **Get your Railway URL:**
-   - After deployment: `https://your-backend.up.railway.app`
-   - Copy this URL for frontend config
+### Step 3: Environment Variables
 
-### Step 2: Update Frontend Config
+Add to Web Service → Environment:
 
-Update `frontend/.env.production`:
-```env
-VITE_BACKEND_URL=https://your-backend.up.railway.app
-VITE_WS_URL=wss://your-backend.up.railway.app
-```
+| Variable | Value |
+|----------|-------|
+| `NODE_ENV` | `production` |
+| `DATABASE_URL` | Internal Database URL from step 2 |
+| `CORS_ORIGINS` | `https://ghost-aleo.netlify.app` |
+| `PINATA_JWT` | Your Pinata JWT token |
 
-### Step 3: Deploy Frontend to Vercel
+### Step 4: Deploy
 
-1. **Push frontend to GitHub** (if not already)
-
-2. **Deploy on Vercel:**
-   - Go to [vercel.com](https://vercel.com)
-   - Import your GitHub repo
-   - Root Directory: `frontend`
-   - Framework Preset: Vite
-   - Environment Variables:
-     ```
-     VITE_BACKEND_URL=https://your-backend.up.railway.app
-     VITE_WS_URL=wss://your-backend.up.railway.app
-     ```
-
-3. **Update CORS in Railway:**
-   - Add your Vercel URL to `CORS_ORIGINS`:
-   ```
-   CORS_ORIGINS=https://your-frontend.vercel.app
-   ```
-
-### Step 4: Test Deployment
-
-1. Open your Vercel URL: `https://your-frontend.vercel.app`
-2. Connect Aleo wallet
-3. Send a test message
-4. Check Railway logs for WebSocket connections
+Render auto-deploys from GitHub `main` branch. Backend URL: `https://ghost-backend-d3gg.onrender.com`
 
 ---
 
-## 🔧 Local Development
+## Frontend — Netlify
+
+### Step 1: Connect GitHub
+
+1. Go to [app.netlify.com](https://app.netlify.com)
+2. Add new site → Import from GitHub → Select `kravadk/Ghost`
+3. Build settings are auto-configured via `netlify.toml`
+
+### Step 2: Configuration
+
+All build settings are in `netlify.toml`:
+
+```toml
+[build]
+  base = "."
+  command = "cd frontend && npm install --legacy-peer-deps && npm run build"
+  publish = "frontend/dist"
+
+[build.environment]
+  NODE_VERSION = "20"
+  VITE_BACKEND_URL = "https://ghost-backend-d3gg.onrender.com"
+  VITE_WS_URL = "wss://ghost-backend-d3gg.onrender.com"
+  VITE_ALEO_EXPLORER_API_BASE = "https://api.explorer.provable.com/v1"
+```
+
+Frontend URL: `https://ghost-aleo.netlify.app`
+
+---
+
+## Local Development
 
 ```bash
 # Terminal 1 - Backend
 cd backend
 npm install
 npm run dev
+# → http://localhost:3002
 
 # Terminal 2 - Frontend
 cd frontend
-npm install
+npm install --legacy-peer-deps
 npm run dev
+# → http://localhost:3000
 ```
 
-Open http://localhost:3000
+---
+
+## Environment Variables Summary
+
+### Render (Backend)
+| Variable | Value | Required |
+|----------|-------|----------|
+| `NODE_ENV` | `production` | Yes |
+| `DATABASE_URL` | Render PostgreSQL Internal URL | Yes |
+| `CORS_ORIGINS` | Netlify frontend URL | Yes |
+| `PINATA_JWT` | Pinata JWT token | For file uploads |
+
+### Netlify (Frontend)
+| Variable | Value | Required |
+|----------|-------|----------|
+| `VITE_BACKEND_URL` | Render backend URL | Yes |
+| `VITE_WS_URL` | Render backend URL (wss://) | Yes |
+| `VITE_ALEO_EXPLORER_API_BASE` | Provable API URL | No (has default) |
 
 ---
 
-## 📝 Environment Variables Summary
-
-### Railway (Backend)
-| Variable | Value | Required |
-|----------|-------|----------|
-| `PORT` | `3002` | No (auto) |
-| `CORS_ORIGINS` | Your Vercel URL | Yes |
-| `ALEO_ENDPOINT` | `https://api.explorer.provable.com/v1` | No |
-| `ALEO_NETWORK` | `testnet` | No |
-
-### Vercel (Frontend)
-| Variable | Value | Required |
-|----------|-------|----------|
-| `VITE_BACKEND_URL` | Railway URL | Yes |
-| `VITE_WS_URL` | Railway URL (wss://) | Yes |
-
----
-
-## 🐛 Troubleshooting
+## Troubleshooting
 
 **WebSocket fails:**
-- Ensure Railway URL uses `wss://` (not `ws://`)
-- Check CORS_ORIGINS includes your Vercel URL
-- Railway free tier sleeps after 15min inactivity
+- Ensure `VITE_WS_URL` uses `wss://` (not `ws://`)
+- Check `CORS_ORIGINS` includes exact Netlify URL
+- Render free tier spins down after 15 min — first request takes ~30s
 
 **CORS errors:**
-- Add exact Vercel URL (with https://) to CORS_ORIGINS
-- Redeploy Railway after changing env vars
+- Add exact Netlify URL (with `https://`, no trailing slash) to `CORS_ORIGINS`
+- Redeploy Render after changing env vars
 
-**Database issues:**
-- Railway persists SQLite in `/app/database.sqlite`
-- Data survives redeploys but NOT service deletion
+**502 Bad Gateway:**
+- Check Render logs for startup errors
+- Verify `DATABASE_URL` is set correctly
+
+**Database:**
+- Production uses PostgreSQL on Render
+- Local dev uses SQLite (`./database.sqlite`)
 
 ---
 
-## 💰 Costs
+## Costs
 
-- **Railway:** Free tier = $5 credit/month (enough for hackathon)
-- **Vercel:** Free tier = unlimited for hobby projects
-- **Total:** $0/month for demo purposes
+- **Render:** Free tier (750 hours/month web service + free PostgreSQL)
+- **Netlify:** Free tier (unlimited for hobby projects)
+- **Total:** $0/month

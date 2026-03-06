@@ -46,7 +46,7 @@ transition transfer_tokens() {
 
 ---
 
-## Leo Wallet Capabilities
+## Shield Wallet Capabilities
 
 ### Підтримувані Функції
 
@@ -93,7 +93,7 @@ const history = await wallet.requestTransactionHistory(program: string);
 │  Client A   │                    │   Aleo       │
 │  (Browser)  │◄────────RPC────────┤  Testnet     │
 │             │                    │              │
-│  Leo Wallet │─────sign TX───────>│ ghost_msg    │
+│Shield Wallet│─────sign TX───────>│ ghost_msg    │
 │             │                    │   .aleo      │
 └─────────────┘                    └──────────────┘
                                           │
@@ -622,7 +622,7 @@ transition verify_secret(secret: field) {
 ## Джерела
 
 - [Aleo Developer Documentation](https://developer.aleo.org/)
-- [Leo Wallet Adapter Docs](https://docs.leo.app/aleo-wallet-adapter)
+- [Provable Wallet Adapter](https://github.com/provablehq/aleo-wallet-adaptor)
 - [IZAR Bridge GitHub](https://github.com/izar-bridge/aleo-contracts)
 - [Aleo Technical Architecture](https://daic.capital/blog/aleo-blockchain-technical-architecture)
 - [Leo Language Structure](https://docs.leo-lang.org/language/structure)

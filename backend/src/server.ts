@@ -5,7 +5,7 @@ import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
 import { createServer } from 'http';
 import { Server as SocketIOServer } from 'socket.io';
-import { initDB, Message, Profile, SyncStatus, Reaction, Room, RoomMember, RoomMessage, RoomKey, PinnedMessage, UserPreferences, SessionRecord, PinnedFile, MessageEditHistory, DeletedMessage, sequelize } from './database';
+import { initDB, Message, Profile, SyncStatus, Reaction, Room, RoomMember, RoomMessage, RoomKey, PinnedMessage, UserPreferences, SessionRecord, PinnedFile, MessageEditHistory, DeletedMessage, PushSubscription, sequelize } from './database';
 import { v4 as uuidv4 } from 'uuid';
 import { IndexerService } from './services/indexer';
 import { Op } from 'sequelize';
@@ -13,9 +13,53 @@ import nacl from 'tweetnacl';
 import { encodeBase64, decodeBase64 } from 'tweetnacl-util';
 import { randomBytes } from 'crypto';
 import multer from 'multer';
+import { logger } from './utils/logger';
 
 const app = express();
 const server = createServer(app);
+
+// ── Web Push Helper ──────────────────────────────────────
+let webpush: any = null;
+const VAPID_PUBLIC = process.env.VAPID_PUBLIC_KEY;
+const VAPID_PRIVATE = process.env.VAPID_PRIVATE_KEY;
+
+if (VAPID_PUBLIC && VAPID_PRIVATE) {
+  try {
+    webpush = require('web-push');
+    webpush.setVapidDetails(process.env.VAPID_MAILTO || 'mailto:ghost@ghost-aleo.app', VAPID_PUBLIC, VAPID_PRIVATE);
+    logger.info('[Push] Web push configured with VAPID keys');
+  } catch {
+    logger.warn('[Push] web-push package not installed — push notifications disabled');
+  }
+}
+
+async function sendPushToAddress(address: string, payload: { title: string; body: string; tag?: string; chatId?: string }) {
+  if (!webpush) return;
+  try {
+    const subs = await PushSubscription.findAll({ where: { address } });
+    const stale: number[] = [];
+    await Promise.allSettled(subs.map(async (sub) => {
+      try {
+        await webpush.sendNotification(
+          { endpoint: sub.endpoint, keys: { p256dh: sub.keys_p256dh, auth: sub.keys_auth } },
+          JSON.stringify(payload),
+          { TTL: 3600, urgency: 'high' }
+        );
+      } catch (err: any) {
+        // 404 or 410 = subscription expired
+        if (err?.statusCode === 404 || err?.statusCode === 410) {
+          stale.push(sub.id);
+        }
+      }
+    }));
+    // Clean up expired subscriptions
+    if (stale.length > 0) {
+      await PushSubscription.destroy({ where: { id: stale } });
+    }
+  } catch (e) {
+    logger.error('[Push] Error sending notification:', e);
+  }
+}
 
 // --- Validation Limits ---
 const LIMITS = {
@@ -40,7 +84,7 @@ app.use(helmet({
   contentSecurityPolicy: {
     directives: {
       defaultSrc: ["'self'"],
-      scriptSrc: ["'self'", "'unsafe-inline'"], // unsafe-inline needed for React
+      scriptSrc: ["'self'"], // Vite build does not require unsafe-inline
       styleSrc: ["'self'", "'unsafe-inline'"], // unsafe-inline for Tailwind
       imgSrc: ["'self'", "data:", "https:", "ipfs.io", "*.ipfs.io", "cloudflare-ipfs.com"],
       connectSrc: ["'self'", "ws:", "wss:", "https:", "ipfs.io", "*.ipfs.io"],
@@ -56,16 +100,15 @@ app.use(helmet({
   crossOriginEmbedderPolicy: false // Keep disabled for IPFS compatibility
 }));
 
-// CORS — restrict to known origins (localhost dev + configurable production)
-const HARDCODED_ORIGINS = [
+// CORS — env-configurable origins (localhost only in dev)
+const IS_PRODUCTION = process.env.NODE_ENV === 'production';
+const DEV_ORIGINS = IS_PRODUCTION ? [] : [
   'http://localhost:3000',
   'http://localhost:3001',
   'http://localhost:5173',
-  'https://ghost-aleo.netlify.app'
 ];
-const EXTRA_ORIGINS = process.env.CORS_ORIGINS ? process.env.CORS_ORIGINS.split(',').map(s => s.trim()) : [];
-const ALLOWED_ORIGINS = [...new Set([...HARDCODED_ORIGINS, ...EXTRA_ORIGINS])];
-const IS_PRODUCTION = process.env.NODE_ENV === 'production';
+const CONFIGURED_ORIGINS = process.env.CORS_ORIGINS ? process.env.CORS_ORIGINS.split(',').map(s => s.trim()) : [];
+const ALLOWED_ORIGINS = [...new Set([...DEV_ORIGINS, ...CONFIGURED_ORIGINS])];
 
 // Socket.io server — replaces native WebSocket
 const io = new SocketIOServer(server, {
@@ -78,15 +121,19 @@ const io = new SocketIOServer(server, {
 
 app.use(cors({
   origin: (origin, callback) => {
-    // Allow requests with no origin in dev (curl, mobile apps, etc)
+    // Block requests with no origin in production (prevent CSRF)
     if (!origin) {
-      callback(null, !IS_PRODUCTION);
+      if (IS_PRODUCTION) {
+        callback(new Error('Origin required in production'));
+      } else {
+        callback(null, true); // Allow no-origin in dev (curl, Postman)
+      }
       return;
     }
     if (ALLOWED_ORIGINS.includes(origin)) {
       callback(null, true);
     } else {
-      console.warn('CORS blocked origin:', origin);
+      logger.warn('CORS blocked origin:', origin);
       callback(new Error('Not allowed by CORS'));
     }
   },
@@ -117,12 +164,12 @@ const pendingChallenges = new Map<string, { challenge: string; address: string; 
 async function persistSession(token: string, session: Omit<Session, never>) {
   try {
     await SessionRecord.upsert({ token, address: session.address, limited: session.limited, created_at: session.createdAt });
-  } catch { /* non-critical */ }
+  } catch (e) { logger.warn('[Sessions] persistSession failed:', e); }
 }
 async function deletePersistedSession(token: string) {
   try {
     await SessionRecord.destroy({ where: { token } });
-  } catch { /* non-critical */ }
+  } catch (e) { logger.warn('[Sessions] deletePersistedSession failed:', e); }
 }
 async function loadPersistedSessions() {
   try {
@@ -132,15 +179,15 @@ async function loadPersistedSessions() {
     for (const r of records) {
       const createdAt = Number(r.created_at);
       if (now - createdAt > SESSION_TTL) {
-        r.destroy().catch(() => {});
+        r.destroy().catch(e => logger.warn('[Sessions] Failed to destroy expired session:', e));
       } else {
         sessions.set(r.token, { address: r.address, limited: r.limited, createdAt });
         loaded++;
       }
     }
-    if (loaded > 0) console.log(`[Sessions] Restored ${loaded} persistent sessions`);
+    if (loaded > 0) logger.info(`[Sessions] Restored ${loaded} persistent sessions`);
   } catch (e) {
-    console.error('[Sessions] Failed to load persistent sessions:', e);
+    logger.error('[Sessions] Failed to load persistent sessions:', e);
   }
 }
 
@@ -258,6 +305,39 @@ function sanitizeSearchQuery(q: string): string {
 // Per-socket WS message rate limit
 const WS_MSG_LIMIT = 30; // max messages per 60s
 const WS_MSG_WINDOW = 60_000;
+const MAX_WS_CONNECTIONS_PER_IP = 10;
+const wsConnectionsPerIp = new Map<string, number>();
+
+// Limit WebSocket connections per IP
+io.use((socket, next) => {
+  const ip = socket.handshake.address;
+  const count = wsConnectionsPerIp.get(ip) || 0;
+  if (count >= MAX_WS_CONNECTIONS_PER_IP) {
+    return next(new Error('Too many WebSocket connections from this IP'));
+  }
+  wsConnectionsPerIp.set(ip, count + 1);
+  socket.on('disconnect', () => {
+    const current = wsConnectionsPerIp.get(ip) || 1;
+    if (current <= 1) wsConnectionsPerIp.delete(ip);
+    else wsConnectionsPerIp.set(ip, current - 1);
+  });
+  next();
+});
+
+// Periodic cleanup: reset stale IP counters every 10 minutes
+setInterval(() => {
+  const activeSockets = io.sockets.sockets;
+  const activeIps = new Set<string>();
+  activeSockets.forEach(s => activeIps.add(s.handshake.address));
+  for (const ip of wsConnectionsPerIp.keys()) {
+    if (!activeIps.has(ip)) wsConnectionsPerIp.delete(ip);
+  }
+}, 10 * 60 * 1000);
+
+// Limit incoming WS event payload size (100KB max)
+io.engine.on('connection', (rawSocket: any) => {
+  rawSocket.maxHttpBufferSize = 100_000; // 100KB
+});
 
 // Helper: broadcast event to all sockets in a Socket.io room
 function broadcastToRoom(roomId: string, eventName: string, data: any, excludeSocketId?: string) {
@@ -335,7 +415,7 @@ io.on('connection', (socket) => {
         serverPublicKey: encodeBase64(serverTempKeys.publicKey)
       });
     } catch (e) {
-      console.error('AUTH challenge generation failed:', e);
+      logger.error('AUTH challenge generation failed:', e);
       // Fallback: limited token
       const token = uuidv4();
       const fallbackSession = { address, limited: true, createdAt: Date.now() };
@@ -463,10 +543,10 @@ io.on('connection', (socket) => {
             senderEncryptionKey: encKeyMap.get(msg.sender) || '',
             status: msg.status
           })));
-          console.log(`[SUBSCRIBE] Pushed ${pending.length} pending DMs to ${socket.data.authenticatedAddress?.slice(0, 10)}`);
+          logger.info(`[SUBSCRIBE] Pushed ${pending.length} pending DMs to ${socket.data.authenticatedAddress?.slice(0, 10)}`);
         }
       } catch (err) {
-        console.error('[SUBSCRIBE] Failed to push pending messages:', err);
+        logger.error('[SUBSCRIBE] Failed to push pending messages:', err);
       }
     }
   });
@@ -505,6 +585,7 @@ io.on('connection', (socket) => {
 
     const membership = await RoomMember.findOne({ where: { room_id: roomId, user_id: sender } });
     if (!membership) { socket.emit('error', 'Not a member of this room'); return; }
+    if (!text.trim()) return;
 
     const msgId = uuidv4();
     const timestamp = Date.now();
@@ -532,7 +613,8 @@ io.on('connection', (socket) => {
   socket.on('TYPING', (data: any) => {
     if (!rlOk() || !authOk()) return;
     const { dialogHash, senderHash } = data || {};
-    if (!dialogHash || !senderHash) return;
+    if (!dialogHash || !senderHash || typeof dialogHash !== 'string' || typeof senderHash !== 'string') return;
+    if (dialogHash.length > 600 || senderHash.length > 300) return;
     for (const part of dialogHash.split('_')) {
       if (part !== senderHash) {
         io.to('user:' + part).emit('TYPING', { dialogHash, senderHash });
@@ -546,13 +628,13 @@ io.on('connection', (socket) => {
     const { dialogHash, senderHash, messageIds: rawIds } = data || {};
     if (!dialogHash || !senderHash || !Array.isArray(rawIds)) return;
 
-    const messageIds: string[] = rawIds.slice(0, 100);
+    const messageIds: string[] = rawIds.slice(0, 100).filter((id: unknown) => typeof id === 'string' && id.length > 0 && id.length <= 300);
     const readAt = Date.now();
 
     Message.update(
       { status: 'read', read_at: readAt },
       { where: { id: messageIds, status: { [Op.ne]: 'read' } } }
-    ).catch(e => console.error('Failed to persist read receipts:', e));
+    ).catch(e => logger.error('Failed to persist read receipts:', e));
 
     for (const part of dialogHash.split('_')) {
       if (part !== senderHash) {
@@ -571,6 +653,21 @@ io.on('connection', (socket) => {
 
       if (!sender || !senderHash || !recipientHash || !dialogHash || !encryptedPayload || !timestamp) {
         socket.emit('error', 'Missing required DM fields');
+        return;
+      }
+
+      // Validate hash formats (base64 strings, reasonable length)
+      const hashRe = /^[A-Za-z0-9+/=]{8,300}$/;
+      if (!hashRe.test(senderHash) || !hashRe.test(recipientHash)) {
+        socket.emit('error', 'Invalid hash format');
+        return;
+      }
+
+      // Verify sender matches authenticated socket address (prevent impersonation)
+      // The sender must be the same as the address that completed the auth challenge
+      const senderProfile = await Profile.findByPk(sender);
+      if (senderProfile?.address_hash && senderProfile.address_hash !== senderHash) {
+        socket.emit('error', 'Sender hash does not match authenticated address');
         return;
       }
 
@@ -596,13 +693,19 @@ io.on('connection', (socket) => {
             });
             if (prevSenderMsg?.sender) resolvedRecipient = prevSenderMsg.sender;
           }
-        } catch { /* non-critical */ }
+        } catch (e) { logger.warn('[DM] Recipient address resolution failed:', e); }
       }
 
+      // Use tempId as idempotency key when available, otherwise fall back to composite key.
+      // This prevents duplicate messages from concurrent requests with identical timestamps.
+      const dedupeWhere = tempId
+        ? { id: tempId }
+        : { sender_hash: senderHash.slice(0, 300), recipient_hash: recipientHash.slice(0, 300), timestamp };
+
       const [msg, created] = await Message.findOrCreate({
-        where: { sender_hash: senderHash.slice(0, 300), recipient_hash: recipientHash.slice(0, 300), timestamp },
+        where: dedupeWhere,
         defaults: {
-          id: msgId, sender: sender.slice(0, 100), recipient: resolvedRecipient,
+          id: tempId || msgId, sender: sender.slice(0, 100), recipient: resolvedRecipient,
           sender_hash: senderHash.slice(0, 300), recipient_hash: recipientHash.slice(0, 300),
           dialog_hash: dialogHash.slice(0, 600),
           encrypted_payload: encryptedPayload.slice(0, 50000),
@@ -640,9 +743,11 @@ io.on('connection', (socket) => {
         try {
           const recipientPrefs = await UserPreferences.findByPk(resolvedRecipient);
           if (recipientPrefs?.blocked_users) {
-            recipientBlocked = JSON.parse(recipientPrefs.blocked_users || '[]').includes(sender);
+            try {
+              recipientBlocked = JSON.parse(recipientPrefs.blocked_users).includes(sender);
+            } catch { /* malformed JSON — treat as not blocked */ }
           }
-        } catch { /* non-critical */ }
+        } catch (e) { logger.warn('[DM] Failed to check blocked status:', e); }
       }
 
       if (recipientBlocked) socket.emit('blocked_by_user', { address: resolvedRecipient });
@@ -651,10 +756,23 @@ io.on('connection', (socket) => {
       if (!recipientBlocked) io.to('user:' + recipientHash).emit('message_detected', messagePayload);
       socket.to('user:' + senderHash).emit('message_detected', messagePayload);
 
-      console.log(`[DM] ${sender.slice(0, 10)}→${resolvedRecipient.slice(0, 10)} id=${realId.slice(0, 8)} encKey=${senderEncKey ? 'yes' : 'NO'}`);
+      // Send push notification if recipient is offline (no active sockets)
+      if (!recipientBlocked && resolvedRecipient !== 'unknown') {
+        const recipientRoom = io.sockets.adapter.rooms.get('user:' + recipientHash);
+        if (!recipientRoom || recipientRoom.size === 0) {
+          sendPushToAddress(resolvedRecipient, {
+            title: 'Ghost Messenger',
+            body: 'New encrypted message',
+            tag: `dm-${dialogHash}`,
+            chatId: sender
+          }).catch(e => logger.warn('[Push] Failed to send push:', e));
+        }
+      }
+
+      logger.info(`[DM] ${sender.slice(0, 10)}→${resolvedRecipient.slice(0, 10)} id=${realId.slice(0, 8)} encKey=${senderEncKey ? 'yes' : 'NO'}`);
       socket.emit('dm_sent', { tempId, id: realId, timestamp, dialogHash });
     } catch (e) {
-      console.error('DM_MESSAGE handler error:', e);
+      logger.error('DM_MESSAGE handler error:', e);
     }
   });
 
@@ -664,7 +782,7 @@ io.on('connection', (socket) => {
     socket.data.lastSeen = now;
     if (socket.data.authenticatedAddress && (!socket.data.lastSeenDbWrite || now - socket.data.lastSeenDbWrite > 30000)) {
       socket.data.lastSeenDbWrite = now;
-      Profile.update({ last_seen: now }, { where: { address: socket.data.authenticatedAddress } }).catch(() => {});
+      Profile.update({ last_seen: now }, { where: { address: socket.data.authenticatedAddress } }).catch(e => logger.warn('[Heartbeat] last_seen update failed:', e));
     }
   });
 
@@ -672,7 +790,7 @@ io.on('connection', (socket) => {
   socket.on('disconnect', () => {
     pendingChallenges.delete(socket.id);
     if (socket.data.authenticatedAddress) {
-      Profile.update({ last_seen: Date.now() }, { where: { address: socket.data.authenticatedAddress } }).catch(() => {});
+      Profile.update({ last_seen: Date.now() }, { where: { address: socket.data.authenticatedAddress } }).catch(e => logger.warn('[Disconnect] last_seen update failed:', e));
     }
   });
 });
@@ -686,7 +804,7 @@ const onlineStatusLimiter = rateLimit({
   validate: false
 });
 
-app.get('/online/:addressHash', onlineStatusLimiter, async (_req, res) => {
+app.get('/online/:addressHash', requireAuth, onlineStatusLimiter, async (_req: any, res) => {
   const { addressHash } = _req.params;
   let isOnline = false;
   let lastSeen = 0;
@@ -732,7 +850,7 @@ const linkPreviewLimiter = rateLimit({
   validate: false
 });
 
-app.get('/link-preview', linkPreviewLimiter, async (req, res) => {
+app.get('/link-preview', requireAuth, linkPreviewLimiter, async (req: any, res) => {
   try {
     const url = req.query.url as string;
     if (!url || url.length > 2048 || !/^https?:\/\/.+/.test(url)) {
@@ -796,11 +914,8 @@ app.get('/link-preview', linkPreviewLimiter, async (req, res) => {
       siteName: getMetaContent('og:site_name') || null,
     };
 
-    // Cache for 15 minutes (max 200 entries)
-    linkPreviewCache.set(url, { data: result, expires: Date.now() + 15 * 60 * 1000 });
-
-    // Cleanup: remove expired + enforce max size (200 entries)
-    if (linkPreviewCache.size > 200) {
+    // Enforce max size BEFORE inserting new entry
+    if (linkPreviewCache.size >= 200) {
       const now = Date.now();
       const entries = Array.from(linkPreviewCache.entries());
       // Remove expired first
@@ -814,6 +929,9 @@ app.get('/link-preview', linkPreviewLimiter, async (req, res) => {
         toRemove.forEach(([k]) => linkPreviewCache.delete(k));
       }
     }
+
+    // Cache for 15 minutes
+    linkPreviewCache.set(url, { data: result, expires: Date.now() + 15 * 60 * 1000 });
 
     res.json(result);
   } catch (e) {
@@ -849,7 +967,7 @@ app.get('/messages/:dialogHash', requireAuth, async (req: any, res) => {
     });
     res.json(messages);
   } catch (e) {
-    console.error('GET /messages/:dialogHash error:', e);
+    logger.error('GET /messages/:dialogHash error:', e);
     res.status(500).json({ error: 'Failed to fetch messages' });
   }
 });
@@ -871,7 +989,7 @@ app.get('/messages/dialog/:dialogHash', requireAuth, async (req: any, res) => {
     });
     res.json(messages);
   } catch (e) {
-    console.error(`GET /messages/dialog error:`, e);
+    logger.error(`GET /messages/dialog error:`, e);
     res.status(500).json({ error: 'Failed to fetch dialog messages' });
   }
 });
@@ -895,7 +1013,7 @@ app.get('/dialogs/:addressHash', requireAuth, async (req: any, res) => {
       limit: 50
     });
 
-    const dialogs = await Promise.all(dialogStats.map(async (stat: any) => {
+    const results = await Promise.allSettled(dialogStats.map(async (stat: any) => {
       const lastMsg = await Message.findOne({
         where: {
           dialog_hash: stat.dialog_hash,
@@ -905,15 +1023,19 @@ app.get('/dialogs/:addressHash', requireAuth, async (req: any, res) => {
       return lastMsg;
     }));
 
-    res.json(dialogs.filter(d => d !== null));
+    const dialogs = results
+      .filter((r): r is PromiseFulfilledResult<any> => r.status === 'fulfilled')
+      .map(r => r.value)
+      .filter(d => d !== null);
+    res.json(dialogs);
   } catch (e) {
-    console.error('GET /dialogs error:', e);
+    logger.error('GET /dialogs error:', e);
     res.status(500).json({ error: 'Failed to fetch dialogs' });
   }
 });
 
 // GET /profiles/search — search profiles by username
-app.get('/profiles/search', searchLimiter, async (req, res) => {
+app.get('/profiles/search', requireAuth, searchLimiter, async (req: any, res) => {
   try {
     const q = req.query.q;
     if (!q || typeof q !== 'string') return res.json([]);
@@ -942,7 +1064,7 @@ app.get('/profiles/search', searchLimiter, async (req, res) => {
 });
 
 // GET /profiles/hash/:hash — profile by address hash
-app.get('/profiles/hash/:hash', async (req, res) => {
+app.get('/profiles/hash/:hash', requireAuth, async (req: any, res) => {
   try {
     const { hash } = req.params;
     if (!isValidHash(hash)) return res.status(400).json({ exists: false, profile: null });
@@ -954,13 +1076,13 @@ app.get('/profiles/hash/:hash', async (req, res) => {
       res.json({ exists: false, profile: null });
     }
   } catch (e) {
-    console.error('GET /profiles/hash error:', e);
+    logger.error('GET /profiles/hash error:', e);
     res.json({ exists: false, profile: null });
   }
 });
 
 // GET /profiles/:address — profile by address or hash
-app.get('/profiles/:address', async (req, res) => {
+app.get('/profiles/:address', requireAuth, async (req: any, res) => {
   try {
     const { address } = req.params;
 
@@ -976,7 +1098,7 @@ app.get('/profiles/:address', async (req, res) => {
       res.status(404).json({ exists: false, profile: null });
     }
   } catch (e) {
-    console.error('GET /profiles/:address error:', e);
+    logger.error('GET /profiles/:address error:', e);
     res.json({ exists: false, profile: null });
   }
 });
@@ -1035,6 +1157,10 @@ app.post('/profiles', requireAuth, profileWriteLimiter, async (req: any, res) =>
       data.bio = sanitizedBio;
     }
     if (typeof txId === 'string' && txId.length > 0) {
+      // Validate Aleo TX ID format: "at1..." followed by base58 chars
+      if (!/^at1[a-z0-9]{58,62}$/.test(txId)) {
+        return res.status(400).json({ error: 'Invalid Aleo transaction ID format' });
+      }
       data.tx_id = txId.slice(0, 200);
     }
     if (typeof encryptionPublicKey === 'string' && encryptionPublicKey.length > 0) {
@@ -1083,18 +1209,19 @@ app.post('/profiles', requireAuth, profileWriteLimiter, async (req: any, res) =>
 
     res.json({ success: true });
   } catch (e) {
-    console.error('POST /profiles error:', e);
+    logger.error('POST /profiles error:', e);
     res.status(500).json({ error: 'Profile update failed' });
   }
 });
 
 // --- Logout Endpoint ---
-app.post('/logout', requireAuth, (req: any, res) => {
+const logoutLimiter = rateLimit({ windowMs: 60 * 1000, max: 10, keyGenerator: rateLimitKeyGenerator, message: { error: 'Too many logout attempts' }, validate: false });
+app.post('/logout', requireAuth, logoutLimiter, (req: any, res) => {
   const token = req.headers.authorization?.slice(7);
   if (token && sessions.has(token)) {
     sessions.delete(token);
     deletePersistedSession(token);
-    console.log(`[Auth] Session invalidated for ${req.authenticatedAddress?.slice(0, 14)}... (logout)`);
+    logger.info(`[Auth] Session invalidated for ${req.authenticatedAddress?.slice(0, 14)}... (logout)`);
   }
   res.json({ success: true });
 });
@@ -1125,7 +1252,7 @@ app.post('/ipfs/pin', requireAuth, async (req: any, res) => {
 
     res.json({ success: true });
   } catch (e) {
-    console.error('POST /ipfs/pin error:', e);
+    logger.error('POST /ipfs/pin error:', e);
     res.status(500).json({ error: 'Failed to register pin' });
   }
 });
@@ -1178,13 +1305,14 @@ app.post('/ipfs/upload', requireAuth, uploadLimiter, upload.single('file'), asyn
 
     res.json({ cid });
   } catch (e: any) {
-    console.error('POST /ipfs/upload error:', e?.response?.data || e.message);
+    logger.error('POST /ipfs/upload error:', e?.response?.data || e.message);
     res.status(500).json({ error: 'Upload to IPFS failed' });
   }
 });
 
 // GET /ipfs/pins/:address — list pinned files for a user
-app.get('/ipfs/pins/:address', requireAuth, async (req: any, res) => {
+const pinsLimiter = rateLimit({ windowMs: 60 * 1000, max: 20, keyGenerator: rateLimitKeyGenerator, message: { error: 'Rate limit exceeded' }, validate: false });
+app.get('/ipfs/pins/:address', requireAuth, pinsLimiter, async (req: any, res) => {
   try {
     if (req.authenticatedAddress !== req.params.address) {
       return res.status(403).json({ error: 'Forbidden' });
@@ -1196,13 +1324,13 @@ app.get('/ipfs/pins/:address', requireAuth, async (req: any, res) => {
     });
     res.json({ pins });
   } catch (e) {
-    console.error('GET /ipfs/pins error:', e);
+    logger.error('GET /ipfs/pins error:', e);
     res.status(500).json({ error: 'Failed to fetch pins' });
   }
 });
 
 // GET /ipfs/verify/:cid — check if a CID is still accessible
-app.get('/ipfs/verify/:cid', async (req, res) => {
+app.get('/ipfs/verify/:cid', requireAuth, async (req: any, res) => {
   try {
     const { cid } = req.params;
     if (!cid.startsWith('Qm') && !cid.startsWith('bafy')) {
@@ -1236,7 +1364,7 @@ app.get('/ipfs/verify/:cid', async (req, res) => {
       res.json({ cid, accessible: false, status: 0 });
     }
   } catch (e) {
-    console.error('GET /ipfs/verify error:', e);
+    logger.error('GET /ipfs/verify error:', e);
     res.status(500).json({ error: 'Verification failed' });
   }
 });
@@ -1301,7 +1429,7 @@ app.get('/preferences/:address', requireAuth, preferencesLimiter, async (req: an
       migrated: prefs.migrated || false
     });
   } catch (e: any) {
-    console.error('GET /preferences error:', e);
+    logger.error('GET /preferences error:', e);
     // If table doesn't exist yet, return defaults instead of 500
     if (e.message?.includes('no such table') || e.name === 'SequelizeDatabaseError') {
       return res.json(defaults);
@@ -1323,7 +1451,7 @@ app.get('/blocked-by/:address', requireAuth, async (req: any, res) => {
       attributes: ['address', 'blocked_users'],
       where: sequelize.where(
         sequelize.col('blocked_users'),
-        { [Op.like]: `%${address}%` }
+        { [Op.like]: `%${address.replace(/[%_\\]/g, '\\$&')}%` }
       )
     });
 
@@ -1339,7 +1467,7 @@ app.get('/blocked-by/:address', requireAuth, async (req: any, res) => {
 
     res.json({ blockedBy });
   } catch (e) {
-    console.error('GET /blocked-by error:', e);
+    logger.error('GET /blocked-by error:', e);
     res.status(500).json({ error: 'Failed to check block status' });
   }
 });
@@ -1420,7 +1548,7 @@ app.post('/preferences/:address', requireAuth, preferencesLimiter, async (req: a
         if (existing?.blocked_users) {
           previousBlocked = JSON.parse(existing.blocked_users || '[]');
         }
-      } catch { /* non-critical */ }
+      } catch (e) { logger.warn('[Preferences] Failed to load previous blocked list:', e); }
     }
 
     await UserPreferences.upsert(data);
@@ -1441,7 +1569,7 @@ app.post('/preferences/:address', requireAuth, preferencesLimiter, async (req: a
 
     res.json({ success: true });
   } catch (e) {
-    console.error('POST /preferences error:', e);
+    logger.error('POST /preferences error:', e);
     res.status(500).json({ error: 'Failed to update preferences' });
   }
 });
@@ -1485,13 +1613,13 @@ app.post('/reactions/batch', requireAuth, async (req: any, res) => {
 
     res.json(result);
   } catch (e) {
-    console.error('POST /reactions/batch error:', e);
+    logger.error('POST /reactions/batch error:', e);
     res.status(500).json({ error: 'Failed to fetch reactions' });
   }
 });
 
 // GET /reactions/:messageId — get reactions for a message
-app.get('/reactions/:messageId', async (req, res) => {
+app.get('/reactions/:messageId', requireAuth, async (req: any, res) => {
   try {
     const { messageId } = req.params;
     if (!messageId || messageId.length > 300) return res.status(400).json({ error: 'Invalid messageId' });
@@ -1507,7 +1635,7 @@ app.get('/reactions/:messageId', async (req, res) => {
 
     res.json(grouped);
   } catch (e) {
-    console.error('GET /reactions error:', e);
+    logger.error('GET /reactions error:', e);
     res.status(500).json({ error: 'Failed to fetch reactions' });
   }
 });
@@ -1544,7 +1672,7 @@ app.post('/reactions', requireAuth, reactionLimiter, async (req: any, res) => {
 
     res.json({ success: true });
   } catch (e) {
-    console.error('POST /reactions error:', e);
+    logger.error('POST /reactions error:', e);
     res.status(500).json({ error: 'Failed to add reaction' });
   }
 });
@@ -1579,7 +1707,7 @@ app.delete('/reactions', requireAuth, reactionLimiter, async (req: any, res) => 
 
     res.json({ success: true });
   } catch (e) {
-    console.error('DELETE /reactions error:', e);
+    logger.error('DELETE /reactions error:', e);
     res.status(500).json({ error: 'Failed to remove reaction' });
   }
 });
@@ -1615,7 +1743,7 @@ app.delete('/messages/:id', requireAuth, async (req: any, res) => {
       deleted_at: Date.now(),
       sender: msg.sender,
       recipient: msg.recipient,
-    }).catch(e => console.error('Failed to save delete audit:', e));
+    }).catch(e => logger.error('Failed to save delete audit:', e));
 
     const dialogHash = msg.dialog_hash;
     await msg.destroy();
@@ -1626,7 +1754,7 @@ app.delete('/messages/:id', requireAuth, async (req: any, res) => {
 
     res.json({ success: true });
   } catch (e) {
-    console.error('DELETE /messages/:id error:', e);
+    logger.error('DELETE /messages/:id error:', e);
     res.status(500).json({ error: 'Failed to delete message' });
   }
 });
@@ -1672,7 +1800,7 @@ app.post('/messages/:id/edit', requireAuth, async (req: any, res) => {
 
     res.json({ success: true, editedAt, editCount: msg.edit_count });
   } catch (e) {
-    console.error('POST /messages/:id/edit error:', e);
+    logger.error('POST /messages/:id/edit error:', e);
     res.status(500).json({ error: 'Failed to edit message' });
   }
 });
@@ -1698,7 +1826,7 @@ app.get('/messages/:id/history', requireAuth, async (req: any, res) => {
 
     res.json({ history });
   } catch (e) {
-    console.error('GET /messages/:id/history error:', e);
+    logger.error('GET /messages/:id/history error:', e);
     res.status(500).json({ error: 'Failed to fetch edit history' });
   }
 });
@@ -1725,7 +1853,7 @@ async function withMemberCount(rooms: any[]): Promise<any[]> {
 }
 
 // GET /rooms — list rooms by type
-app.get('/rooms', async (req, res) => {
+app.get('/rooms', requireAuth, async (req: any, res) => {
   try {
     const type = req.query.type as string;
     const address = req.query.address as string;
@@ -1753,7 +1881,7 @@ app.get('/rooms', async (req, res) => {
     const rooms = await Room.findAll({ where: { is_private: false }, order: [['createdAt', 'DESC']] });
     res.json(await withMemberCount(rooms));
   } catch (e) {
-    console.error('GET /rooms error:', e);
+    logger.error('GET /rooms error:', e);
     res.status(500).json({ error: 'Failed to fetch rooms' });
   }
 });
@@ -1805,7 +1933,7 @@ app.post('/rooms', requireFullAuth, async (req: any, res) => {
 
     res.json(roomData);
   } catch (e) {
-    console.error('POST /rooms error:', e);
+    logger.error('POST /rooms error:', e);
     res.status(500).json({ error: 'Failed to create room' });
   }
 });
@@ -1815,20 +1943,22 @@ app.patch('/rooms/:id', requireFullAuth, async (req: any, res) => {
   try {
     const address = req.authenticatedAddress; // Use authenticated address
     const { name } = req.body;
-    if (!name) return res.status(400).json({ error: 'name required' });
+    if (!name || typeof name !== 'string') return res.status(400).json({ error: 'name required' });
+    const sanitizedName = name.replace(/[\x00-\x1F\x7F]/g, '').trim().slice(0, 100);
+    if (sanitizedName.length === 0) return res.status(400).json({ error: 'Name is empty after sanitization' });
 
     const room = await Room.findByPk(req.params.id);
     if (!room) return res.status(404).json({ error: 'Room not found' });
     if (room.created_by !== address) return res.status(403).json({ error: 'Only creator can rename' });
 
-    room.name = name;
+    room.name = sanitizedName;
     await room.save();
 
     broadcastToRoom(room.id, 'room_renamed', { roomId: room.id, name });
 
     res.json({ success: true, room: { id: room.id, name: room.name, type: room.type, createdBy: room.created_by, isPrivate: room.is_private } });
   } catch (e) {
-    console.error('PATCH /rooms error:', e);
+    logger.error('PATCH /rooms error:', e);
     res.status(500).json({ error: 'Failed to rename room' });
   }
 });
@@ -1850,7 +1980,7 @@ app.delete('/rooms/dm-clear', requireFullAuth, async (req: any, res) => {
 
     res.json({ success: true });
   } catch (e) {
-    console.error('DELETE /rooms/dm-clear error:', e);
+    logger.error('DELETE /rooms/dm-clear error:', e);
     res.status(500).json({ error: 'Failed to clear DM' });
   }
 });
@@ -1878,7 +2008,7 @@ app.delete('/rooms/:id', requireFullAuth, async (req: any, res) => {
 
     res.json({ success: true });
   } catch (e) {
-    console.error('DELETE /rooms error:', e);
+    logger.error('DELETE /rooms error:', e);
     res.status(500).json({ error: 'Failed to delete room' });
   }
 });
@@ -1964,7 +2094,7 @@ app.delete('/rooms/:roomId/messages/:msgId', requireFullAuth, async (req: any, r
     broadcastToRoom(roomId, 'room_message_deleted', { roomId, messageId: msgId });
     res.json({ success: true });
   } catch (e) {
-    console.error('DELETE room message error:', e);
+    logger.error('DELETE room message error:', e);
     res.status(500).json({ error: 'Failed to delete message' });
   }
 });
@@ -1987,7 +2117,7 @@ app.post('/rooms/:roomId/messages/:msgId/edit', requireFullAuth, async (req: any
     broadcastToRoom(roomId, 'room_message_edited', { roomId, messageId: msgId, text: msg.text });
     res.json({ success: true });
   } catch (e) {
-    console.error('PATCH room message error:', e);
+    logger.error('PATCH room message error:', e);
     res.status(500).json({ error: 'Failed to edit message' });
   }
 });
@@ -2007,7 +2137,7 @@ app.get('/rooms/:id/keys', requireFullAuth, async (req: any, res) => {
       sender_public_key: roomKey.sender_public_key
     });
   } catch (e) {
-    console.error('GET /rooms/:id/keys error:', e);
+    logger.error('GET /rooms/:id/keys error:', e);
     res.status(500).json({ error: 'Failed to fetch room key' });
   }
 });
@@ -2041,7 +2171,7 @@ app.post('/rooms/:id/keys', requireFullAuth, async (req: any, res) => {
 
     res.json({ success: true });
   } catch (e) {
-    console.error('POST /rooms/:id/keys error:', e);
+    logger.error('POST /rooms/:id/keys error:', e);
     res.status(500).json({ error: 'Failed to store room keys' });
   }
 });
@@ -2067,7 +2197,7 @@ app.get('/rooms/:id/members', requireFullAuth, async (req: any, res) => {
 
     res.json(result);
   } catch (e) {
-    console.error('GET /rooms/:id/members error:', e);
+    logger.error('GET /rooms/:id/members error:', e);
     res.status(500).json({ error: 'Failed to fetch members' });
   }
 });
@@ -2108,7 +2238,7 @@ app.post('/pins', requireAuth, async (req: any, res) => {
 
     res.json({ success: true });
   } catch (e) {
-    console.error('POST /pins error:', e);
+    logger.error('POST /pins error:', e);
     res.status(500).json({ error: 'Failed to pin message' });
   }
 });
@@ -2130,7 +2260,7 @@ app.delete('/pins', requireAuth, async (req: any, res) => {
 
     res.json({ success: true });
   } catch (e) {
-    console.error('DELETE /pins error:', e);
+    logger.error('DELETE /pins error:', e);
     res.status(500).json({ error: 'Failed to unpin message' });
   }
 });
@@ -2160,7 +2290,8 @@ async function cleanupExpiredMessages() {
     let totalDeleted = 0;
 
     for (const pref of allPrefs) {
-      const timers: Record<string, string> = JSON.parse(pref.disappear_timers || '{}');
+      let timers: Record<string, string>;
+      try { timers = JSON.parse(pref.disappear_timers || '{}'); } catch { continue; }
 
       for (const [dialogHashOrContact, timerKey] of Object.entries(timers)) {
         if (timerKey === 'off' || !DISAPPEAR_TTLS[timerKey]) continue;
@@ -2184,10 +2315,152 @@ async function cleanupExpiredMessages() {
     }
 
     if (totalDeleted > 0) {
-      console.log(`[Cleanup] Deleted ${totalDeleted} expired disappearing messages`);
+      logger.info(`[Cleanup] Deleted ${totalDeleted} expired disappearing messages`);
     }
   } catch (e) {
-    console.error('[Cleanup] Failed to cleanup expired messages:', e);
+    logger.error('[Cleanup] Failed to cleanup expired messages:', e);
+  }
+}
+
+// ── Push Notification Subscription Endpoints ─────────────────
+
+// POST /push/subscribe — register a push subscription
+app.post('/push/subscribe', requireAuth, async (req: any, res) => {
+  try {
+    const { endpoint, keys } = req.body;
+    if (!endpoint || !keys?.p256dh || !keys?.auth) {
+      return res.status(400).json({ error: 'Invalid push subscription' });
+    }
+
+    await PushSubscription.upsert({
+      address: req.authenticatedAddress,
+      endpoint: endpoint.slice(0, 2000),
+      keys_p256dh: keys.p256dh.slice(0, 500),
+      keys_auth: keys.auth.slice(0, 500),
+      created_at: Date.now(),
+    });
+
+    res.json({ success: true });
+  } catch (e) {
+    logger.error('POST /push/subscribe error:', e);
+    res.status(500).json({ error: 'Failed to save subscription' });
+  }
+});
+
+// DELETE /push/subscribe — remove a push subscription
+app.delete('/push/subscribe', requireAuth, async (req: any, res) => {
+  try {
+    const { endpoint } = req.body;
+    if (!endpoint) return res.status(400).json({ error: 'Endpoint required' });
+
+    await PushSubscription.destroy({
+      where: { address: req.authenticatedAddress, endpoint }
+    });
+
+    res.json({ success: true });
+  } catch (e) {
+    logger.error('DELETE /push/subscribe error:', e);
+    res.status(500).json({ error: 'Failed to remove subscription' });
+  }
+});
+
+// GET /push/vapid-key — return the VAPID public key
+app.get('/push/vapid-key', (_req, res) => {
+  const vapidKey = process.env.VAPID_PUBLIC_KEY;
+  if (!vapidKey) return res.status(503).json({ error: 'Push notifications not configured' });
+  res.json({ publicKey: vapidKey });
+});
+
+// ── IPFS Pin Cleanup ─────────────────────────────────────────
+
+// DELETE /ipfs/pins/:cid — unpin a file (removes from Pinata + DB)
+app.delete('/ipfs/pins/:cid', requireAuth, async (req: any, res) => {
+  try {
+    const { cid } = req.params;
+    const pin = await PinnedFile.findOne({
+      where: { cid, uploader_address: req.authenticatedAddress }
+    });
+    if (!pin) return res.status(404).json({ error: 'Pin not found' });
+
+    // Try to unpin from Pinata
+    const PINATA_JWT = process.env.PINATA_JWT;
+    if (PINATA_JWT) {
+      try {
+        const axios = (await import('axios')).default;
+        await axios.delete(`https://api.pinata.cloud/pinning/unpin/${cid}`, {
+          headers: { 'Authorization': `Bearer ${PINATA_JWT}` }
+        });
+      } catch (e: any) {
+        // 404 = already unpinned, that's OK
+        if (e?.response?.status !== 404) {
+          logger.warn(`[IPFS] Failed to unpin ${cid} from Pinata:`, e?.response?.data || e.message);
+        }
+      }
+    }
+
+    await PinnedFile.destroy({ where: { cid, uploader_address: req.authenticatedAddress } });
+    res.json({ success: true });
+  } catch (e) {
+    logger.error('DELETE /ipfs/pins error:', e);
+    res.status(500).json({ error: 'Failed to unpin' });
+  }
+});
+
+// Periodic IPFS cleanup — verify and remove orphaned pins (runs every 6 hours)
+async function cleanupOrphanedPins() {
+  try {
+    // Find pins older than 30 days that are marked 'lost'
+    const thirtyDaysAgo = Date.now() - 30 * 24 * 60 * 60 * 1000;
+    const lostPins = await PinnedFile.findAll({
+      where: {
+        pin_status: 'lost',
+        last_verified: { [Op.lt]: thirtyDaysAgo }
+      },
+      limit: 50
+    });
+
+    let cleaned = 0;
+    for (const pin of lostPins) {
+      await PinnedFile.destroy({ where: { id: pin.id } });
+      cleaned++;
+    }
+
+    // Also verify a batch of old unverified pins
+    const oneWeekAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
+    const stale = await PinnedFile.findAll({
+      where: {
+        pin_status: 'pinned',
+        [Op.or]: [
+          { last_verified: { [Op.lt]: oneWeekAgo } },
+          { last_verified: null }
+        ]
+      },
+      limit: 10
+    });
+
+    for (const pin of stale) {
+      try {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 8000);
+        const resp = await fetch(`https://ipfs.io/ipfs/${pin.cid}`, {
+          method: 'HEAD', signal: controller.signal
+        });
+        clearTimeout(timeout);
+        await PinnedFile.update(
+          { pin_status: resp.ok ? 'pinned' : 'lost', last_verified: Date.now() },
+          { where: { id: pin.id } }
+        );
+      } catch {
+        await PinnedFile.update(
+          { pin_status: 'lost', last_verified: Date.now() },
+          { where: { id: pin.id } }
+        );
+      }
+    }
+
+    if (cleaned > 0) logger.info(`[IPFS Cleanup] Removed ${cleaned} lost pins, verified ${stale.length} stale pins`);
+  } catch (e) {
+    logger.error('[IPFS Cleanup] Error:', e);
   }
 }
 
@@ -2195,7 +2468,7 @@ async function cleanupExpiredMessages() {
 
 const PORT = Number(process.env.PORT) || 3002;
 
-// Health check endpoint (useful for Railway/uptime monitoring)
+// Health check endpoint
 app.get('/health', (_req, res) => {
   res.json({ status: 'ok', uptime: process.uptime(), timestamp: Date.now() });
 });
@@ -2207,12 +2480,19 @@ initDB().then(async () => {
   // Run disappearing message cleanup every 60 seconds
   setInterval(cleanupExpiredMessages, 60_000);
 
+  // Run IPFS pin cleanup every 6 hours
+  setInterval(cleanupOrphanedPins, 6 * 60 * 60 * 1000);
+  // Initial cleanup after 5 min
+  setTimeout(cleanupOrphanedPins, 5 * 60 * 1000);
+
   server.listen(PORT, () => {
-    console.log(`Ghost backend running on port ${PORT}`);
-    console.log(`Allowed CORS origins: ${ALLOWED_ORIGINS.join(', ')}`);
-    console.log(`NODE_ENV: ${process.env.NODE_ENV || 'development'}`);
+    logger.info(`Ghost backend running on port ${PORT}`);
+    logger.info(`Allowed CORS origins: ${ALLOWED_ORIGINS.join(', ')}`);
+    logger.info(`NODE_ENV: ${process.env.NODE_ENV || 'development'}`);
+    if (!process.env.PINATA_JWT) logger.warn('[Config] PINATA_JWT not set — IPFS uploads will fail');
+    if (!VAPID_PUBLIC || !VAPID_PRIVATE) logger.warn('[Config] VAPID keys not set — push notifications disabled');
   });
 }).catch((err) => {
-  console.error('Failed to initialize database:', err);
+  logger.error('Failed to initialize database:', err);
   process.exit(1);
 });

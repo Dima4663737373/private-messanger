@@ -19,6 +19,30 @@ self.addEventListener('activate', (event) => {
   );
 });
 
+// Fetch — network-first strategy with cache fallback for app shell
+self.addEventListener('fetch', (event) => {
+  const { request } = event;
+  // Only cache same-origin GET requests (skip API calls, WebSocket, etc.)
+  if (request.method !== 'GET') return;
+  const url = new URL(request.url);
+  if (url.origin !== self.location.origin) return;
+  // Skip API routes
+  if (url.pathname.startsWith('/api') || url.pathname.startsWith('/socket.io')) return;
+
+  event.respondWith(
+    fetch(request)
+      .then((response) => {
+        // Cache successful responses for app shell assets
+        if (response.ok && (url.pathname.endsWith('.js') || url.pathname.endsWith('.css') || url.pathname === '/')) {
+          const clone = response.clone();
+          caches.open(CACHE_NAME).then((cache) => cache.put(request, clone));
+        }
+        return response;
+      })
+      .catch(() => caches.match(request).then((cached) => cached || new Response('Offline', { status: 503 })))
+  );
+});
+
 // Push notification received
 self.addEventListener('push', (event) => {
   let data = { title: 'Ghost Messenger', body: 'New message', icon: '/ghost-icon.png' };

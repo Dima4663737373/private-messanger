@@ -1,19 +1,19 @@
-# 👻 Ghost Messenger — Private Messaging on Aleo
+# Ghost Messenger — Private Messaging on Aleo
 
-Decentralized end-to-end encrypted messenger with **mandatory on-chain blockchain proof** for all message and profile operations.
+Decentralized end-to-end encrypted messenger built on the **Aleo blockchain** with hybrid on-chain/off-chain architecture.
 
-**Live Demo:** [Coming soon on Netlify]
-**Backend:** [Railway](https://ghost-production-839c.up.railway.app)
-**Contract:** `ghost_msg_015.aleo` ([View on Explorer](https://testnetbeta.aleoscan.io/program?id=ghost_msg_015.aleo))
+**Live:** [ghost-aleo.netlify.app](https://ghost-aleo.netlify.app)
+**Backend:** [Render](https://ghost-backend-d3gg.onrender.com)
+**Contract:** `ghost_msg_018.aleo` ([View on Explorer](https://testnetbeta.aleoscan.io/program?id=ghost_msg_018.aleo))
 
 ---
 
-## 🚀 Quick Start (Local Development)
+## Quick Start (Local Development)
 
 ### Prerequisites
 - Node.js 20+
 - npm (with `--legacy-peer-deps` flag)
-- Aleo wallet ([Leo Wallet](https://leo.app), Puzzle, or Fox Wallet)
+- [Shield Wallet](https://shieldwallet.app) browser extension
 
 ### Run Locally
 
@@ -28,34 +28,41 @@ npm run dev
 cd frontend
 npm install --legacy-peer-deps
 npm run dev
-# → Open http://localhost:5173
+# → Open http://localhost:3000
 ```
 
-**Connect your Aleo wallet** → Sign transactions → Create profile → Start messaging!
+**Connect Shield Wallet** → Approve connection → Profile auto-registers → Start messaging!
 
 ---
 
-## 📦 Deployment (Production)
+## Deployment (Production)
 
-See **[NETLIFY_DEPLOY.md](NETLIFY_DEPLOY.md)** for full Railway + Netlify deployment guide.
+### Backend — Render
+- Web Service with Node runtime
+- PostgreSQL database (free tier)
+- Environment variables: `DATABASE_URL`, `NODE_ENV`, `CORS_ORIGINS`, `PINATA_JWT`
 
-**Quick summary:**
-1. **Backend** → Railway: `https://ghost-production-839c.up.railway.app`
-2. **Frontend** → Netlify (configured in `netlify.toml`)
-3. **Smart Contract** → Deployed: `ghost_msg_015.aleo`
+### Frontend — Netlify
+- Auto-deploys from GitHub `main` branch
+- Build: `cd frontend && npm install --legacy-peer-deps && npm run build`
+- Environment configured in `netlify.toml`
+
+### Smart Contract — Aleo Testnet
+- Deployed: `ghost_msg_018.aleo`
+- Immutable (`@noupgrade` constructor)
 
 ---
 
-## 🏗️ Architecture
+## Architecture
 
-### On-Chain First Messaging
+### Hybrid Messaging Model
 
 | Layer | Purpose | Speed | Cost |
 |-------|---------|-------|------|
-| **Off-chain** (WebSocket) | Instant message delivery + sync | < 100ms | Free |
-| **On-chain** (Aleo) | All operations (send, edit, delete, profile) | ~10-30s | ~0.05 ALEO |
+| **Off-chain** (WebSocket + Socket.io) | Instant message delivery & sync | < 100ms | Free |
+| **On-chain** (Aleo) | Blockchain proof of operations | ~10-30s | ~0.05 ALEO |
 
-**All message and profile operations require on-chain transactions** with wallet signature approval. Off-chain WebSocket provides instant delivery and synchronization between clients.
+Messages are delivered instantly via WebSocket. Blockchain proof is optional (configurable per user in Settings > Privacy). When enabled, Shield Wallet signs and submits transactions with delegated proving (~14s).
 
 ### Tech Stack
 
@@ -63,12 +70,12 @@ See **[NETLIFY_DEPLOY.md](NETLIFY_DEPLOY.md)** for full Railway + Netlify deploy
 - React 18.3 + TypeScript
 - Vite 6.4
 - Tailwind CSS
-- Leo Wallet Adapter
+- Shield Wallet via `@provablehq/aleo-wallet-adaptor-*`
 - NaCl (tweetnacl-js) for E2E encryption
 
 **Backend:**
-- Express + WebSocket (ws)
-- Sequelize + SQLite
+- Express + Socket.io
+- Sequelize + PostgreSQL (production) / SQLite (dev)
 - Aleo SDK for blockchain indexing
 
 **Smart Contract:**
@@ -77,34 +84,40 @@ See **[NETLIFY_DEPLOY.md](NETLIFY_DEPLOY.md)** for full Railway + Netlify deploy
 
 ---
 
-## 🔐 Security & Privacy
+## Security & Privacy
 
-✅ **End-to-End Encryption** — Curve25519 + Salsa20/Poly1305
-✅ **Zero Server Knowledge** — Server cannot decrypt messages
-✅ **Address Hashing** — BHP256 for on-chain privacy
-✅ **Local Key Storage** — Encryption keys never leave your device
+- **End-to-End Encryption** — Curve25519 key exchange + Salsa20/Poly1305
+- **Zero Server Knowledge** — Server cannot decrypt messages
+- **Address Hashing** — BHP256 for on-chain privacy
+- **Deterministic Key Derivation** — Keys derived from wallet address, never leave device
+- **Delegated Proving** — Shield Wallet proves transactions server-side (~14s vs 30s+ local)
 
 ---
 
-## 📝 Smart Contract
+## Smart Contract
 
-**Program ID:** `ghost_msg_015.aleo`
-**TX ID:** `at1ls2f4zjkf2anmzy54k4p3tefw27nqldgnv6e2uly63r4snhuvs9slhhyve`
+**Program ID:** `ghost_msg_018.aleo`
 
-### Functions
+### Transitions
 
 | Transition | Description |
 |------------|-------------|
 | `register_profile` | Register encryption public key on-chain |
+| `update_profile` | Update encryption key |
 | `send_message` | Create message records for sender + recipient |
 | `update_message` | Edit message content |
 | `delete_message` | Consume message record |
+| `clear_history` | Clear chat history proof |
+| `delete_chat` | Delete chat proof |
+| `add_contact` | Add contact proof |
+| `update_contact` | Update contact proof |
+| `delete_contact` | Remove contact proof |
 | `create_channel` | Register channel on-chain |
 | `create_group` | Register group on-chain |
 | `delete_channel` | Remove channel |
 | `delete_group` | Remove group |
 
-### Build & Deploy Contract
+### Build & Deploy
 
 ```bash
 # Build
@@ -119,7 +132,51 @@ leo deploy --yes --broadcast \
 
 ---
 
-## 🛠️ Development
+## Wallet Integration (Shield Wallet)
+
+Ghost Messenger uses [Shield Wallet](https://shieldwallet.app) via the `@provablehq/aleo-wallet-adaptor-*` packages.
+
+### Key Features
+- **Delegated Proving** — Transactions proved server-side (~14s)
+- **Transaction Status Polling** — Real-time TX confirmation tracking
+- **Auto-Connect** — Reconnects wallet on page reload
+- **Decrypt Permission** — `DECRYPT_UPON_REQUEST` for record access
+
+### Packages
+```json
+"@provablehq/aleo-types": "^0.3.0-alpha.3",
+"@provablehq/aleo-wallet-adaptor-core": "^0.3.0-alpha.3",
+"@provablehq/aleo-wallet-adaptor-react": "^0.3.0-alpha.3",
+"@provablehq/aleo-wallet-adaptor-react-ui": "^0.3.0-alpha.3",
+"@provablehq/aleo-wallet-adaptor-shield": "^0.3.0-alpha.3",
+"@provablehq/aleo-wallet-standard": "^0.3.0-alpha.3"
+```
+
+### Usage
+```tsx
+import { AleoWalletProvider, useWallet } from "@provablehq/aleo-wallet-adaptor-react";
+import { ShieldWalletAdapter } from "@provablehq/aleo-wallet-adaptor-shield";
+import { DecryptPermission } from "@provablehq/aleo-wallet-adaptor-core";
+import { Network } from "@provablehq/aleo-types";
+
+// Provider
+<AleoWalletProvider
+  wallets={[new ShieldWalletAdapter({ appName: "Ghost Messenger" })]}
+  decryptPermission={DecryptPermission.UponRequest}
+  network={Network.TESTNET}
+  programs={[PROGRAM_ID, 'credits.aleo']}
+  autoConnect={true}
+>
+  <App />
+</AleoWalletProvider>
+
+// Hook
+const { address, connected, executeTransaction, disconnect } = useWallet();
+```
+
+---
+
+## Development
 
 ### Project Structure
 
@@ -127,62 +184,63 @@ leo deploy --yes --broadcast \
 ghost/
 ├── src/main.leo           # Smart contract source
 ├── build/main.aleo        # Compiled Aleo instructions
-├── backend/               # Express + WebSocket server
+├── backend/               # Express + Socket.io server
 │   ├── src/server.ts      # Main server
-│   └── src/database.ts    # SQLite models
+│   └── src/database.ts    # Sequelize models
 ├── frontend/              # React app
 │   ├── src/
 │   │   ├── App.tsx        # Main component
-│   │   ├── hooks/         # useContract, useSync, etc.
+│   │   ├── hooks/         # useContract, useSync, useTransaction
 │   │   └── components/    # UI components
 │   └── vite.config.ts
-└── DEPLOYMENT.md          # Production deployment guide
+├── render.yaml            # Render deployment config
+└── netlify.toml           # Netlify deployment config
 ```
 
 ### Environment Variables
 
-**Backend** (Railway):
+**Backend** (Render):
 ```env
-PORT=3002
-CORS_ORIGINS=https://your-frontend.netlify.app
-ALEO_ENDPOINT=https://api.explorer.provable.com/v1
+NODE_ENV=production
+DATABASE_URL=postgres://...
+CORS_ORIGINS=https://ghost-aleo.netlify.app
+PINATA_JWT=your_jwt_token
 ```
 
-**Frontend** (Netlify):
+**Frontend** (Netlify — set in `netlify.toml`):
 ```env
-VITE_BACKEND_URL=https://ghost-production-839c.up.railway.app
-VITE_WS_URL=wss://ghost-production-839c.up.railway.app
+VITE_BACKEND_URL=https://ghost-backend-d3gg.onrender.com
+VITE_WS_URL=wss://ghost-backend-d3gg.onrender.com
 VITE_ALEO_EXPLORER_API_BASE=https://api.explorer.provable.com/v1
 ```
 
 ---
 
-## 🎯 Features
+## Features
 
-✅ **On-Chain Transactions** — All operations require wallet signature
-✅ **Instant Messaging** — WebSocket real-time delivery
-✅ **E2E Encryption** — NaCl cryptography (Curve25519)
-✅ **Blockchain Proof** — Mandatory Aleo on-chain records
-✅ **Profiles & Contacts** — On-chain profile registration
-✅ **Message Editing** — Edit sent messages (on-chain)
-✅ **Message Deletion** — Delete messages (on-chain)
-✅ **Modern UI** — Tailwind CSS with Tipzo-inspired design
-
----
-
-## 📜 License
-
-MIT License — Copyright © 2026
+- **Instant Messaging** — Socket.io real-time delivery
+- **E2E Encryption** — NaCl cryptography (Curve25519 + Salsa20/Poly1305)
+- **Blockchain Proof** — Optional Aleo on-chain transaction records
+- **Shield Wallet** — Delegated proving for fast transactions
+- **Profiles & Contacts** — On-chain profile registration
+- **Message Editing & Deletion** — With on-chain proof
+- **File Attachments** — IPFS via Pinata
+- **Voice Messages** — Record and send audio
+- **Offline Queue** — Messages queued when disconnected
+- **Read Receipts** — Real-time delivery/read status
 
 ---
 
-## 🔗 Links
+## Links
 
 - [Aleo Developer Docs](https://developer.aleo.org)
 - [Leo Language](https://docs.leo-lang.org)
-- [Leo Wallet Adapter](https://docs.leo.app/aleo-wallet-adapter)
+- [Shield Wallet](https://shieldwallet.app)
 - [Provable API](https://docs.explorer.provable.com)
+- [Provable Wallet Adapter](https://github.com/provablehq/aleo-wallet-adaptor)
 
 ---
 
-**Built for Aleo Hackathon 2026** 🏎️
+## License
+
+MIT License — Copyright 2026

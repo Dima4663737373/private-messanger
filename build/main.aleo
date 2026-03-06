@@ -81,12 +81,16 @@ function send_message:
     assert.eq r7 r1;
     hash.bhp256 self.caller into r8 as field;
     assert.eq r8 r0;
-    cast self.caller r0 r1 r3 r4 r5 r6 into r9 as Message.record;
-    cast r2 r0 r1 r3 r4 r5 r6 into r10 as Message.record;
-    async send_message r0 r1 into r11;
-    output r9 as Message.record;
-    output r10 as Message.record;
-    output r11 as ghost_msg_018.aleo/send_message.future;
+    gte r4 1000000000000u64 into r9;
+    assert.eq r9 true;
+    lte r4 253402300799000u64 into r10;
+    assert.eq r10 true;
+    cast self.caller r0 r1 r3 r4 r5 r6 into r11 as Message.record;
+    cast r2 r0 r1 r3 r4 r5 r6 into r12 as Message.record;
+    async send_message r0 r1 into r13;
+    output r11 as Message.record;
+    output r12 as Message.record;
+    output r13 as ghost_msg_018.aleo/send_message.future;
 
 finalize send_message:
     input r0 as field.public;
@@ -202,8 +206,10 @@ finalize delete_contact:
 function create_channel:
     input r0 as field.private;
     input r1 as field.private;
-    async create_channel r0 r1 into r2;
-    output r2 as ghost_msg_018.aleo/create_channel.future;
+    cast r0 r1 into r2 as DialogPair;
+    hash.bhp256 r2 into r3 as field;
+    async create_channel r3 r1 into r4;
+    output r4 as ghost_msg_018.aleo/create_channel.future;
 
 finalize create_channel:
     input r0 as field.public;
@@ -216,8 +222,10 @@ finalize create_channel:
 function create_group:
     input r0 as field.private;
     input r1 as field.private;
-    async create_group r0 r1 into r2;
-    output r2 as ghost_msg_018.aleo/create_group.future;
+    cast r0 r1 into r2 as DialogPair;
+    hash.bhp256 r2 into r3 as field;
+    async create_group r3 r1 into r4;
+    output r4 as ghost_msg_018.aleo/create_group.future;
 
 finalize create_group:
     input r0 as field.public;
@@ -230,8 +238,10 @@ finalize create_group:
 function delete_channel:
     input r0 as field.private;
     input r1 as field.private;
-    async delete_channel r0 r1 into r2;
-    output r2 as ghost_msg_018.aleo/delete_channel.future;
+    cast r0 r1 into r2 as DialogPair;
+    hash.bhp256 r2 into r3 as field;
+    async delete_channel r3 r1 into r4;
+    output r4 as ghost_msg_018.aleo/delete_channel.future;
 
 finalize delete_channel:
     input r0 as field.public;
@@ -243,8 +253,10 @@ finalize delete_channel:
 function delete_group:
     input r0 as field.private;
     input r1 as field.private;
-    async delete_group r0 r1 into r2;
-    output r2 as ghost_msg_018.aleo/delete_group.future;
+    cast r0 r1 into r2 as DialogPair;
+    hash.bhp256 r2 into r3 as field;
+    async delete_group r3 r1 into r4;
+    output r4 as ghost_msg_018.aleo/delete_group.future;
 
 finalize delete_group:
     input r0 as field.public;

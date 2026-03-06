@@ -107,7 +107,7 @@ const InnerApp: React.FC = () => {
 
   // Apply theme to document root only when user manually changes chatTheme
   useEffect(() => {
-    applyTheme((userSettings.chatTheme || 'light') as any);
+    applyTheme(userSettings.chatTheme || 'light');
   }, [userSettings.chatTheme]);
 
   // Derive encryption keys EARLY — before WS connects, so AUTH_CHALLENGE can be answered
@@ -257,7 +257,7 @@ const InnerApp: React.FC = () => {
     const isDuplicate = processedMsgIds.current.has(msg.id);
     processedMsgIds.current.add(msg.id);
     // Silent flag: set for messages pushed on SUBSCRIBE (offline catch-up). No toasts/sounds.
-    const isSilent = !!(msg as any)._silent;
+    const isSilent = !!msg._silent;
 
     // Save to IndexedDB for persistence (with encrypted payloads)
     if (msg.dialogHash && msg.encryptedPayload && publicKey) {
@@ -665,7 +665,7 @@ const InnerApp: React.FC = () => {
           try { localStorage.setItem(`ghost_profile_${publicKey}`, JSON.stringify(profileData)); } catch {}
           if (profile.avatar_cid) setMyAvatarCid(profile.avatar_cid);
         }
-      }).catch(() => { /* own profile fetch failed, non-critical */ });
+      }).catch(e => logger.warn('[Profile] sync failed:', e));
 
       // 2. Load saved contacts from backend (persisted empty chats etc.)
       if (backendSavedContacts.length > 0) {
@@ -839,10 +839,12 @@ const InnerApp: React.FC = () => {
     }
   }, [activeChatId, activeRoomId, currentView]);
 
-  // Request notification permission on wallet connect
+  // Register push notifications on wallet connect
   useEffect(() => {
-    if (publicKey && 'Notification' in window && Notification.permission === 'default') {
-      Notification.requestPermission();
+    if (publicKey && 'Notification' in window) {
+      import('./utils/push-notifications').then(({ subscribeToPush }) => {
+        subscribeToPush().catch(e => logger.warn('[Push] subscription failed:', e));
+      });
     }
   }, [publicKey]);
 
@@ -909,7 +911,15 @@ const InnerApp: React.FC = () => {
     loadDialogMessagesFromIDB(activeDialogHash, 100).then(cachedMsgs => {
       if (cachedMsgs && cachedMsgs.length > 0) {
         const sorted = cachedMsgs.sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
-        setHistories(prev => ({ ...prev, [activeChatId]: sorted }));
+        setHistories(prev => {
+          const existing = prev[activeChatId] || [];
+          if (existing.length === 0) return { ...prev, [activeChatId]: sorted };
+          // Merge with any messages already in state (e.g. from WS)
+          const existingIds = new Set(existing.map(m => m.id));
+          const newMsgs = sorted.filter(m => !existingIds.has(m.id));
+          if (newMsgs.length === 0) return prev;
+          return { ...prev, [activeChatId]: [...existing, ...newMsgs].sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0)) };
+        });
         logger.debug(`[IndexedDB] Loaded ${cachedMsgs.length} cached messages for ${activeChatId.slice(0, 10)}`);
       }
     }).catch(err => logger.error('[IndexedDB] Failed to load messages:', err));
@@ -1479,7 +1489,7 @@ const InnerApp: React.FC = () => {
 
     // 2. Delete messages from backend
     if (contact?.dialogHash) {
-      try { await clearDMHistory(contact.dialogHash); } catch {}
+      try { await clearDMHistory(contact.dialogHash); } catch (e) { logger.warn('clearDMHistory failed:', e); }
     }
 
     // 3. Clear local state (messages + sidebar preview)
@@ -1840,7 +1850,7 @@ const InnerApp: React.FC = () => {
           onClose={() => setViewingProfile(null)} 
           onSendMessage={handleSendMessageFromProfile}
           onAddContact={handleAddContact}
-          isContact={contacts.some(c => c.address === (viewingProfile.address || viewingProfile.id))}
+          isContact={contacts.some(c => c.address === (viewingProfile.address || ('id' in viewingProfile ? viewingProfile.id : '')))}
         />
       )}
 
@@ -1908,7 +1918,7 @@ const InnerApp: React.FC = () => {
               : () => activeDialogHash && sendTyping(activeDialogHash)}
             onViewProfile={activeRoomId ? undefined : (chat) => {
                 const contact = contacts.find(c => c.id === chat.id);
-                setViewingProfile(contact || { ...chat, address: chat.id });
+                setViewingProfile(contact || { address: chat.id, username: chat.name } as NetworkProfile);
             }}
             onReact={(msgId, emoji) => addReaction(msgId, emoji)}
             onRemoveReaction={(msgId, emoji) => removeReaction(msgId, emoji)}
@@ -1931,7 +1941,7 @@ const InnerApp: React.FC = () => {
             contactOnline={contactOnlineStatus?.online}
             contactLastSeen={contactOnlineStatus?.lastSeen}
             contactHideAvatar={contactOnlineStatus?.showAvatar === false}
-            linkPreviews={userSettings.linkPreviews}
+            linkPreviews={userSettings.linkPreview}
             fetchLinkPreview={fetchLinkPreview}
             isBlocked={!activeRoomId && activeChatId ? blockedUsers.includes(activeChatId) : false}
             isBlockedByUser={!activeRoomId && activeChatId ? blockedByUsers.includes(activeChatId) : false}
@@ -2178,33 +2188,36 @@ const InnerApp: React.FC = () => {
   );
 };
 
-interface ErrorBoundaryState {
-  hasError: boolean;
-  error: Error | null;
-}
+// ErrorBoundary — class component required by React for getDerivedStateFromError
+interface EBProps { children: React.ReactNode }
+interface EBState { hasError: boolean; error: Error | null }
 
-class ErrorBoundary extends React.Component<{ children: React.ReactNode }, ErrorBoundaryState> {
-  state: ErrorBoundaryState = { hasError: false, error: null };
+class ErrorBoundary extends React.Component<EBProps, EBState> {
+  private _rejHandler: ((e: PromiseRejectionEvent) => void) | null = null;
 
-  static getDerivedStateFromError(error: Error): ErrorBoundaryState {
+  constructor(p: EBProps) {
+    super(p);
+    this.state = { hasError: false, error: null };
+  }
+
+  static getDerivedStateFromError(error: Error): EBState {
     return { hasError: true, error };
   }
 
   componentDidMount() {
-    // Catch unhandled promise rejections
-    window.addEventListener('unhandledrejection', (event: PromiseRejectionEvent) => {
+    this._rejHandler = (event: PromiseRejectionEvent) => {
       logger.error('Unhandled promise rejection:', event.reason);
-      // @ts-ignore - setState exists on Component instance
-      this.setState({
-        hasError: true,
-        error: event.reason instanceof Error ? event.reason : new Error(String(event.reason))
-      });
+      this.setState({ hasError: true, error: event.reason instanceof Error ? event.reason : new Error(String(event.reason)) });
       event.preventDefault();
-    });
+    };
+    window.addEventListener('unhandledrejection', this._rejHandler);
+  }
+
+  componentWillUnmount() {
+    if (this._rejHandler) window.removeEventListener('unhandledrejection', this._rejHandler);
   }
 
   render() {
-    // @ts-ignore - state exists on Component instance
     if (this.state.hasError) {
       return (
         <div className="min-h-screen bg-[#0A0A0A] flex items-center justify-center p-8">
@@ -2213,19 +2226,14 @@ class ErrorBoundary extends React.Component<{ children: React.ReactNode }, Error
               <span className="text-red-500 text-3xl">!</span>
             </div>
             <h1 className="text-white text-2xl font-bold mb-3">Something went wrong</h1>
-            {/* @ts-ignore */}
             <p className="text-[#999] mb-6">{this.state.error?.message || 'An unexpected error occurred.'}</p>
-            <button
-              onClick={() => window.location.reload()}
+            <button onClick={() => window.location.reload()}
               className="px-6 py-3 bg-[#FF8C00] text-black font-bold rounded-xl hover:bg-[#FF9F2A] transition-all btn-press hover:shadow-lg hover:shadow-[#FF8C00]/20"
-            >
-              Reload App
-            </button>
+            >Reload App</button>
           </div>
         </div>
       );
     }
-    // @ts-ignore - props exists on Component instance
     return this.props.children;
   }
 }
@@ -2248,7 +2256,7 @@ function App() {
         network={Network.TESTNET}
         programs={[PROGRAM_ID, 'credits.aleo']}
         autoConnect={true}
-        onError={(error: any) => console.error('[Wallet]', error.message)}
+        onError={(error: any) => logger.error('[Wallet]', error.message)}
       >
         <InnerApp />
       </AleoWalletProvider>

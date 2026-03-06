@@ -12,7 +12,7 @@ Client → WebSocket → Backend → Database → WebSocket → Client
 ### ⛓️ Варіант Б: Blockchain Messenger
 **Концепція:** Повністю децентралізований через smart contracts
 ```
-Client → Leo Wallet → Aleo Blockchain → Block Confirmation → Client Polling
+Client → Shield Wallet → Aleo Blockchain → Block Confirmation → Client Polling
 ⏱️ Latency: 15-60s | 💰 Cost: $0.001-0.01/msg | ⭐ Складність: 5/5
 ```
 

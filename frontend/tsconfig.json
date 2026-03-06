@@ -10,6 +10,8 @@
       "DOM.Iterable"
     ],
     "skipLibCheck": true,
+    "strictBindCallApply": true,
+    "strictFunctionTypes": true,
     "types": [
       "node"
     ],

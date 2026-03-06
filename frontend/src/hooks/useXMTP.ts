@@ -174,7 +174,7 @@ export function useXMTP(aleoAddress: string | null): UseXmtpReturn {
       }
 
       // Get recipient's inbox ID
-      const inboxId = await client.getInboxIdByIdentifier({
+      const inboxId = await client.fetchInboxIdByIdentifier({
         identifier: ethAddress,
         identifierKind: IdentifierKind.Ethereum,
       });
@@ -208,7 +208,7 @@ export function useXMTP(aleoAddress: string | null): UseXmtpReturn {
     try {
       const ethAddress = getXmtpEthAddress(recipientAleoAddress);
 
-      const inboxId = await client.getInboxIdByIdentifier({
+      const inboxId = await client.fetchInboxIdByIdentifier({
         identifier: ethAddress,
         identifierKind: IdentifierKind.Ethereum,
       });

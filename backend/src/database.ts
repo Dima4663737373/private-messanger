@@ -1,5 +1,6 @@
 import { Sequelize, DataTypes, Model } from 'sequelize';
 import path from 'path';
+import { logger } from './utils/logger';
 
 // ── Database Configuration ──────────────────────
 // Priority: DATABASE_URL (PostgreSQL) > SQLite (local dev)
@@ -22,7 +23,7 @@ if (DATABASE_URL) {
     }),
     pool: { max: 10, min: 2, acquire: 30000, idle: 10000 },
   });
-  console.log(`[DB] Using PostgreSQL (persistent storage, SSL: ${!noSSL})`);
+  logger.info(`[DB] Using PostgreSQL (persistent storage, SSL: ${!noSSL})`);
 } else {
   // SQLite — local development only
   usingSQLite = true;
@@ -32,14 +33,14 @@ if (DATABASE_URL) {
   if (DB_ENCRYPTION_KEY) {
     try {
       dialectModule = require('@journeyapps/sqlcipher');
-      console.log('[DB] SQLCipher module loaded — encryption enabled');
+      logger.info('[DB] SQLCipher module loaded — encryption enabled');
     } catch (err) {
-      console.error('[DB] FATAL: DB_ENCRYPTION_KEY is set but @journeyapps/sqlcipher package is not installed!');
+      logger.error('[DB] FATAL: DB_ENCRYPTION_KEY is set but @journeyapps/sqlcipher package is not installed!');
       throw new Error('SQLCipher module required but not installed');
     }
   } else {
-    console.warn('[DB] WARNING: Using SQLite without encryption (local dev only)');
-    console.warn('[DB] Set DATABASE_URL for persistent PostgreSQL in production!');
+    logger.warn('[DB] WARNING: Using SQLite without encryption (local dev only)');
+    logger.warn('[DB] Set DATABASE_URL for persistent PostgreSQL in production!');
   }
 
   sequelize = new Sequelize({
@@ -48,7 +49,7 @@ if (DATABASE_URL) {
     logging: false,
     ...(dialectModule ? { dialectModule } : {}),
   });
-  console.log('[DB] Using SQLite (local development)');
+  logger.info('[DB] Using SQLite (local development)');
 }
 
 export class SyncStatus extends Model {
@@ -646,18 +647,48 @@ SessionRecord.init({
   indexes: [{ fields: ['address'] }],
 });
 
+// ── Push Notification Subscriptions ───────────────────
+export class PushSubscription extends Model {
+  declare id: number;
+  declare address: string;
+  declare endpoint: string;
+  declare keys_p256dh: string;
+  declare keys_auth: string;
+  declare created_at: number;
+}
+
+PushSubscription.init({
+  id: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
+  address: { type: DataTypes.STRING, allowNull: false },
+  endpoint: { type: DataTypes.TEXT, allowNull: false, unique: true },
+  keys_p256dh: { type: DataTypes.STRING, allowNull: false },
+  keys_auth: { type: DataTypes.STRING, allowNull: false },
+  created_at: { type: DataTypes.BIGINT, defaultValue: () => Date.now() },
+}, {
+  sequelize,
+  modelName: 'PushSubscription',
+  timestamps: false,
+  indexes: [{ fields: ['address'] }],
+});
+
 export const initDB = async () => {
   // Apply SQLCipher encryption key before any other DB operations (SQLite only)
   if (usingSQLite && process.env.DB_ENCRYPTION_KEY) {
-    await sequelize.query(`PRAGMA key = '${process.env.DB_ENCRYPTION_KEY.replace(/'/g, "''")}'`);
-    console.log('[DB] SQLCipher PRAGMA key applied');
+    await sequelize.query('PRAGMA key = ?', { replacements: [process.env.DB_ENCRYPTION_KEY] });
+    logger.info('[DB] SQLCipher PRAGMA key applied');
   }
 
   // Test connection (important for PostgreSQL)
   await sequelize.authenticate();
-  console.log('[DB] Connection established successfully');
+  logger.info('[DB] Connection established successfully');
 
-  await sequelize.sync({ alter: true });
+  // Use 'alter: true' only in development; in production just sync schema (safe, won't drop columns)
+  const isProduction = process.env.NODE_ENV === 'production';
+  if (isProduction) {
+    await sequelize.sync(); // Creates tables if missing, does NOT alter existing columns
+  } else {
+    await sequelize.sync({ alter: true }); // Dev: auto-migrate schema changes
+  }
   const status = await SyncStatus.findOne();
   if (!status) {
     await SyncStatus.create({ last_block_height: 0 });

@@ -84,6 +84,12 @@ class IndexedDBStorage {
   private db: IDBDatabase | null = null;
   private initPromise: Promise<void> | null = null;
 
+  /** Get initialized DB or throw */
+  private getDb(): IDBDatabase {
+    if (!this.db) throw new Error('Database not initialized');
+    return this.db;
+  }
+
   /**
    * Initialize database connection
    */
@@ -156,10 +162,10 @@ class IndexedDBStorage {
    */
   async saveMessage(message: StoredMessage): Promise<void> {
     await this.init();
-    if (!this.db) throw new Error('Database not initialized');
+    const db = this.getDb();
 
     return new Promise((resolve, reject) => {
-      const tx = this.db!.transaction(STORES.MESSAGES, 'readwrite');
+      const tx = db.transaction(STORES.MESSAGES, 'readwrite');
       const store = tx.objectStore(STORES.MESSAGES);
       const request = store.put(message);
 
@@ -173,10 +179,10 @@ class IndexedDBStorage {
    */
   async saveMessages(messages: StoredMessage[]): Promise<void> {
     await this.init();
-    if (!this.db) throw new Error('Database not initialized');
+    const db = this.getDb();
 
     return new Promise((resolve, reject) => {
-      const tx = this.db!.transaction(STORES.MESSAGES, 'readwrite');
+      const tx = db.transaction(STORES.MESSAGES, 'readwrite');
       const store = tx.objectStore(STORES.MESSAGES);
 
       let completed = 0;
@@ -200,10 +206,10 @@ class IndexedDBStorage {
    */
   async getDialogMessages(dialogHash: string, limit = 100, offset = 0): Promise<StoredMessage[]> {
     await this.init();
-    if (!this.db) throw new Error('Database not initialized');
+    const db = this.getDb();
 
     return new Promise((resolve, reject) => {
-      const tx = this.db!.transaction(STORES.MESSAGES, 'readonly');
+      const tx = db.transaction(STORES.MESSAGES, 'readonly');
       const store = tx.objectStore(STORES.MESSAGES);
       const index = store.index('dialogHash');
       const request = index.getAll(IDBKeyRange.only(dialogHash));
@@ -224,10 +230,10 @@ class IndexedDBStorage {
    */
   async getAllDialogs(): Promise<StoredDialog[]> {
     await this.init();
-    if (!this.db) throw new Error('Database not initialized');
+    const db = this.getDb();
 
     return new Promise((resolve, reject) => {
-      const tx = this.db!.transaction(STORES.DIALOGS, 'readonly');
+      const tx = db.transaction(STORES.DIALOGS, 'readonly');
       const store = tx.objectStore(STORES.DIALOGS);
       const request = store.getAll();
 
@@ -246,10 +252,10 @@ class IndexedDBStorage {
    */
   async saveDialog(dialog: StoredDialog): Promise<void> {
     await this.init();
-    if (!this.db) throw new Error('Database not initialized');
+    const db = this.getDb();
 
     return new Promise((resolve, reject) => {
-      const tx = this.db!.transaction(STORES.DIALOGS, 'readwrite');
+      const tx = db.transaction(STORES.DIALOGS, 'readwrite');
       const store = tx.objectStore(STORES.DIALOGS);
       const request = store.put(dialog);
 
@@ -263,10 +269,10 @@ class IndexedDBStorage {
    */
   async saveContact(contact: StoredContact): Promise<void> {
     await this.init();
-    if (!this.db) throw new Error('Database not initialized');
+    const db = this.getDb();
 
     return new Promise((resolve, reject) => {
-      const tx = this.db!.transaction(STORES.CONTACTS, 'readwrite');
+      const tx = db.transaction(STORES.CONTACTS, 'readwrite');
       const store = tx.objectStore(STORES.CONTACTS);
       const request = store.put(contact);
 
@@ -280,10 +286,10 @@ class IndexedDBStorage {
    */
   async getAllContacts(): Promise<StoredContact[]> {
     await this.init();
-    if (!this.db) throw new Error('Database not initialized');
+    const db = this.getDb();
 
     return new Promise((resolve, reject) => {
-      const tx = this.db!.transaction(STORES.CONTACTS, 'readonly');
+      const tx = db.transaction(STORES.CONTACTS, 'readonly');
       const store = tx.objectStore(STORES.CONTACTS);
       const request = store.getAll();
 
@@ -302,10 +308,10 @@ class IndexedDBStorage {
    */
   async getContact(address: string): Promise<StoredContact | null> {
     await this.init();
-    if (!this.db) throw new Error('Database not initialized');
+    const db = this.getDb();
 
     return new Promise((resolve, reject) => {
-      const tx = this.db!.transaction(STORES.CONTACTS, 'readonly');
+      const tx = db.transaction(STORES.CONTACTS, 'readonly');
       const store = tx.objectStore(STORES.CONTACTS);
       const request = store.get(address);
 
@@ -319,10 +325,10 @@ class IndexedDBStorage {
    */
   async saveProfile(profile: StoredProfile): Promise<void> {
     await this.init();
-    if (!this.db) throw new Error('Database not initialized');
+    const db = this.getDb();
 
     return new Promise((resolve, reject) => {
-      const tx = this.db!.transaction(STORES.PROFILES, 'readwrite');
+      const tx = db.transaction(STORES.PROFILES, 'readwrite');
       const store = tx.objectStore(STORES.PROFILES);
       const request = store.put(profile);
 
@@ -336,10 +342,10 @@ class IndexedDBStorage {
    */
   async getProfile(address: string): Promise<StoredProfile | null> {
     await this.init();
-    if (!this.db) throw new Error('Database not initialized');
+    const db = this.getDb();
 
     return new Promise((resolve, reject) => {
-      const tx = this.db!.transaction(STORES.PROFILES, 'readonly');
+      const tx = db.transaction(STORES.PROFILES, 'readonly');
       const store = tx.objectStore(STORES.PROFILES);
       const request = store.get(address);
 
@@ -353,10 +359,10 @@ class IndexedDBStorage {
    */
   async deleteMessage(messageId: string): Promise<void> {
     await this.init();
-    if (!this.db) throw new Error('Database not initialized');
+    const db = this.getDb();
 
     return new Promise((resolve, reject) => {
-      const tx = this.db!.transaction(STORES.MESSAGES, 'readwrite');
+      const tx = db.transaction(STORES.MESSAGES, 'readwrite');
       const store = tx.objectStore(STORES.MESSAGES);
       const request = store.delete(messageId);
 
@@ -370,10 +376,10 @@ class IndexedDBStorage {
    */
   async deleteDialogMessages(dialogHash: string): Promise<void> {
     await this.init();
-    if (!this.db) throw new Error('Database not initialized');
+    const db = this.getDb();
 
     return new Promise((resolve, reject) => {
-      const tx = this.db!.transaction(STORES.MESSAGES, 'readwrite');
+      const tx = db.transaction(STORES.MESSAGES, 'readwrite');
       const store = tx.objectStore(STORES.MESSAGES);
       const index = store.index('dialogHash');
       const request = index.openCursor(IDBKeyRange.only(dialogHash));
@@ -396,12 +402,12 @@ class IndexedDBStorage {
    */
   async clearAll(): Promise<void> {
     await this.init();
-    if (!this.db) throw new Error('Database not initialized');
+    const db = this.getDb();
 
     const stores = [STORES.MESSAGES, STORES.CONTACTS, STORES.DIALOGS, STORES.PROFILES];
 
     return new Promise((resolve, reject) => {
-      const tx = this.db!.transaction(stores, 'readwrite');
+      const tx = db.transaction(stores, 'readwrite');
 
       stores.forEach((storeName) => {
         const store = tx.objectStore(storeName);

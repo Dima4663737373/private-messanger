@@ -4,6 +4,7 @@
  */
 import { useState, useCallback, useRef, useEffect } from 'react';
 import { useWallet } from '@provablehq/aleo-wallet-adaptor-react';
+import { logger } from '../utils/logger';
 
 export type TxStatus = 'idle' | 'submitting' | 'pending' | 'accepted' | 'rejected' | 'failed' | 'error';
 
@@ -59,7 +60,7 @@ export function useTransaction() {
 
     try {
       const statusResponse = await transactionStatus(tempTxId);
-      console.log(`[TX Poll #${maxPollsRef.current}] Status:`, statusResponse);
+      logger.debug(`[TX Poll #${maxPollsRef.current}] Status:`, statusResponse);
 
       const statusStr = statusResponse.status?.toLowerCase() || '';
 
@@ -89,7 +90,7 @@ export function useTransaction() {
         }
       }
     } catch (err) {
-      console.error('[TX Poll] Error:', err);
+      logger.error('[TX Poll] Error:', err);
       if (maxPollsRef.current > 5) {
         stopPolling();
         setState(prev => ({
@@ -119,11 +120,11 @@ export function useTransaction() {
     setState({ status: 'submitting', tempTxId: null, onChainTxId: null, error: null });
 
     try {
-      console.log('[TX] Executing:', options.program, options.function, options.inputs);
+      logger.debug('[TX] Executing:', options.program, options.function, options.inputs);
       const result = await executeTransaction(options);
 
       const tempId = result?.transactionId || null;
-      console.log('[TX] Submitted, temp ID:', tempId);
+      logger.debug('[TX] Submitted, temp ID:', tempId);
 
       setState({ status: 'pending', tempTxId: tempId, onChainTxId: null, error: null });
 
@@ -139,7 +140,7 @@ export function useTransaction() {
 
       return tempId;
     } catch (err) {
-      console.error('[TX] Execution failed:', err);
+      logger.error('[TX] Execution failed:', err);
       setState({
         status: 'error',
         tempTxId: null,

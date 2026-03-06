@@ -13,7 +13,7 @@
 - **Implementation:** Removed optional "Blockchain Proof" toggle, all operations are mandatory on-chain
 
 ### Smart Contract
-- **Status:** ✅ `ghost_msg_015.aleo` deployed on Testnet Beta
+- **Status:** ✅ `ghost_msg_018.aleo` deployed on Testnet Beta
 - **TX ID:** `at1ls2f4zjkf2anmzy54k4p3tefw27nqldgnv6e2uly63r4snhuvs9slhhyve`
 - **Transitions:** register_profile, send_message, update_message, delete_message, create_channel, create_group, delete_channel, delete_group
 
@@ -26,10 +26,9 @@
 
 ## 🔄 In Progress
 
-### Multi-Wallet Support
-- **Current State:** Only Leo Wallet is supported
-- **Ready to Add:** Puzzle Wallet, Fox Wallet, Soter Wallet
-- **Coming Soon:** Shield Wallet (Q1 2026)
+### Wallet Integration
+- **Current State:** Shield Wallet integrated via `@provablehq/aleo-wallet-adaptor-shield`
+- **Features:** Delegated proving (~14s), auto-connect, transaction status polling
 - **Documentation:** See [WALLET_INTEGRATION.md](WALLET_INTEGRATION.md)
 
 ### Frontend Deployment
@@ -108,7 +107,7 @@
 ### 5. Smart Contract Features
 
 **Current State:**
-- `ghost_msg_015.aleo` implements:
+- `ghost_msg_018.aleo` implements:
   - ✅ Private message records (sender + recipient copies)
   - ✅ Dialog tracking (last block mapping)
   - ✅ Profile registration (encryption keys)

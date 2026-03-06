@@ -4,7 +4,7 @@ import { Message, Room, PinnedMessage, RawMessage, RawRoom, RawRoomMessage } fro
 import { getQueuedMessages, dequeueMessage, enqueueMessage } from '../utils/offline-queue';
 import { getCachedMessage, getCachedMessages, cacheMessage, removeCachedMessage, pruneExpired } from '../utils/message-cache';
 import { fieldToString, fieldsToString } from '../utils/messageUtils';
-import { encryptMessage, encryptRoomMessage, decryptRoomMessage, generateRoomKey, encryptRoomKeyForMember, decryptRoomKey } from '../utils/crypto';
+import { encryptMessage, decryptMessage, decryptMessageAsSender, encryptRoomMessage, decryptRoomMessage, generateRoomKey, encryptRoomKeyForMember, decryptRoomKey } from '../utils/crypto';
 import { getCachedKeys } from '../utils/key-derivation';
 import { toast } from 'react-hot-toast';
 import { API_CONFIG } from '../config';
@@ -92,6 +92,27 @@ export function useSync(
       if (parts.length !== 2) return false;
       const b64 = /^[A-Za-z0-9+/=]{16,}$/;
       return b64.test(parts[0]) && b64.test(parts[1]);
+  };
+
+  // Attempt to decrypt encrypted reply text (falls back to plaintext for old messages)
+  const tryDecryptReplyText = (text: string | undefined, sender: string, recipient: string): string | undefined => {
+    if (!text) return undefined;
+    if (!isEncryptedFormat(text)) return text; // Plaintext reply (old format)
+    try {
+      const myKeys = address ? getCachedKeys(address) : null;
+      if (!myKeys) return text;
+      const isMine = sender === address;
+      if (isMine) {
+        // I sent this — decrypt with my keys against recipient's pubkey
+        const recipientPk = keyCache.current.get(recipient);
+        if (recipientPk) return decryptMessageAsSender(text, recipientPk, myKeys.secretKey) || text;
+      } else {
+        // I received this — sender encrypted for me
+        const senderPk = keyCache.current.get(sender);
+        if (senderPk) return decryptMessage(text, senderPk, myKeys.secretKey) || text;
+      }
+    } catch { /* ignore */ }
+    return text;
   };
 
   const decryptPayload = async (
@@ -345,7 +366,7 @@ export function useSync(
       // Fetch who blocked me
       safeBackendFetch<{ blockedBy: string[] }>(`blocked-by/${address}`)
         .then(res => { if (res.data?.blockedBy) setBlockedByUsers(res.data.blockedBy); })
-        .catch(() => {});
+        .catch(e => logger.warn('blocked-by fetch failed:', e));
 
       // Flush offline queue after reconnection
       getQueuedMessages().then(async (queued) => {
@@ -526,7 +547,7 @@ export function useSync(
           if (decrypted && !decrypted.startsWith('[Encrypted')) {
             decryptionPendingRef.current.delete(msgId);
             cacheSet(decryptionCache.current, msgId, decrypted, MAX_CACHE_SIZE);
-            cacheMessage(msgId, decrypted, Number(pending.timestamp)).catch(() => {});
+            cacheMessage(msgId, decrypted, Number(pending.timestamp)).catch(e => logger.warn('[Cache] save failed:', e));
             if (callbacksRef.current.onMessageUpdated) {
               callbacksRef.current.onMessageUpdated(msgId, decrypted);
             }
@@ -558,7 +579,7 @@ export function useSync(
       if (callbacksRef.current.onMessageDeleted) {
         callbacksRef.current.onMessageDeleted(data.id);
       }
-      removeCachedMessage(data.id).catch(() => {});
+      removeCachedMessage(data.id).catch(e => logger.warn('[Cache] remove failed:', e));
     });
 
     socket.on('message_updated', async (data: { id: string; encryptedPayload: string; sender: string; recipient: string; timestamp: number; encryptedPayloadSelf?: string; editedAt?: number; editCount?: number }) => {
@@ -596,7 +617,7 @@ export function useSync(
           );
           if (text && !text.startsWith('[Encrypted')) {
             cacheSet(decryptionCache.current, rawMsg.id, text, MAX_CACHE_SIZE);
-            cacheMessage(rawMsg.id, text, Number(rawMsg.timestamp)).catch(() => {});
+            cacheMessage(rawMsg.id, text, Number(rawMsg.timestamp)).catch(e => logger.warn('[Cache] save failed:', e));
           } else if (rawMsg.sender !== address) {
             // Track for retry when sender registers their encryption key
             decryptionPendingRef.current.set(rawMsg.id, {
@@ -630,7 +651,7 @@ export function useSync(
           encryptedPayloadSelf: rawMsg.encryptedPayloadSelf,
           _silent: true, // suppress toasts/sounds in handleNewMessage
         };
-        callbacksRef.current.onNewMessage(msg as any);
+        callbacksRef.current.onNewMessage(msg as Message);
       }
     });
 
@@ -660,7 +681,7 @@ export function useSync(
         );
         if (text && !text.startsWith('[Encrypted')) {
           cacheSet(decryptionCache.current, rawMsg.id, text, MAX_CACHE_SIZE);
-          cacheMessage(rawMsg.id, text, Number(rawMsg.timestamp)).catch(() => {});
+          cacheMessage(rawMsg.id, text, Number(rawMsg.timestamp)).catch(e => logger.warn('[Cache] save failed:', e));
         } else {
           if (!text || text.includes('[Encrypted')) {
             logger.warn(`[Decrypt] Failed for msg ${rawMsg.id?.slice(0,8)}: sender=${rawMsg.sender?.slice(0,10)} recipient=${rawMsg.recipient?.slice(0,10)} isMine=${isMine} hasSenderKey=${!!rawMsg.senderEncryptionKey}`);
@@ -707,7 +728,7 @@ export function useSync(
         recipientHash: rawMsg.recipientHash,
         dialogHash: rawMsg.dialogHash,
         replyToId: rawMsg.replyToId || rawMsg.reply_to_id || undefined,
-        replyToText: rawMsg.replyToText || rawMsg.reply_to_text || undefined,
+        replyToText: tryDecryptReplyText(rawMsg.replyToText || rawMsg.reply_to_text, rawMsg.sender, rawMsg.recipient),
         replyToSender: rawMsg.replyToSender || rawMsg.reply_to_sender || undefined,
         encryptedPayload: rawMsg.encryptedPayload || rawMsg.content_encrypted,
         encryptedPayloadSelf: rawMsg.encryptedPayloadSelf || rawMsg.encrypted_payload_self
@@ -730,7 +751,7 @@ export function useSync(
 
     // ── Blockchain confirmation ──
     socket.on('tx_confirmed', (data: { id: string; blockHeight: number }) => {
-      callbacksRef.current.onNewMessage({ id: data.id, status: 'included' } as any);
+      callbacksRef.current.onNewMessage({ id: data.id, status: 'included' } as Message);
     });
 
     socket.on('connect_error', (err: Error) => {
@@ -894,7 +915,7 @@ export function useSync(
                  if (text) {
                    cacheSet(decryptionCache.current, rawMsg.id, text, MAX_CACHE_SIZE);
                    // Persist to IndexedDB for cross-session cache
-                   cacheMessage(rawMsg.id, text, Number(rawMsg.timestamp)).catch(() => {});
+                   cacheMessage(rawMsg.id, text, Number(rawMsg.timestamp)).catch(e => logger.warn('[Cache] save failed:', e));
                  }
             } else if (!decryptionCache.current.has(rawMsg.id)) {
                  // Restore in-memory cache from IndexedDB hit
@@ -920,14 +941,14 @@ export function useSync(
               time: new Date(Number(rawMsg.timestamp)).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
               senderId: rawMsg.sender === address ? 'me' : rawMsg.sender,
               isMine: rawMsg.sender === address,
-              status: rawMsg.status || 'sent',
+              status: (rawMsg.status || 'sent') as Message['status'],
               timestamp: Number(rawMsg.timestamp),
               readAt: rawMsg.read_at ? Number(rawMsg.read_at) : undefined,
               recipient: rawMsg.recipient,
               attachment,
               reactions: allReactions[rawMsg.id] || undefined,
               replyToId: rawMsg.reply_to_id || undefined,
-              replyToText: rawMsg.reply_to_text || undefined,
+              replyToText: tryDecryptReplyText(rawMsg.reply_to_text, rawMsg.sender, rawMsg.recipient),
               replyToSender: rawMsg.reply_to_sender || undefined,
               edited: rawMsg.edit_count > 0 || !!rawMsg.edited_at,
               editedAt: rawMsg.edited_at ? Number(rawMsg.edited_at) : undefined,
@@ -1235,7 +1256,13 @@ export function useSync(
     const tempId = `temp_${Date.now()}_${Array.from(crypto.getRandomValues(new Uint8Array(6)), b => b.toString(36)).join('').slice(0, 8)}`;
     const timestamp = Date.now();
 
-    return { tempId, encryptedPayload, encryptedPayloadSelf, timestamp, senderHash, recipientHash, dialogHash, replyToId: replyTo?.id, replyToText: replyTo?.text, replyToSender: replyTo?.sender };
+    // Encrypt reply text to prevent plaintext metadata leakage
+    let replyToText = replyTo?.text;
+    if (replyToText && recipientPubKey) {
+      replyToText = encryptMessage(replyToText, recipientPubKey, myKeys.secretKey);
+    }
+
+    return { tempId, encryptedPayload, encryptedPayloadSelf, timestamp, senderHash, recipientHash, dialogHash, replyToId: replyTo?.id, replyToText, replyToSender: replyTo?.sender };
   };
 
   // Actually send the prepared message via Socket.io (queues to offline queue on failure)
@@ -1394,10 +1421,10 @@ export function useSync(
   // Periodic IndexedDB cache cleanup (every 30 min)
   useEffect(() => {
     const pruneInterval = setInterval(() => {
-      pruneExpired().catch(() => {});
+      pruneExpired().catch(e => logger.warn('[Cache] prune failed:', e));
     }, 30 * 60 * 1000);
     // Run once on mount
-    pruneExpired().catch(() => {});
+    pruneExpired().catch(e => logger.warn('[Cache] prune failed:', e));
     return () => clearInterval(pruneInterval);
   }, []);
 

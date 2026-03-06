@@ -89,16 +89,18 @@ export async function aleoSafeFetchMapping(
 
       } catch (error) {
         lastError = error;
-        
+        const errMsg = error instanceof Error ? error.message : String(error);
+        const errName = error instanceof Error ? error.name : '';
+
         // Don't retry on 404 (logic handled above, but double check)
-        if (error.message.includes('404')) {
+        if (errMsg.includes('404')) {
             break;
         }
 
-        const isNetworkError = error.name === 'AbortError' || error.message.includes('Failed to fetch');
-        
+        const isNetworkError = errName === 'AbortError' || errMsg.includes('Failed to fetch');
+
         if (attempt < retries && isNetworkError) {
-          logger.warn(`Network error fetching mapping (attempt ${attempt + 1}/${retries + 1}): ${error.message}`);
+          logger.warn(`Network error fetching mapping (attempt ${attempt + 1}/${retries + 1}): ${errMsg}`);
           await new Promise(r => setTimeout(r, retryDelay * (attempt + 1))); // Exponential backoff
           continue;
         }

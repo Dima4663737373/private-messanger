@@ -624,8 +624,8 @@ class RedisSessionStore {
 #### Frontend
 ```typescript
 // Blockchain Interaction
-- @demox-labs/aleo-wallet-adapter-react
-- @demox-labs/aleo-wallet-adapter-leo
+- @provablehq/aleo-wallet-adaptor-react
+- @provablehq/aleo-wallet-adaptor-shield
 - Aleo SDK / leo-wasm
 
 // Storage
@@ -823,7 +823,7 @@ class TransactionBuilder {
 │           ВІДПРАВКА ПОВІДОМЛЕННЯ (BLOCKCHAIN)                 │
 └──────────────────────────────────────────────────────────────┘
 
-[Client A]              [Leo Wallet]         [Aleo Blockchain]    [Client B]
+[Client A]              [Shield Wallet]         [Aleo Blockchain]    [Client B]
     │                       │                        │                │
     │ 1. Введення тексту   │                        │                │
     │    "Hello!"           │                        │                │
@@ -941,7 +941,7 @@ async function sendMessageOnChain(
     timestamp
   });
 
-  // 1.6. Викликати Leo Wallet для підпису транзакції
+  // 1.6. Викликати Shield Wallet для підпису транзакції
   try {
     const txId = await wallet.requestTransaction({
       program: 'ghost_msg.aleo',
