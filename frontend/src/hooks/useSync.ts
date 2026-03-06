@@ -904,7 +904,9 @@ export function useSync(
         const decryptedMessages = (await Promise.all(rawMessages.map(async (rawMsg: RawMessage) => {
           try {
             // Check in-memory cache → IndexedDB cache → decrypt
-            let text = decryptionCache.current.get(rawMsg.id) || idbCache.get(rawMsg.id);
+            // Skip cached values that are garbled (not starting with [ and containing non-printable chars)
+            const cached = decryptionCache.current.get(rawMsg.id) || idbCache.get(rawMsg.id);
+            let text = (cached && !cached.startsWith('[Encrypted')) ? cached : undefined;
             if (!text) {
                  const payload = rawMsg.encrypted_payload || rawMsg.content_encrypted;
                  text = await decryptPayload(
@@ -914,7 +916,7 @@ export function useSync(
                      rawMsg.timestamp,
                      rawMsg.encrypted_payload_self
                  );
-                 if (text) {
+                 if (text && !text.startsWith('[Encrypted')) {
                    cacheSet(decryptionCache.current, rawMsg.id, text, MAX_CACHE_SIZE);
                    // Persist to IndexedDB for cross-session cache
                    cacheMessage(rawMsg.id, text, Number(rawMsg.timestamp)).catch(e => logger.warn('[Cache] save failed:', e));
