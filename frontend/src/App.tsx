@@ -1047,28 +1047,13 @@ const InnerApp: React.FC = () => {
 
       const { tempId, encryptedPayload, timestamp } = prepared;
 
-      // 2. Request wallet approval FIRST (on-chain transaction)
-      let txId: string | undefined;
-      toast.loading('Waiting for wallet approval...', { id: 'tx-approval' });
-      try {
-        txId = await sendMessageOnChain(contact.address!, encryptedPayload, timestamp, attachmentCID);
-        toast.dismiss('tx-approval');
-        // Pre-register txId for dedup — prevents indexer's message_detected from adding garbled duplicate
-        if (txId) processedMsgIds.current.add(txId);
-      } catch (e) {
-        toast.dismiss('tx-approval');
-        logger.error('On-chain transaction failed:', e?.message);
-        toast.error('Transaction failed: ' + (e?.message || 'Unknown error'));
-        return; // Don't show message if wallet rejected/failed
-      }
-
-      // 3. Wallet approved → send off-chain via WebSocket
-      const sent = commitDMMessage(prepared, attachmentCID, txId);
+      // 2. Send via WebSocket FIRST (instant delivery)
+      const sent = commitDMMessage(prepared, attachmentCID);
       if (!sent) {
         throw new Error('Failed to send message — WebSocket not connected');
       }
 
-      // 3b. Also send via XMTP (background, decentralized backup, non-blocking)
+      // 3. Also send via XMTP (background, decentralized backup, non-blocking)
       if (isXmtpReady && !file) {
         sendXmtpMessage(contact.address!, text).catch(() => {
           // XMTP failures are silent — WebSocket is the primary transport
@@ -1083,8 +1068,7 @@ const InnerApp: React.FC = () => {
         timestamp,
         senderId: 'me',
         isMine: true,
-        status: txId ? 'confirmed' : 'pending',
-        txId,
+        status: 'pending',
         replyToId: replyTo?.id,
         replyToText: replyTo?.text,
         replyToSender: replyTo?.sender,
@@ -1110,11 +1094,7 @@ const InnerApp: React.FC = () => {
       // Cache the plaintext so deduplication works when dm_sent / message_detected arrives
       cacheDecryptedMessage(tempId, text);
 
-      if (txId) {
-        logger.debug('On-chain message txId:', txId);
-        toast.success('Message sent');
-        pushNotification('transaction', 'Transaction confirmed', `Message sent on-chain (${txId.slice(0, ADDRESS_DISPLAY.TX_ID)}...)`);
-      }
+      toast.success('Message sent');
     } catch (error) {
       logger.error("Failed to send message", error);
       toast.error('Failed to send message');
