@@ -129,6 +129,9 @@ export function useSync(
       const encrypted = isEncryptedFormat(payload);
       const isMine = sender === address;
 
+      // If payload is NOT encrypted (plaintext), return it directly
+      if (!encrypted) return payload;
+
       if (!address) return "[Encrypted Message]";
 
       try {
@@ -136,49 +139,43 @@ export function useSync(
         if (!myKeys) return "[Encrypted Message]";
         const otherParty = isMine ? recipient : sender;
 
-        // Strategy for "Encrypt to Self"
-        if (isMine && payloadSelf) {
+        // Strategy 1: "Encrypt to Self" — always works for own messages
+        if (isMine && payloadSelf && isEncryptedFormat(payloadSelf)) {
              try {
                 const decryptedSelf = await decrypt(payloadSelf, myKeys.publicKey, myKeys.secretKey);
                 if (decryptedSelf) return decryptedSelf;
              } catch (e) { /* ignore */ }
         }
 
-        // fetch key if needed
+        // Strategy 2: decrypt with counterparty key
         const otherKey = await getSenderKey(otherParty);
 
         if (otherKey) {
             if (isMine) {
-                // I am the sender, decrypt using my secret + recipient public
                 try {
                     const decrypted = await decryptAsSender(payload, otherKey, myKeys.secretKey);
                     if (decrypted) return decrypted;
-                    logger.warn(`[Decrypt] decryptAsSender returned null for otherParty=${otherParty?.slice(0,10)}`);
                 } catch (e) {
-                    logger.warn(`[Decrypt] decryptAsSender error for otherParty=${otherParty?.slice(0,10)}:`, e);
+                    logger.warn(`[Decrypt] decryptAsSender error:`, e);
                 }
             } else {
-                // I am the recipient, decrypt using sender public + my secret
                 try {
                     const decrypted = await decrypt(payload, otherKey, myKeys.secretKey);
                     if (decrypted) return decrypted;
-                    logger.warn(`[Decrypt] decrypt returned null for sender=${otherParty?.slice(0,10)}`);
                 } catch (e) {
-                    logger.warn(`[Decrypt] decrypt error for sender=${otherParty?.slice(0,10)}:`, e);
+                    logger.warn(`[Decrypt] decrypt error:`, e);
                 }
-            }
-        } else {
-            logger.warn(`[Decrypt] No encryption key for otherParty=${otherParty?.slice(0,10)} isMine=${isMine}`);
-            // Last resort for own messages: try decrypting main payload with own keys
-            if (isMine && encrypted) {
-                try {
-                    const selfDecrypt = await decrypt(payload, myKeys.publicKey, myKeys.secretKey);
-                    if (selfDecrypt) return selfDecrypt;
-                } catch { /* ignore */ }
             }
         }
 
-        // Decryption failed or payload is garbled indexer output — show placeholder
+        // Strategy 3: last resort — try own keys
+        if (isMine) {
+            try {
+                const selfDecrypt = await decrypt(payload, myKeys.publicKey, myKeys.secretKey);
+                if (selfDecrypt) return selfDecrypt;
+            } catch { /* ignore */ }
+        }
+
         return "[Encrypted Message]";
       } catch (e) {
           return "[Encrypted Message]";
@@ -634,12 +631,9 @@ export function useSync(
           cacheSet(decryptionCache.current, rawMsg.id, text, MAX_CACHE_SIZE);
         }
 
-        // Skip undecryptable messages (indexer duplicates)
-        if (!text || text.startsWith('[Encrypted') || text === 'Decryption Failed') continue;
-
         const msg = {
           id: rawMsg.id,
-          text,
+          text: text || '[Encrypted Message]',
           time: new Date(Number(rawMsg.timestamp)).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
           senderId: rawMsg.sender === address ? 'me' : rawMsg.sender,
           isMine: rawMsg.sender === address,
@@ -719,15 +713,9 @@ export function useSync(
           }
       }
 
-      // Skip undecryptable messages (indexer duplicates with garbled payload)
-      if (!text || text.startsWith('[Encrypted') || text === 'Decryption Failed') {
-        logger.debug(`[WS] Skipping undecryptable message_detected id=${rawMsg.id?.slice(0,8)}`);
-        return;
-      }
-
       const msg: Message & { recipient: string; encryptedPayload?: string; encryptedPayloadSelf?: string } = {
         id: rawMsg.id,
-        text,
+        text: text || '[Encrypted Message]',
         time: new Date(Number(rawMsg.timestamp)).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
         senderId: rawMsg.sender === address ? 'me' : rawMsg.sender,
         isMine: rawMsg.sender === address,
@@ -913,9 +901,8 @@ export function useSync(
         const decryptedMessages = (await Promise.all(rawMessages.map(async (rawMsg: RawMessage) => {
           try {
             // Check in-memory cache → IndexedDB cache → decrypt
-            // Skip cached values that are garbled (not starting with [ and containing non-printable chars)
-            const cached = decryptionCache.current.get(rawMsg.id) || idbCache.get(rawMsg.id);
-            let text = (cached && !cached.startsWith('[Encrypted')) ? cached : undefined;
+            // Check in-memory cache → IndexedDB cache → decrypt
+            let text = decryptionCache.current.get(rawMsg.id) || idbCache.get(rawMsg.id);
             if (!text) {
                  const payload = rawMsg.encrypted_payload || rawMsg.content_encrypted;
                  text = await decryptPayload(
@@ -925,9 +912,8 @@ export function useSync(
                      rawMsg.timestamp,
                      rawMsg.encrypted_payload_self
                  );
-                 if (text && !text.startsWith('[Encrypted')) {
+                 if (text) {
                    cacheSet(decryptionCache.current, rawMsg.id, text, MAX_CACHE_SIZE);
-                   // Persist to IndexedDB for cross-session cache
                    cacheMessage(rawMsg.id, text, Number(rawMsg.timestamp)).catch(e => logger.warn('[Cache] save failed:', e));
                  }
             } else if (!decryptionCache.current.has(rawMsg.id)) {

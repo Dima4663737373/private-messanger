@@ -69,8 +69,7 @@ export function useMessageStorage({ address, onMessagesLoaded, onContactsLoaded 
       // Convert StoredMessage to Message format
       const messages: Message[] = stored.map(msg => ({
         id: msg.id,
-        text: (msg.decryptedText && !msg.decryptedText.startsWith('[Encrypted') && !/[\x00-\x08\x0B\x0C\x0E-\x1F]/.test(msg.decryptedText))
-          ? msg.decryptedText : '[Encrypted]',
+        text: msg.decryptedText || '[Encrypted]',
         time: new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
         timestamp: msg.timestamp,
         senderId: msg.sender === address ? 'me' : msg.sender,
