@@ -1047,20 +1047,32 @@ const InnerApp: React.FC = () => {
 
       const { tempId, encryptedPayload, timestamp } = prepared;
 
-      // 2. Send via WebSocket FIRST (instant delivery)
-      const sent = commitDMMessage(prepared, attachmentCID);
+      // 2. Request wallet approval (on-chain transaction)
+      let txId: string | undefined;
+      toast.loading('Waiting for wallet approval...', { id: 'tx-approval' });
+      try {
+        txId = await sendMessageOnChain(contact.address!, encryptedPayload, timestamp, attachmentCID);
+        toast.dismiss('tx-approval');
+        if (txId) processedMsgIds.current.add(txId);
+      } catch (e) {
+        toast.dismiss('tx-approval');
+        logger.error('On-chain transaction failed:', e?.message);
+        toast.error('Transaction failed: ' + (e?.message || 'Unknown error'));
+        return;
+      }
+
+      // 3. Send via WebSocket (instant delivery to recipient)
+      const sent = commitDMMessage(prepared, attachmentCID, txId);
       if (!sent) {
         throw new Error('Failed to send message — WebSocket not connected');
       }
 
-      // 3. Also send via XMTP (background, decentralized backup, non-blocking)
+      // 4. Also send via XMTP (background, non-blocking)
       if (isXmtpReady && !file) {
-        sendXmtpMessage(contact.address!, text).catch(() => {
-          // XMTP failures are silent — WebSocket is the primary transport
-        });
+        sendXmtpMessage(contact.address!, text).catch(() => {});
       }
 
-      // 4. Show message in UI
+      // 5. Show message in UI
       const newMessage: Message = {
         id: tempId,
         text,
@@ -1068,7 +1080,7 @@ const InnerApp: React.FC = () => {
         timestamp,
         senderId: 'me',
         isMine: true,
-        status: 'pending',
+        status: txId ? 'confirmed' : 'pending',
         replyToId: replyTo?.id,
         replyToText: replyTo?.text,
         replyToSender: replyTo?.sender,
@@ -1086,12 +1098,10 @@ const InnerApp: React.FC = () => {
         [activeChatId]: [...(prev[activeChatId] || []), newMessage]
       }));
 
-      // Update sidebar preview with sent message text + ensure dialogHash is set
       setContacts(prev => prev.map(c =>
         c.id === activeChatId ? { ...c, lastMessage: text, lastMessageTime: new Date(), dialogHash: prepared.dialogHash || c.dialogHash } : c
       ));
 
-      // Cache the plaintext so deduplication works when dm_sent / message_detected arrives
       cacheDecryptedMessage(tempId, text);
 
       toast.success('Message sent');

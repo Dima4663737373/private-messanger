@@ -129,8 +129,12 @@ export function useSync(
       const encrypted = isEncryptedFormat(payload);
       const isMine = sender === address;
 
-      // If payload is NOT encrypted (plaintext), return it directly
-      if (!encrypted) return payload;
+      // If payload is NOT encrypted (plaintext sent without recipient key), return it
+      // But only if it's short (real plaintext) — long non-NaCl payloads are garbled indexer data
+      if (!encrypted) {
+        if (payload.length < 500) return payload;
+        return "[Encrypted Message]";
+      }
 
       if (!address) return "[Encrypted Message]";
 
@@ -895,12 +899,19 @@ export function useSync(
         const senders = new Set(rawMessages.map((m: RawMessage) => m.sender === address ? m.recipient : m.sender).filter(a => a && a !== 'unknown'));
         await Promise.all([...senders].map(addr => getSenderKey(addr)));
 
-        // Pre-load IndexedDB cache for all message IDs
-        const idbCache = await getCachedMessages(messageIds).catch(() => new Map<string, string>());
+        // Filter out indexer duplicates: no encrypted_payload_self + payload not in NaCl format
+        const filteredMessages = rawMessages.filter((m: RawMessage) => {
+          const payload = m.encrypted_payload || m.content_encrypted || '';
+          const payloadSelf = m.encrypted_payload_self || '';
+          // Keep if: has self-decrypt payload, OR payload is NaCl format, OR payload is short plaintext
+          return payloadSelf.length > 0 || isEncryptedFormat(payload) || payload.length < 200;
+        });
 
-        const decryptedMessages = (await Promise.all(rawMessages.map(async (rawMsg: RawMessage) => {
+        // Pre-load IndexedDB cache for all message IDs
+        const idbCache = await getCachedMessages(filteredMessages.map((m: RawMessage) => m.id)).catch(() => new Map<string, string>());
+
+        const decryptedMessages = (await Promise.all(filteredMessages.map(async (rawMsg: RawMessage) => {
           try {
-            // Check in-memory cache → IndexedDB cache → decrypt
             // Check in-memory cache → IndexedDB cache → decrypt
             let text = decryptionCache.current.get(rawMsg.id) || idbCache.get(rawMsg.id);
             if (!text) {
