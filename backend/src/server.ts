@@ -14,6 +14,15 @@ import { encodeBase64, decodeBase64 } from 'tweetnacl-util';
 import { randomBytes } from 'crypto';
 import multer from 'multer';
 import { logger } from './utils/logger';
+import * as Sentry from '@sentry/node';
+
+if (process.env.SENTRY_DSN) {
+  Sentry.init({
+    dsn: process.env.SENTRY_DSN,
+    environment: process.env.NODE_ENV || 'development',
+    tracesSampleRate: 0.1,
+  });
+}
 
 const app = express();
 const server = createServer(app);
@@ -345,8 +354,9 @@ function deduplicateMessages(messages: any[]): any[] {
 // --- Socket.io Connection ---
 
 // Per-socket WS message rate limit
-const WS_MSG_LIMIT = 30; // max messages per 60s
-const WS_MSG_WINDOW = 60_000;
+const WS_MSG_LIMIT = 20;  // max messages per 10s window
+const WS_MSG_WINDOW = 10_000;
+const WS_VIOLATION_LIMIT = 3; // disconnect after 3 rate-limit violations
 const MAX_WS_CONNECTIONS_PER_IP = 10;
 const wsConnectionsPerIp = new Map<string, number>();
 
@@ -401,7 +411,12 @@ io.on('connection', (socket) => {
     const now = Date.now();
     socket.data.msgTimestamps = (socket.data.msgTimestamps || []).filter((t: number) => now - t < WS_MSG_WINDOW);
     if (socket.data.msgTimestamps.length >= WS_MSG_LIMIT) {
+      socket.data.violations = (socket.data.violations || 0) + 1;
       socket.emit('error', 'Rate limit exceeded');
+      if (socket.data.violations >= WS_VIOLATION_LIMIT) {
+        logger.warn(`[WS] Disconnecting socket ${socket.id} after ${socket.data.violations} rate violations`);
+        socket.disconnect(true);
+      }
       return false;
     }
     socket.data.msgTimestamps.push(now);
@@ -2113,6 +2128,32 @@ app.post('/rooms/:id/invite', requireFullAuth, async (req: any, res) => {
   } catch (e) {
     logger.error('POST /rooms/:id/invite error:', e);
     res.status(500).json({ error: 'Failed to invite member' });
+  }
+});
+
+// DELETE /rooms/:id/members/:address — kick a member (creator only)
+app.delete('/rooms/:id/members/:address', requireFullAuth, async (req: any, res) => {
+  try {
+    const creatorAddress = req.authenticatedAddress;
+    const targetAddress = req.params.address;
+
+    if (!isValidAddress(targetAddress)) return res.status(400).json({ error: 'Invalid address' });
+
+    const room = await Room.findByPk(req.params.id);
+    if (!room) return res.status(404).json({ error: 'Room not found' });
+    if (room.created_by !== creatorAddress) return res.status(403).json({ error: 'Only creator can kick members' });
+    if (targetAddress === creatorAddress) return res.status(400).json({ error: 'Cannot kick yourself' });
+
+    await RoomMember.destroy({ where: { room_id: room.id, user_id: targetAddress } });
+    await RoomKey.destroy({ where: { room_id: room.id, user_address: targetAddress } });
+
+    const remaining = await RoomMember.findAll({ where: { room_id: room.id } });
+    broadcastToRoom(room.id, 'room_member_kicked', { roomId: room.id, address: targetAddress, members: remaining.map(m => m.user_id) });
+
+    res.json({ success: true, members: remaining.map(m => m.user_id) });
+  } catch (e) {
+    logger.error('DELETE /rooms/:id/members/:address error:', e);
+    res.status(500).json({ error: 'Failed to kick member' });
   }
 });
 

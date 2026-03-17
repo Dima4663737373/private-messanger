@@ -33,7 +33,8 @@ export function useSync(
   onRoomMessageEdited?: (roomId: string, messageId: string, text: string) => void,
   onDMSent?: (tempId: string, realId: string, dialogHash?: string) => void,
   onReadReceipt?: (dialogHash: string, messageIds: string[], readAt?: number) => void,
-  onProfileUpdated?: (address: string, username?: string, showAvatar?: boolean, avatarCid?: string) => void
+  onProfileUpdated?: (address: string, username?: string, showAvatar?: boolean, avatarCid?: string) => void,
+  onRoomMemberKicked?: (roomId: string, address: string, members: string[]) => void
 ) {
   const ws = useRef<Socket | null>(null);
   const [isConnected, setIsConnected] = useState(false);
@@ -278,10 +279,10 @@ export function useSync(
   };
 
   // Callbacks Ref
-  const callbacksRef = useRef({ onNewMessage, onMessageDeleted, onMessageUpdated, onReactionUpdate, onRoomMessage, onRoomCreated, onRoomDeleted, onDMCleared, onPinUpdate, onRoomMessageDeleted, onRoomMessageEdited, onDMSent, onReadReceipt, onProfileUpdated });
+  const callbacksRef = useRef({ onNewMessage, onMessageDeleted, onMessageUpdated, onReactionUpdate, onRoomMessage, onRoomCreated, onRoomDeleted, onDMCleared, onPinUpdate, onRoomMessageDeleted, onRoomMessageEdited, onDMSent, onReadReceipt, onProfileUpdated, onRoomMemberKicked });
   useEffect(() => {
-      callbacksRef.current = { onNewMessage, onMessageDeleted, onMessageUpdated, onReactionUpdate, onRoomMessage, onRoomCreated, onRoomDeleted, onDMCleared, onPinUpdate, onRoomMessageDeleted, onRoomMessageEdited, onDMSent, onReadReceipt, onProfileUpdated };
-  }, [onNewMessage, onMessageDeleted, onMessageUpdated, onReactionUpdate, onRoomMessage, onRoomCreated, onRoomDeleted, onDMCleared, onPinUpdate, onRoomMessageDeleted, onRoomMessageEdited, onDMSent, onReadReceipt, onProfileUpdated]);
+      callbacksRef.current = { onNewMessage, onMessageDeleted, onMessageUpdated, onReactionUpdate, onRoomMessage, onRoomCreated, onRoomDeleted, onDMCleared, onPinUpdate, onRoomMessageDeleted, onRoomMessageEdited, onDMSent, onReadReceipt, onProfileUpdated, onRoomMemberKicked };
+  }, [onNewMessage, onMessageDeleted, onMessageUpdated, onReactionUpdate, onRoomMessage, onRoomCreated, onRoomDeleted, onDMCleared, onPinUpdate, onRoomMessageDeleted, onRoomMessageEdited, onDMSent, onReadReceipt, onProfileUpdated, onRoomMemberKicked]);
 
   // ── Socket.io Connection ──────────────────────────────
   useEffect(() => {
@@ -481,6 +482,18 @@ export function useSync(
         if (cachedKey) {
           distributeRoomKey(data.roomId, cachedKey).catch(e => logger.warn('distributeRoomKey failed:', e));
         }
+      }
+    });
+
+    socket.on('room_member_kicked', (data: { roomId: string; address: string; members: string[] }) => {
+      // If I was kicked, clear my room key and leave
+      if (data.address === address) {
+        roomKeyCache.current.delete(data.roomId);
+        if (callbacksRef.current.onRoomDeleted) {
+          callbacksRef.current.onRoomDeleted(data.roomId);
+        }
+      } else if (callbacksRef.current.onRoomMemberKicked) {
+        callbacksRef.current.onRoomMemberKicked(data.roomId, data.address, data.members);
       }
     });
 
@@ -1162,6 +1175,17 @@ export function useSync(
     return true;
   };
 
+  const kickMember = async (roomId: string, targetAddress: string): Promise<boolean> => {
+    if (!address) return false;
+    const { data, error } = await safeBackendFetch<any>(`rooms/${roomId}/members/${encodeURIComponent(targetAddress)}`, {
+      method: 'DELETE',
+    });
+    if (error || !data?.success) return false;
+    // Re-generate room key so kicked member can't decrypt future messages
+    await distributeRoomKey(roomId);
+    return true;
+  };
+
   const deleteRoom = async (roomId: string) => {
     if (!address) return;
     await safeBackendFetch(`rooms/${roomId}?address=${encodeURIComponent(address)}`, {
@@ -1519,6 +1543,7 @@ export function useSync(
     joinRoom,
     leaveRoom,
     inviteMember,
+    kickMember,
     fetchRoomInfo,
     fetchRoomMessages,
     sendRoomMessage,

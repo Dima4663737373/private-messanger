@@ -1,6 +1,7 @@
 
-import React, { useState, useEffect, useRef, useLayoutEffect } from 'react';
-import { Search, MoreVertical, Paperclip, Send, Smile, Menu, Ghost, Shield, MessageSquare, Trash2, Edit2, X, Check, File as FileIcon, Download, Reply, Timer, Clock, Pin, Copy, Users, UserPlus, LogOut, Share2, Bold, Italic, Strikethrough, Underline, Ban, Lock, Mic, Square } from 'lucide-react';
+import React, { useState, useEffect, useRef, useLayoutEffect, useMemo } from 'react';
+import Fuse from 'fuse.js';
+import { Search, MoreVertical, Paperclip, Send, Smile, Menu, Ghost, Shield, MessageSquare, Trash2, Edit2, X, Check, File as FileIcon, Download, Reply, Timer, Clock, Pin, Copy, Users, UserPlus, UserMinus, LogOut, Share2, Bold, Italic, Strikethrough, Underline, Ban, Lock, Mic, Square } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Chat, Message, DisappearTimer, DISAPPEAR_TIMERS, Room, AppView, PinnedMessage } from '../types';
 import { logger } from '../utils/logger';
@@ -134,6 +135,7 @@ interface ChatAreaProps {
   onDeleteRoom?: () => void;
   onLeaveRoom?: () => void;
   onInviteMember?: () => void;
+  onKickMember?: (address: string) => void;
   onClearDM?: () => void;
   onDeleteChat?: () => void;
   pinnedMessages?: PinnedMessage[];
@@ -189,6 +191,7 @@ const ChatArea: React.FC<ChatAreaProps> = ({
   onDeleteRoom,
   onLeaveRoom,
   onInviteMember,
+  onKickMember,
   onClearDM,
   onDeleteChat,
   pinnedMessages = [],
@@ -311,6 +314,14 @@ const ChatArea: React.FC<ChatAreaProps> = ({
     setSearchMatchIds([]);
   }, [chatId]);
 
+  // Fuse.js instance rebuilt when messages change
+  const fuse = useMemo(() => new Fuse(messages, {
+    keys: ['text'],
+    threshold: 0.35,
+    includeScore: true,
+    minMatchCharLength: 2,
+  }), [messages]);
+
   // Update search matches when query changes
   useEffect(() => {
     if (!searchQuery.trim()) {
@@ -318,13 +329,11 @@ const ChatArea: React.FC<ChatAreaProps> = ({
       setSearchIndex(0);
       return;
     }
-    const q = searchQuery.toLowerCase();
-    const matches = messages
-      .filter(m => m.text.toLowerCase().includes(q))
-      .map(m => m.id);
+    const results = fuse.search(searchQuery.trim());
+    const matches = results.map(r => r.item.id);
     setSearchMatchIds(matches);
     setSearchIndex(matches.length > 0 ? matches.length - 1 : 0);
-  }, [searchQuery, messages]);
+  }, [searchQuery, fuse]);
 
   // Scroll to current search match
   useEffect(() => {
@@ -1040,6 +1049,19 @@ const ChatArea: React.FC<ChatAreaProps> = ({
                     >
                       <Copy size={12} />
                     </button>
+                    {onKickMember && addr !== roomChat.createdBy && addr !== currentUserId && (
+                      <button
+                        onClick={() => {
+                          if (confirm(`Remove ${resolveName(addr)} from the group?`)) {
+                            onKickMember(addr);
+                          }
+                        }}
+                        className="p-1.5 text-[#CCC] hover:text-red-500 shrink-0 btn-icon"
+                        title="Remove member"
+                      >
+                        <UserMinus size={12} />
+                      </button>
+                    )}
                   </div>
                   );
                 })

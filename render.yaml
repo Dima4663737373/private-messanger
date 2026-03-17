@@ -29,6 +29,8 @@ services:
         value: G5BgMrSSosvuWM175q0sYkmt9yXxpnmv7yLHbEXEXRY
       - key: VAPID_MAILTO
         value: mailto:ghost@ghost-aleo.app
+      - key: SENTRY_DSN
+        sync: false
 
 databases:
   - name: ghost-db

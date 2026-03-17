@@ -494,6 +494,20 @@ const InnerApp: React.FC = () => {
     });
   }, [activeRoomId]);
 
+  const handleRoomMemberKicked = React.useCallback((roomId: string, kickedAddress: string, members: string[]) => {
+    setRoomMembers(prev => prev.filter(a => a !== kickedAddress));
+  }, []);
+
+  const handleKickMember = React.useCallback(async (roomId: string, targetAddress: string) => {
+    const ok = await kickMember(roomId, targetAddress);
+    if (ok) {
+      setRoomMembers(prev => prev.filter(a => a !== targetAddress));
+      toast.success('Member removed');
+    } else {
+      toast.error('Failed to remove member');
+    }
+  }, [kickMember]);
+
   const handleDMCleared = React.useCallback((dialogHash: string) => {
     // Use contacts ref via functional update to avoid stale closure
     setContacts(currentContacts => {
@@ -590,7 +604,7 @@ const InnerApp: React.FC = () => {
   }, []);
 
   // Wait for encryption keys to be derived before connecting WS — prevents limited sessions on new devices
-  const { isConnected: isSyncConnected, typingUsers, notifyProfileUpdate, searchProfiles, fetchMessages, fetchDialogs, fetchDialogMessages, syncProfile, cacheDecryptedMessage, sendTyping, sendReadReceipt, addReaction, removeReaction, fetchRooms, createRoom, deleteRoom: deleteRoomApi, renameRoom: renameRoomApi, joinRoom, leaveRoom, inviteMember, fetchRoomInfo, fetchRoomMessages, sendRoomMessage, subscribeRoom, sendRoomTyping, clearDMHistory, deleteRoomMessage, editRoomMessage, prepareDMMessage, commitDMMessage, sendDMMessage, deleteDMMessage, editDMMessage, fetchPins, pinMessage, unpinMessage, fetchOnlineStatus, fetchLinkPreview, blockedByUsers } = useSync(keysReady ? publicKey : null, handleNewMessage, handleMessageDeleted, handleMessageUpdated, handleReactionUpdate, handleRoomMessage, handleRoomCreated, handleRoomDeleted, handleDMCleared, handlePinUpdate, handleRoomMessageDeleted, handleRoomMessageEdited, handleDMSent, handleReadReceipt, handleProfileUpdated);
+  const { isConnected: isSyncConnected, typingUsers, notifyProfileUpdate, searchProfiles, fetchMessages, fetchDialogs, fetchDialogMessages, syncProfile, cacheDecryptedMessage, sendTyping, sendReadReceipt, addReaction, removeReaction, fetchRooms, createRoom, deleteRoom: deleteRoomApi, renameRoom: renameRoomApi, joinRoom, leaveRoom, inviteMember, kickMember, fetchRoomInfo, fetchRoomMessages, sendRoomMessage, subscribeRoom, sendRoomTyping, clearDMHistory, deleteRoomMessage, editRoomMessage, prepareDMMessage, commitDMMessage, sendDMMessage, deleteDMMessage, editDMMessage, fetchPins, pinMessage, unpinMessage, fetchOnlineStatus, fetchLinkPreview, blockedByUsers } = useSync(keysReady ? publicKey : null, handleNewMessage, handleMessageDeleted, handleMessageUpdated, handleReactionUpdate, handleRoomMessage, handleRoomCreated, handleRoomDeleted, handleDMCleared, handlePinUpdate, handleRoomMessageDeleted, handleRoomMessageEdited, handleDMSent, handleReadReceipt, handleProfileUpdated, handleRoomMemberKicked);
 
   // Keep refs in sync for use inside memoized callbacks
   activeChatIdRef.current = activeChatId;
@@ -1932,6 +1946,7 @@ const InnerApp: React.FC = () => {
             onDeleteRoom={activeRoom && activeRoom.createdBy === publicKey ? () => handleDeleteRoom(activeRoom.id) : undefined}
             onLeaveRoom={activeRoom && activeRoom.createdBy !== publicKey ? () => handleLeaveRoom(activeRoom.id) : undefined}
             onInviteMember={activeRoom?.type === 'group' && activeRoom.createdBy === publicKey ? () => { setInviteModal({ roomId: activeRoom.id }); setInviteAddress(''); } : undefined}
+            onKickMember={activeRoom?.type === 'group' && activeRoom.createdBy === publicKey ? (addr) => handleKickMember(activeRoom.id, addr) : undefined}
             onClearDM={!activeRoomId && activeChatId ? handleClearDM : undefined}
             onDeleteChat={!activeRoomId && activeChatId ? () => handleDeleteChat(activeChatId!) : undefined}
             pinnedMessages={pinnedMessages[activeRoomId || activeDialogHash || ''] || []}
