@@ -2080,6 +2080,42 @@ app.post('/rooms/:id/join', requireFullAuth, async (req: any, res) => {
   }
 });
 
+// POST /rooms/:id/invite — creator adds a member by address (requires full auth)
+app.post('/rooms/:id/invite', requireFullAuth, async (req: any, res) => {
+  try {
+    const inviterAddress = req.authenticatedAddress;
+    const { targetAddress } = req.body;
+
+    if (!targetAddress || typeof targetAddress !== 'string' || !isValidAddress(targetAddress)) {
+      return res.status(400).json({ error: 'Valid targetAddress required' });
+    }
+
+    const room = await Room.findByPk(req.params.id);
+    if (!room) return res.status(404).json({ error: 'Room not found' });
+
+    // Only creator can invite members to private groups
+    if (room.is_private && room.created_by !== inviterAddress) {
+      return res.status(403).json({ error: 'Only creator can invite members' });
+    }
+
+    await RoomMember.findOrCreate({
+      where: { room_id: room.id, user_id: targetAddress },
+      defaults: { room_id: room.id, user_id: targetAddress }
+    });
+
+    const members = await RoomMember.findAll({ where: { room_id: room.id } });
+    broadcastToRoom(room.id, 'room_member_joined', { roomId: room.id, address: targetAddress, members: members.map(m => m.user_id) });
+
+    // Return the invited user's encryption key so inviter can encrypt the room key for them
+    const profile = await Profile.findOne({ where: { address: targetAddress }, attributes: ['address', 'username', 'encryption_public_key'] });
+
+    res.json({ success: true, member: { address: targetAddress, username: profile?.username || null, encryption_public_key: profile?.encryption_public_key || null } });
+  } catch (e) {
+    logger.error('POST /rooms/:id/invite error:', e);
+    res.status(500).json({ error: 'Failed to invite member' });
+  }
+});
+
 // POST /rooms/:id/leave — leave a room (requires full auth)
 app.post('/rooms/:id/leave', requireFullAuth, async (req: any, res) => {
   try {

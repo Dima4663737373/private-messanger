@@ -74,7 +74,7 @@ export const DISAPPEAR_TIMERS: Record<DisappearTimer, number> = {
   '24h': 24 * 60 * 60_000
 };
 
-export type ChatContextAction = 'open_new_tab' | 'mark_unread' | 'pin' | 'mute' | 'archive' | 'delete' | 'rename';
+export type ChatContextAction = 'open_new_tab' | 'mark_unread' | 'pin' | 'mute' | 'archive' | 'delete' | 'rename' | 'invite';
 
 export type NotificationType = 'message' | 'system' | 'security' | 'transaction';
 

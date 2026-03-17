@@ -1134,6 +1134,34 @@ export function useSync(
     return data;
   };
 
+  /** Invite a member to a private group and encrypt the room key for them */
+  const inviteMember = async (roomId: string, targetAddress: string): Promise<boolean> => {
+    if (!address) return false;
+    const myKeys = getCachedKeys(address);
+    if (!myKeys) return false;
+
+    const { data, error } = await safeBackendFetch<any>(`rooms/${roomId}/invite`, {
+      method: 'POST',
+      body: { targetAddress }
+    });
+    if (error || !data?.success) return false;
+
+    // Encrypt the room key for the new member if they have an encryption public key
+    const memberPubKey = data.member?.encryption_public_key;
+    if (memberPubKey) {
+      const symKey = await getRoomKey(roomId);
+      if (symKey) {
+        const { encryptedRoomKey, nonce } = encryptRoomKeyForMember(symKey, memberPubKey, myKeys.secretKey);
+        await safeBackendFetch(`rooms/${roomId}/keys`, {
+          method: 'POST',
+          body: { keys: [{ userAddress: targetAddress, encryptedRoomKey, nonce, senderPublicKey: myKeys.publicKey }] }
+        });
+      }
+    }
+
+    return true;
+  };
+
   const deleteRoom = async (roomId: string) => {
     if (!address) return;
     await safeBackendFetch(`rooms/${roomId}?address=${encodeURIComponent(address)}`, {
@@ -1490,6 +1518,7 @@ export function useSync(
     renameRoom,
     joinRoom,
     leaveRoom,
+    inviteMember,
     fetchRoomInfo,
     fetchRoomMessages,
     sendRoomMessage,

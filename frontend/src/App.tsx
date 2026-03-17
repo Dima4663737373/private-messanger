@@ -212,6 +212,10 @@ const InnerApp: React.FC = () => {
   const [fabModal, setFabModal] = useState<RoomType | null>(null);
   const [fabModalName, setFabModalName] = useState('');
 
+  // Invite Member Modal State (for groups)
+  const [inviteModal, setInviteModal] = useState<{ roomId: string } | null>(null);
+  const [inviteAddress, setInviteAddress] = useState('');
+
   // New Message Modal State (for chats FAB)
   const [newMsgModal, setNewMsgModal] = useState(false);
   const [newMsgAddress, setNewMsgAddress] = useState('');
@@ -586,7 +590,7 @@ const InnerApp: React.FC = () => {
   }, []);
 
   // Wait for encryption keys to be derived before connecting WS — prevents limited sessions on new devices
-  const { isConnected: isSyncConnected, typingUsers, notifyProfileUpdate, searchProfiles, fetchMessages, fetchDialogs, fetchDialogMessages, syncProfile, cacheDecryptedMessage, sendTyping, sendReadReceipt, addReaction, removeReaction, fetchRooms, createRoom, deleteRoom: deleteRoomApi, renameRoom: renameRoomApi, joinRoom, leaveRoom, fetchRoomInfo, fetchRoomMessages, sendRoomMessage, subscribeRoom, sendRoomTyping, clearDMHistory, deleteRoomMessage, editRoomMessage, prepareDMMessage, commitDMMessage, sendDMMessage, deleteDMMessage, editDMMessage, fetchPins, pinMessage, unpinMessage, fetchOnlineStatus, fetchLinkPreview, blockedByUsers } = useSync(keysReady ? publicKey : null, handleNewMessage, handleMessageDeleted, handleMessageUpdated, handleReactionUpdate, handleRoomMessage, handleRoomCreated, handleRoomDeleted, handleDMCleared, handlePinUpdate, handleRoomMessageDeleted, handleRoomMessageEdited, handleDMSent, handleReadReceipt, handleProfileUpdated);
+  const { isConnected: isSyncConnected, typingUsers, notifyProfileUpdate, searchProfiles, fetchMessages, fetchDialogs, fetchDialogMessages, syncProfile, cacheDecryptedMessage, sendTyping, sendReadReceipt, addReaction, removeReaction, fetchRooms, createRoom, deleteRoom: deleteRoomApi, renameRoom: renameRoomApi, joinRoom, leaveRoom, inviteMember, fetchRoomInfo, fetchRoomMessages, sendRoomMessage, subscribeRoom, sendRoomTyping, clearDMHistory, deleteRoomMessage, editRoomMessage, prepareDMMessage, commitDMMessage, sendDMMessage, deleteDMMessage, editDMMessage, fetchPins, pinMessage, unpinMessage, fetchOnlineStatus, fetchLinkPreview, blockedByUsers } = useSync(keysReady ? publicKey : null, handleNewMessage, handleMessageDeleted, handleMessageUpdated, handleReactionUpdate, handleRoomMessage, handleRoomCreated, handleRoomDeleted, handleDMCleared, handlePinUpdate, handleRoomMessageDeleted, handleRoomMessageEdited, handleDMSent, handleReadReceipt, handleProfileUpdated);
 
   // Keep refs in sync for use inside memoized callbacks
   activeChatIdRef.current = activeChatId;
@@ -1618,8 +1622,14 @@ const InnerApp: React.FC = () => {
         break;
       }
       case 'open_new_tab': {
-        // Open same URL in a new browser tab
         window.open(window.location.href, '_blank');
+        break;
+      }
+      case 'invite': {
+        if (itemType === 'group') {
+          setInviteModal({ roomId: id });
+          setInviteAddress('');
+        }
         break;
       }
     }
@@ -2078,6 +2088,49 @@ const InnerApp: React.FC = () => {
                 onClick={() => { setFabModal(null); setFabModalName(''); }}
                 className="flex-1 py-2.5 bg-[#2A2A2A] text-[#888] font-bold rounded-xl hover:bg-[#333] transition-colors btn-press"
               >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Invite Member Modal */}
+      {inviteModal && (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/60 backdrop-blur-sm" onClick={() => { setInviteModal(null); setInviteAddress(''); }}>
+          <div className="bg-[#1A1A1A] border border-[#2A2A2A] rounded-2xl p-6 w-[420px] max-w-[90vw] shadow-2xl" onClick={e => e.stopPropagation()}>
+            <h3 className="text-white text-lg font-bold mb-1">Invite Member</h3>
+            <p className="text-[#666] text-sm mb-4">Enter the Aleo address of the person to invite</p>
+            <input
+              type="text"
+              placeholder="aleo1..."
+              value={inviteAddress}
+              onChange={e => setInviteAddress(e.target.value)}
+              onKeyDown={async e => {
+                if (e.key === 'Enter' && inviteAddress.trim().startsWith('aleo1')) {
+                  const ok = await inviteMember(inviteModal.roomId, inviteAddress.trim());
+                  if (ok) { toast.success('Member invited'); setInviteModal(null); setInviteAddress(''); }
+                  else toast.error('Invite failed');
+                }
+                if (e.key === 'Escape') { setInviteModal(null); setInviteAddress(''); }
+              }}
+              autoFocus
+              className="w-full bg-[#0A0A0A] border border-[#2A2A2A] rounded-xl py-3 px-4 text-white text-sm font-mono focus:outline-none focus:border-[#FF8C00] transition-colors mb-4"
+            />
+            <div className="flex gap-3">
+              <button
+                onClick={async () => {
+                  if (!inviteAddress.trim().startsWith('aleo1')) { toast.error('Invalid address'); return; }
+                  const ok = await inviteMember(inviteModal.roomId, inviteAddress.trim());
+                  if (ok) { toast.success('Member invited'); setInviteModal(null); setInviteAddress(''); }
+                  else toast.error('Invite failed');
+                }}
+                disabled={!inviteAddress.trim().startsWith('aleo1')}
+                className="flex-1 py-2.5 bg-[#FF8C00] text-black font-bold rounded-xl hover:bg-[#FF9F2A] transition-all disabled:opacity-40 disabled:cursor-not-allowed btn-press"
+              >
+                Invite
+              </button>
+              <button onClick={() => { setInviteModal(null); setInviteAddress(''); }} className="flex-1 py-2.5 bg-[#2A2A2A] text-[#888] font-bold rounded-xl hover:bg-[#333] transition-colors btn-press">
                 Cancel
               </button>
             </div>

@@ -188,8 +188,8 @@ const Sidebar: React.FC<SidebarProps> = ({
         {/* Nav Items */}
         <div className={`${navHovered ? 'space-y-1' : 'space-y-2 flex flex-col items-center'}`}>
           <NavItem icon={<MessageSquare size={18} />} view="chats" label="Messages" />
-          <NavItem icon={<Radio size={18} />} view="channels" label="Channels" disabled />
-          <NavItem icon={<Users size={18} />} view="groups" label="Groups" disabled />
+          <NavItem icon={<Radio size={18} />} view="channels" label="Channels" />
+          <NavItem icon={<Users size={18} />} view="groups" label="Groups" />
           <NavItem icon={<User size={18} />} view="contacts" label="Contacts" />
           <NavItem icon={<Bell size={18} />} view="notifications" label="Notifications" badge={unreadNotifications} />
           <NavItem icon={<Settings size={18} />} view="settings" label="Settings" />
@@ -308,26 +308,70 @@ const Sidebar: React.FC<SidebarProps> = ({
               </div>
             ))}
 
-            {/* Channels — Coming Soon */}
+            {/* Channels List */}
             {currentView === 'channels' && (
-              <div className="flex flex-col items-center justify-center py-16 px-4">
-                <div className="w-16 h-16 bg-[#1A1A1A] border border-[#2A2A2A] rounded-2xl flex items-center justify-center mb-4">
-                  <Radio size={28} className="text-[#FF8C00]/40" />
-                </div>
-                <h3 className="text-white font-bold text-base mb-1">Channels</h3>
-                <p className="text-[#666] text-xs text-center">Coming soon</p>
-              </div>
+              <>
+                {channels.filter(r => r.name.toLowerCase().includes(searchQuery.toLowerCase())).map(room => (
+                  <div
+                    key={room.id}
+                    onClick={() => { onSelectRoom?.(room.id); onClose(); }}
+                    onContextMenu={(e) => handleContextMenu(e, room.id, 'channel')}
+                    className={`flex items-center gap-3 p-2.5 rounded-xl cursor-pointer transition-all border ${
+                      activeRoomId === room.id
+                        ? 'bg-[#1A1A1A] border-[#FF8C00]/50'
+                        : 'bg-transparent border-transparent hover:bg-[#1A1A1A]'
+                    }`}
+                  >
+                    <div className="w-10 h-10 rounded-xl bg-[#1A1A1A] border border-[#2A2A2A] flex items-center justify-center shrink-0">
+                      <Hash size={16} className="text-[#FF8C00]" />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <h3 className="text-sm font-bold truncate text-[#E5E5E5]">{room.name}</h3>
+                      <p className="text-xs text-[#666] truncate">{room.lastMessage || 'No messages yet'}</p>
+                    </div>
+                  </div>
+                ))}
+                {channels.length === 0 && (
+                  <div className="text-center py-8">
+                    <Radio size={24} className="text-[#333] mx-auto mb-2" />
+                    <p className="text-[#666] text-xs">No channels yet</p>
+                    <p className="text-[#444] text-xs mt-1">Press + to create one</p>
+                  </div>
+                )}
+              </>
             )}
 
-            {/* Groups — Coming Soon */}
+            {/* Groups List */}
             {currentView === 'groups' && (
-              <div className="flex flex-col items-center justify-center py-16 px-4">
-                <div className="w-16 h-16 bg-[#1A1A1A] border border-[#2A2A2A] rounded-2xl flex items-center justify-center mb-4">
-                  <Users size={28} className="text-[#FF8C00]/40" />
-                </div>
-                <h3 className="text-white font-bold text-base mb-1">Groups</h3>
-                <p className="text-[#666] text-xs text-center">Coming soon</p>
-              </div>
+              <>
+                {groups.filter(r => r.name.toLowerCase().includes(searchQuery.toLowerCase())).map(room => (
+                  <div
+                    key={room.id}
+                    onClick={() => { onSelectRoom?.(room.id); onClose(); }}
+                    onContextMenu={(e) => handleContextMenu(e, room.id, 'group')}
+                    className={`flex items-center gap-3 p-2.5 rounded-xl cursor-pointer transition-all border ${
+                      activeRoomId === room.id
+                        ? 'bg-[#1A1A1A] border-[#FF8C00]/50'
+                        : 'bg-transparent border-transparent hover:bg-[#1A1A1A]'
+                    }`}
+                  >
+                    <div className="w-10 h-10 rounded-xl bg-[#1A1A1A] border border-[#2A2A2A] flex items-center justify-center shrink-0">
+                      <Lock size={16} className="text-[#FF8C00]" />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <h3 className="text-sm font-bold truncate text-[#E5E5E5]">{room.name}</h3>
+                      <p className="text-xs text-[#666] truncate">{room.lastMessage || 'No messages yet'}</p>
+                    </div>
+                  </div>
+                ))}
+                {groups.length === 0 && (
+                  <div className="text-center py-8">
+                    <Users size={24} className="text-[#333] mx-auto mb-2" />
+                    <p className="text-[#666] text-xs">No groups yet</p>
+                    <p className="text-[#444] text-xs mt-1">Press + to create one</p>
+                  </div>
+                )}
+              </>
             )}
 
             {/* Empty State */}
@@ -339,8 +383,8 @@ const Sidebar: React.FC<SidebarProps> = ({
             )}
           </div>
 
-          {/* FAB Create Button - only for chats */}
-          {onFabClick && currentView === 'chats' && (
+          {/* FAB Create Button */}
+          {onFabClick && (currentView === 'chats' || currentView === 'channels' || currentView === 'groups') && (
             <button
               onClick={onFabClick}
               className="absolute bottom-5 right-5 w-12 h-12 bg-[#FF8C00] rounded-full flex items-center justify-center text-black shadow-lg shadow-[#FF8C00]/30 hover:shadow-xl hover:shadow-[#FF8C00]/50 hover:scale-110 active:scale-90 transition-all duration-200 z-10 pulse-ring"
@@ -415,6 +459,11 @@ const Sidebar: React.FC<SidebarProps> = ({
           <button onClick={() => handleCtxAction('rename')} className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-[#E5E5E5] hover:bg-[#2A2A2A] transition-colors btn-press">
             <Edit2 size={16} className="text-[#888] shrink-0" /> Rename
           </button>
+          {ctxMenu.itemType === 'group' && (
+            <button onClick={() => handleCtxAction('invite')} className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-[#E5E5E5] hover:bg-[#2A2A2A] transition-colors btn-press">
+              <User size={16} className="text-[#888] shrink-0" /> Invite member
+            </button>
+          )}
           <button onClick={() => handleCtxAction('archive')} className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-[#E5E5E5] hover:bg-[#2A2A2A] transition-colors btn-press">
             <Archive size={16} className="text-[#888] shrink-0" /> Archive
           </button>
