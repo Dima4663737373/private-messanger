@@ -57,23 +57,21 @@ function hashPersonalMessage(message: string): Uint8Array {
  * Sign a message with a secp256k1 private key using EIP-191.
  * Returns 65-byte Ethereum signature (r[32] + s[32] + v[1]).
  *
- * @noble/curves v2 sign() with format:'recovered' returns 65 bytes:
- * bytes 0-31 = r, bytes 32-63 = s, byte 64 = recovery (0 or 1).
+ * @noble/curves v2: sign() with format:'recovered' returns 65 bytes:
+ * [0..63] = compact (r||s), [64] = recovery (0 or 1).
  * Ethereum expects v = recovery + 27.
  */
 function signPersonalMessage(message: string, privateKey: Uint8Array): Uint8Array {
   const msgHash = hashPersonalMessage(message);
-  // prehash: false — msgHash is already keccak256(EIP-191 prefix + message)
   const sigBytes = secp256k1.sign(msgHash, privateKey, {
-    format: 'recovered',
+    format: 'recovered' as any,
     lowS: true,
     prehash: false,
-  });
+  }) as unknown as Uint8Array;
 
-  // Convert recovery (0/1) to Ethereum v (27/28)
   const result = new Uint8Array(65);
-  result.set(sigBytes.slice(0, 64), 0); // r || s
-  result[64] = sigBytes[64] + 27;       // v
+  result.set(sigBytes.slice(0, 64), 0);
+  result[64] = sigBytes[64] + 27;
   return result;
 }
 
@@ -93,7 +91,7 @@ export function createXmtpSigner(aleoAddress: string): Signer {
       identifier: ethAddress,
       identifierKind: IdentifierKind.Ethereum,
     }),
-    signMessage: (message: string): Uint8Array => {
+    signMessage: async (message: string): Promise<Uint8Array> => {
       return signPersonalMessage(message, privateKey);
     },
   };

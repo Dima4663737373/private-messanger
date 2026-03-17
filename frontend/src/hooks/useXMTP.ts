@@ -109,8 +109,12 @@ export function useXMTP(aleoAddress: string | null): UseXmtpReturn {
         ) {
           logger.warn('[XMTP] Storage conflict (likely multi-tab). XMTP disabled for this tab.');
           setXmtpError('multi-tab');
+        } else if (msg.toLowerCase().includes('signature')) {
+          // Signature errors are non-fatal — XMTP is optional, WS is primary
+          logger.warn('[XMTP] Signature error during init — XMTP disabled, WS still active:', msg);
+          setXmtpError('signature-error');
         } else {
-          logger.error('[XMTP] Init failed:', msg);
+          logger.warn('[XMTP] Init failed (non-fatal, WS still active):', msg);
           setXmtpError(msg);
         }
 

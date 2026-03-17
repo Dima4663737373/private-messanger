@@ -23,6 +23,12 @@ services:
         sync: false
       - key: HMAC_MASTER_SECRET
         generateValue: true
+      - key: VAPID_PUBLIC_KEY
+        value: BPXKfsSGZVp6NVPLj1Yjc_P--BzS6UnDCA5FzSXUPXRmTDORZI5AAtt4xWO42FSaoagdM-XAJZEmw4ELiXX7YAc
+      - key: VAPID_PRIVATE_KEY
+        value: G5BgMrSSosvuWM175q0sYkmt9yXxpnmv7yLHbEXEXRY
+      - key: VAPID_MAILTO
+        value: mailto:ghost@ghost-aleo.app
 
 databases:
   - name: ghost-db

@@ -1433,22 +1433,9 @@ const InnerApp: React.FC = () => {
 
   const handleSendRoomMessage = (text: string) => {
     if (!activeRoomId) return;
+    // No optimistic update — WS echo from server is near-instant and already decrypted
+    // Optimistic + WS echo would create duplicates (different IDs: Date.now() vs UUID)
     sendRoomMessage(activeRoomId, text, myProfile?.username);
-    // Optimistic update
-    const tempMsg: Message = {
-      id: Date.now().toString(),
-      text,
-      time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-      timestamp: Date.now(),
-      senderId: 'me',
-      isMine: true,
-      status: 'sent',
-      senderHash: myProfile?.username || publicKey?.slice(0, 10)
-    };
-    setRoomHistories(prev => ({
-      ...prev,
-      [activeRoomId]: [...(prev[activeRoomId] || []), tempMsg]
-    }));
   };
 
   const handleDeleteRoomMessage = async (msgId: string) => {
