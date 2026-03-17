@@ -14,7 +14,7 @@ import DOMPurify from 'dompurify';
 import EmojiPicker, { Theme } from 'emoji-picker-react';
 import { IPFS_GATEWAY_URL, ADDRESS_DISPLAY, MESSAGE_PREVIEW, GENERIC_AVATAR, MAX_MESSAGE_LENGTH, MAX_FILE_SIZE } from '../constants';
 import { applyFormatting } from '../utils/formatText';
-import { decryptIPFSBlob } from '../utils/ipfs';
+import { decryptIPFSBlob } from '../utils/attachment-crypto';
 import { safeBackendFetch } from '../utils/api-client';
 import { TypingIndicator } from './ui/TypingIndicator';
 import { ScrollToBottomButton } from './ui/ScrollToBottomButton';
