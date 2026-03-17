@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect, useRef, useLayoutEffect } from 'react';
-import { Search, MoreVertical, Paperclip, Send, Smile, Menu, Ghost, Shield, MessageSquare, Trash2, Edit2, X, Check, File as FileIcon, Download, Reply, Timer, Clock, Pin, Copy, Users, LogOut, Share2, Bold, Italic, Strikethrough, Underline, Ban, Lock, Mic, Square } from 'lucide-react';
+import { Search, MoreVertical, Paperclip, Send, Smile, Menu, Ghost, Shield, MessageSquare, Trash2, Edit2, X, Check, File as FileIcon, Download, Reply, Timer, Clock, Pin, Copy, Users, UserPlus, LogOut, Share2, Bold, Italic, Strikethrough, Underline, Ban, Lock, Mic, Square } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Chat, Message, DisappearTimer, DISAPPEAR_TIMERS, Room, AppView, PinnedMessage } from '../types';
 import { logger } from '../utils/logger';
@@ -133,6 +133,7 @@ interface ChatAreaProps {
   roomChat?: Room;
   onDeleteRoom?: () => void;
   onLeaveRoom?: () => void;
+  onInviteMember?: () => void;
   onClearDM?: () => void;
   onDeleteChat?: () => void;
   pinnedMessages?: PinnedMessage[];
@@ -187,6 +188,7 @@ const ChatArea: React.FC<ChatAreaProps> = ({
   roomChat,
   onDeleteRoom,
   onLeaveRoom,
+  onInviteMember,
   onClearDM,
   onDeleteChat,
   pinnedMessages = [],
@@ -1046,6 +1048,14 @@ const ChatArea: React.FC<ChatAreaProps> = ({
 
             {/* Panel Footer Actions */}
             <div className="px-5 py-4 border-t border-[#E5E5E5] space-y-2">
+              {onInviteMember && roomChat?.type === 'group' && (
+                <button
+                  onClick={() => { setShowRoomInfo(false); onInviteMember(); }}
+                  className="w-full flex items-center justify-center gap-2 py-2.5 bg-[#FF8C00] hover:bg-[#FF9F2A] rounded-xl text-sm font-bold text-black transition-all btn-press"
+                >
+                  <UserPlus size={14} /> Invite Member
+                </button>
+              )}
               {onLeaveRoom && (
                 <button
                   onClick={() => { setShowRoomInfo(false); if (confirm(`Leave #${roomChat.name}?`)) onLeaveRoom(); }}

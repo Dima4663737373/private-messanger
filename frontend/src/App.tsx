@@ -1944,6 +1944,7 @@ const InnerApp: React.FC = () => {
             roomChat={activeRoom || undefined}
             onDeleteRoom={activeRoom && activeRoom.createdBy === publicKey ? () => handleDeleteRoom(activeRoom.id) : undefined}
             onLeaveRoom={activeRoom && activeRoom.createdBy !== publicKey ? () => handleLeaveRoom(activeRoom.id) : undefined}
+            onInviteMember={activeRoom?.type === 'group' && activeRoom.createdBy === publicKey ? () => { setInviteModal({ roomId: activeRoom.id }); setInviteAddress(''); } : undefined}
             onClearDM={!activeRoomId && activeChatId ? handleClearDM : undefined}
             onDeleteChat={!activeRoomId && activeChatId ? () => handleDeleteChat(activeChatId!) : undefined}
             pinnedMessages={pinnedMessages[activeRoomId || activeDialogHash || ''] || []}

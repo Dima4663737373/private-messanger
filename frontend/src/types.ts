@@ -180,6 +180,7 @@ export interface NetworkProfile {
   show_avatar?: boolean;
   show_last_seen?: boolean;
   avatar_cid?: string;
+  onChainVerified?: boolean;
 }
 
 /** Backend profile response */

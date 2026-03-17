@@ -242,7 +242,12 @@ const ContactsView: React.FC<ContactsViewProps> = ({ contacts, onAddContact, onE
                     <div className="flex items-center gap-4">
                       <Avatar src={buildAvatarUrl(profile.username || 'U', profile.avatar_cid)} size={56} />
                       <div>
-                        <h3 className="font-bold text-lg text-[#0A0A0A]">{profile.username || 'Unknown Name'}</h3>
+                        <div className="flex items-center gap-2">
+                          <h3 className="font-bold text-lg text-[#0A0A0A]">{profile.username || profile.address.slice(0, 12) + '...'}</h3>
+                          {profile.onChainVerified && (
+                            <span className="text-[10px] font-bold bg-[#FF8C00] text-black px-1.5 py-0.5 rounded-full">ON-CHAIN</span>
+                          )}
+                        </div>
                         <p className="text-[#666] text-sm">{profile.bio || 'No bio available'}</p>
                         <p className="text-[#999] font-mono text-xs mt-1">{profile.address.slice(0, 10)}...</p>
                       </div>
