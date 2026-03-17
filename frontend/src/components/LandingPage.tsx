@@ -117,14 +117,15 @@ const LandingPage: React.FC<LandingPageProps> = ({ onConnect, isConnecting }) =>
           <motion.h1 variants={fadeInUp} className="text-6xl md:text-8xl font-black tracking-tighter mb-6 leading-tight">
             GHOST: <br/>
             <span className="text-transparent bg-clip-text bg-gradient-to-r from-[#FF9900] to-orange-600">
-              THE INVISIBLE NETWORK
+              OWN YOUR IDENTITY
             </span>
           </motion.h1>
-          
-          <motion.p variants={fadeInUp} className="text-xl md:text-2xl text-gray-400 mb-10 max-w-2xl mx-auto">
-            Connect without metadata. Chat without a trace.
-            <br />
-            <span className="text-[#FF9900]">Zero-Knowledge Proofs</span> guarantee your privacy.
+
+          <motion.p variants={fadeInUp} className="text-xl md:text-2xl text-gray-400 mb-4 max-w-2xl mx-auto">
+            Your identity is your <span className="text-white font-semibold">Aleo address</span>. No phone number. No email. No server holds your keys.
+          </motion.p>
+          <motion.p variants={fadeInUp} className="text-base md:text-lg text-gray-500 mb-10 max-w-xl mx-auto">
+            Keys derived from your wallet — same on every device. Messages anchored on-chain as <span className="text-[#FF9900]">ZK proofs</span>. Groups with end-to-end encrypted key management.
           </motion.p>
           
           <motion.button
@@ -230,7 +231,7 @@ const LandingPage: React.FC<LandingPageProps> = ({ onConnect, isConnecting }) =>
                 <h2 className="text-4xl md:text-6xl font-black text-white mb-4">
                     THE <span className="text-[#FF9900]">ZERO-KNOWLEDGE</span> ADVANTAGE
                 </h2>
-                <p className="text-gray-400">Aleo blockchain powers the first truly private messenger.</p>
+                <p className="text-gray-400">Your Aleo address is your identity. No accounts. No servers. Keys derived deterministically — same on every device.</p>
             </motion.div>
 
             <div className="grid md:grid-cols-2 gap-8 max-w-4xl mx-auto">
@@ -243,13 +244,16 @@ const LandingPage: React.FC<LandingPageProps> = ({ onConnect, isConnecting }) =>
                     <h3 className="text-2xl font-bold mb-6 text-gray-400">Standard Apps</h3>
                     <ul className="space-y-4">
                         <li className="flex items-center gap-3 text-red-400">
-                            <X size={20} /> Phone Number Required
+                            <X size={20} /> Phone number or email required
                         </li>
                         <li className="flex items-center gap-3 text-red-400">
-                            <X size={20} /> Metadata Stored
+                            <X size={20} /> Contact graph stored on servers
                         </li>
                         <li className="flex items-center gap-3 text-red-400">
-                            <X size={20} /> Centralized Servers
+                            <X size={20} /> Keys managed by the provider
+                        </li>
+                        <li className="flex items-center gap-3 text-red-400">
+                            <X size={20} /> Group metadata visible to server
                         </li>
                     </ul>
                 </motion.div>
@@ -266,13 +270,16 @@ const LandingPage: React.FC<LandingPageProps> = ({ onConnect, isConnecting }) =>
                     <h3 className="text-2xl font-bold mb-6 text-white">Ghost Protocol</h3>
                     <ul className="space-y-4">
                         <li className="flex items-center gap-3 text-[#FF9900]">
-                            <Check size={20} /> Wallet Authentication
+                            <Check size={20} /> Aleo address = identity, no signup
                         </li>
                         <li className="flex items-center gap-3 text-[#FF9900]">
-                            <Check size={20} /> ZK-Shielded Transactions
+                            <Check size={20} /> Keys derived from wallet — no seed phrases
                         </li>
                         <li className="flex items-center gap-3 text-[#FF9900]">
-                            <Check size={20} /> 100% Private Metadata
+                            <Check size={20} /> Contacts stored as BHP256 hashes on-chain
+                        </li>
+                        <li className="flex items-center gap-3 text-[#FF9900]">
+                            <Check size={20} /> Groups with E2E symmetric key management
                         </li>
                     </ul>
                 </motion.div>
@@ -329,12 +336,12 @@ const LandingPage: React.FC<LandingPageProps> = ({ onConnect, isConnecting }) =>
             </motion.div>
             <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
                 {[
-                    { title: "Censorship Resistance", icon: <EyeOff />, desc: "Unstoppable communication powered by decentralized validators." },
-                    { title: "On-Chain Encryption", icon: <Lock />, desc: "Every byte is encrypted with ECIES before it touches the network." },
-                    { title: "Message Recovery", icon: <Box />, desc: "Your message history is recovered locally using your private key." },
-                    { title: "Network Search", icon: <Search />, desc: "Find users without exposing your entire social graph." },
-                    { title: "Channels", icon: <Radio />, desc: "Public broadcast channels for open discussion. Anyone can join and participate." },
-                    { title: "Private Groups", icon: <Users />, desc: "Invite-only group chats with encrypted member lists and message history." }
+                    { title: "Self-Sovereign Identity", icon: <EyeOff />, desc: "Your Aleo address is your identity. No registration, no phone, no email — ever." },
+                    { title: "Deterministic Keys", icon: <Lock />, desc: "Encryption keys are derived from your wallet address. Same keys on every device. No seed phrases, no backup servers." },
+                    { title: "On-Chain Contact Discovery", icon: <Search />, desc: "Find anyone by their Aleo address. Contacts stored as BHP256 hashes — your social graph stays private." },
+                    { title: "Group Key Management", icon: <Users />, desc: "Groups use a symmetric room key encrypted individually for each member via NaCl box. Only members can read." },
+                    { title: "ZK Message Proofs", icon: <Shield />, desc: "Messages optionally anchored on Aleo blockchain as zero-knowledge proofs — verifiable ownership without revealing content." },
+                    { title: "Channels & Broadcast", icon: <Radio />, desc: "Public channels for open discussion. Private groups with invite-only access and encrypted history." }
                 ].map((card, i) => (
                     <motion.div
                         key={i}

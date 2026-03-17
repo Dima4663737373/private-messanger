@@ -1,4 +1,6 @@
 import { hashAddress } from '../utils/aleo-utils';
+import { getMappingValue } from '../utils/aleo-rpc';
+import { PROGRAM_ID } from '../deployed_program';
 import { useEffect, useRef, useState } from 'react';
 import { Message, Room, PinnedMessage, RawMessage, RawRoom, RawRoomMessage } from '../types';
 import { getQueuedMessages, dequeueMessage, enqueueMessage } from '../utils/offline-queue';
@@ -239,6 +241,13 @@ export function useSync(
         nonce,
         senderPublicKey: myKeys.publicKey
       });
+    }
+
+    // Ensure the creator always gets a key even if their profile has no encryption_public_key in DB
+    const hasSelf = keysPayload.some(k => k.userAddress === address);
+    if (!hasSelf) {
+      const { encryptedRoomKey, nonce } = encryptRoomKeyForMember(symKey, myKeys.publicKey, myKeys.secretKey);
+      keysPayload.push({ userAddress: address, encryptedRoomKey, nonce, senderPublicKey: myKeys.publicKey });
     }
 
     if (keysPayload.length > 0) {
@@ -982,7 +991,27 @@ export function useSync(
 
   const searchProfiles = async (query: string) => {
     const { data } = await safeBackendFetch<any[]>(`profiles/search?q=${encodeURIComponent(query)}`);
-    return data || [];
+    const localResults = data || [];
+
+    // On-chain fallback: if exact Aleo address and no local results, check profile_pubkey mapping
+    if (query.startsWith('aleo1') && query.length > 50 && localResults.length === 0) {
+      try {
+        const addrHash = hashAddress(query);
+        const onChainKey = await getMappingValue(PROGRAM_ID, 'profile_pubkey', addrHash);
+        if (onChainKey) {
+          return [{
+            address: query,
+            username: null,
+            bio: null,
+            address_hash: addrHash,
+            encryption_public_key: String(onChainKey).replace(/^"|"$/g, ''),
+            onChainVerified: true,
+          }];
+        }
+      } catch { /* ignore */ }
+    }
+
+    return localResults;
   };
 
   const syncProfile = async (addr: string) => {
