@@ -97,6 +97,23 @@ export function useSync(
       return b64.test(parts[0]) && b64.test(parts[1]);
   };
 
+  /**
+   * Parse decrypted message text for the encrypted-attachment JSON format.
+   * Format: {"t":"user text","fk":"base64Key","fn":"base64Nonce"}
+   * Returns the plain text and optional file key/nonce.
+   */
+  const parseDecryptedText = (raw: string): { text: string; fileKey?: string; fileNonce?: string } => {
+    if (raw && raw.startsWith('{"t":')) {
+      try {
+        const parsed = JSON.parse(raw);
+        if (parsed.t !== undefined && parsed.fk && parsed.fn) {
+          return { text: parsed.t, fileKey: parsed.fk, fileNonce: parsed.fn };
+        }
+      } catch { /* not our JSON */ }
+    }
+    return { text: raw };
+  };
+
   // Attempt to decrypt encrypted reply text (falls back to plaintext for old messages)
   const tryDecryptReplyText = (text: string | undefined, sender: string, recipient: string): string | undefined => {
     if (!text) return undefined;
@@ -726,6 +743,10 @@ export function useSync(
         cacheSet(decryptionCache.current, rawMsg.id, text, MAX_CACHE_SIZE);
       }
 
+      // Parse file key from message text if attachment was encrypted before IPFS upload
+      const parsed = parseDecryptedText(text || '');
+      text = parsed.text;
+
       let attachment = undefined;
       if (rawMsg.attachment_part1 && rawMsg.attachment_part1 !== "0field") {
           const cid = fieldsToString([rawMsg.attachment_part1, rawMsg.attachment_part2 || "0field"]);
@@ -734,7 +755,9 @@ export function useSync(
                   type: 'file' as const,
                   cid: cid,
                   name: 'Attachment',
-                  size: 0
+                  size: 0,
+                  fileKey: parsed.fileKey,
+                  fileNonce: parsed.fileNonce,
               };
           }
       }
@@ -954,6 +977,9 @@ export function useSync(
                  cacheSet(decryptionCache.current, rawMsg.id, text, MAX_CACHE_SIZE);
             }
 
+            const parsedFD = parseDecryptedText(text || '');
+            text = parsedFD.text;
+
             let attachment = undefined;
             if (rawMsg.attachment_part1 && rawMsg.attachment_part1 !== "0field") {
                 const cid = fieldsToString([rawMsg.attachment_part1, rawMsg.attachment_part2 || "0field"]);
@@ -962,7 +988,9 @@ export function useSync(
                         type: 'file' as const,
                         cid: cid,
                         name: 'Attachment',
-                        size: 0
+                        size: 0,
+                        fileKey: parsedFD.fileKey,
+                        fileNonce: parsedFD.fileNonce,
                     };
                 }
             }

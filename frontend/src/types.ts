@@ -41,6 +41,8 @@ export interface Message {
     name?: string;
     size?: number;
     mimeType?: string;
+    fileKey?: string;   // base64 NaCl secretbox key (if file was encrypted before IPFS upload)
+    fileNonce?: string; // base64 NaCl secretbox nonce
   };
   // Reply
   replyToId?: string;

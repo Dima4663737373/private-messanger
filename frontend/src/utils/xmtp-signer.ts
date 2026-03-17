@@ -57,21 +57,17 @@ function hashPersonalMessage(message: string): Uint8Array {
  * Sign a message with a secp256k1 private key using EIP-191.
  * Returns 65-byte Ethereum signature (r[32] + s[32] + v[1]).
  *
- * @noble/curves v2: sign() with format:'recovered' returns 65 bytes:
- * [0..63] = compact (r||s), [64] = recovery (0 or 1).
+ * @noble/curves v2: sign() returns a Signature object with
+ * .toCompactRawBytes() → 64 bytes (r|s) and .recovery → 0 or 1.
  * Ethereum expects v = recovery + 27.
  */
 function signPersonalMessage(message: string, privateKey: Uint8Array): Uint8Array {
   const msgHash = hashPersonalMessage(message);
-  const sigBytes = secp256k1.sign(msgHash, privateKey, {
-    format: 'recovered' as any,
-    lowS: true,
-    prehash: false,
-  }) as unknown as Uint8Array;
+  const sig = secp256k1.sign(msgHash, privateKey, { lowS: true });
 
   const result = new Uint8Array(65);
-  result.set(sigBytes.slice(0, 64), 0);
-  result[64] = sigBytes[64] + 27;
+  result.set(sig.toCompactRawBytes(), 0);   // 64 bytes: r|s
+  result[64] = (sig.recovery ?? 0) + 27;   // v: 27 or 28
   return result;
 }
 

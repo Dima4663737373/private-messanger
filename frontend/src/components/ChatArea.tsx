@@ -14,6 +14,7 @@ import DOMPurify from 'dompurify';
 import EmojiPicker, { Theme } from 'emoji-picker-react';
 import { IPFS_GATEWAY_URL, ADDRESS_DISPLAY, MESSAGE_PREVIEW, GENERIC_AVATAR, MAX_MESSAGE_LENGTH, MAX_FILE_SIZE } from '../constants';
 import { applyFormatting } from '../utils/formatText';
+import { decryptIPFSBlob } from '../utils/ipfs';
 import { safeBackendFetch } from '../utils/api-client';
 import { TypingIndicator } from './ui/TypingIndicator';
 import { ScrollToBottomButton } from './ui/ScrollToBottomButton';
@@ -109,6 +110,58 @@ const LinkPreviewCard: React.FC<{
         </div>
       </div>
     </motion.a>
+  );
+};
+
+// ─── Encrypted attachment download/display ───────────────────────────────────
+const EncryptedAttachmentDownload: React.FC<{
+  cid: string;
+  name?: string;
+  size?: number;
+  fileKey: string;
+  fileNonce: string;
+  isMine: boolean;
+}> = ({ cid, name, size, fileKey, fileNonce, isMine }) => {
+  const [downloading, setDownloading] = React.useState(false);
+
+  const handleDecryptedDownload = async () => {
+    if (downloading) return;
+    setDownloading(true);
+    try {
+      const url = cid.startsWith('Qm') || cid.startsWith('bafy') ? `${IPFS_GATEWAY_URL}${cid}` : cid;
+      const res = await fetch(url);
+      if (!res.ok) throw new Error('Fetch failed');
+      const blob = await res.blob();
+      const decrypted = await decryptIPFSBlob(blob, fileKey, fileNonce);
+      if (!decrypted) throw new Error('Decryption failed');
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(new Blob([decrypted]));
+      a.download = name || 'attachment';
+      a.click();
+    } catch {
+      toast.error('Failed to decrypt attachment');
+    } finally {
+      setDownloading(false);
+    }
+  };
+
+  return (
+    <div className={`flex items-center gap-3 p-2 rounded-lg ${isMine ? 'bg-white/10' : 'bg-black/5'}`}>
+      <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${isMine ? 'bg-white/20' : 'bg-black/10'}`}>
+        <Lock size={20} />
+      </div>
+      <div className="flex flex-col overflow-hidden min-w-[100px]">
+        <span className="text-sm font-medium truncate max-w-[150px]">{name || 'Encrypted file'}</span>
+        <span className="text-xs opacity-70">{size ? (size / 1024).toFixed(1) + ' KB' : 'Encrypted'}</span>
+      </div>
+      <button
+        onClick={handleDecryptedDownload}
+        disabled={downloading}
+        className={`p-2 rounded-lg transition-colors ml-2 ${isMine ? 'hover:bg-white/20' : 'hover:bg-black/10'} disabled:opacity-50`}
+      >
+        {downloading ? <span className="text-xs">…</span> : <Download size={18} />}
+      </button>
+    </div>
   );
 };
 
@@ -1236,7 +1289,17 @@ const ChatArea: React.FC<ChatAreaProps> = ({
 
                         {msg.attachment && (
                             <div className="mb-2">
-                                {msg.attachment.type === 'image' && msg.attachment.cid !== 'pending...' ? (
+                                {msg.attachment.fileKey && msg.attachment.fileNonce ? (
+                                    // Encrypted attachment: fetch → decrypt → download
+                                    <EncryptedAttachmentDownload
+                                      cid={msg.attachment.cid}
+                                      name={msg.attachment.name}
+                                      size={msg.attachment.size}
+                                      fileKey={msg.attachment.fileKey}
+                                      fileNonce={msg.attachment.fileNonce}
+                                      isMine={msg.isMine}
+                                    />
+                                ) : msg.attachment.type === 'image' && msg.attachment.cid !== 'pending...' ? (
                                     <img
                                         src={msg.attachment.cid.startsWith('Qm') || msg.attachment.cid.startsWith('bafy') ? `${IPFS_GATEWAY_URL}${msg.attachment.cid}` : msg.attachment.cid}
                                         alt="attachment"

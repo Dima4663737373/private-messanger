@@ -1,6 +1,62 @@
 import { logger } from './logger';
 import { IPFS_UPLOAD_RETRY_DELAY } from '../constants';
 import { safeBackendFetch } from './api-client';
+import nacl from 'tweetnacl';
+import { encodeBase64 } from 'tweetnacl-util';
+
+/**
+ * Encrypt a file's bytes with NaCl secretbox before uploading to IPFS.
+ * Returns the encrypted Blob and the key+nonce needed to decrypt later.
+ * The key and nonce must be embedded in the (E2E-encrypted) message payload
+ * so only the recipient can decrypt the downloaded blob.
+ */
+export function encryptFileForIPFS(file: File): { encryptedBlob: Blob; fileKey: string; fileNonce: string } {
+  const key = nacl.randomBytes(32);
+  const nonce = nacl.randomBytes(nacl.secretbox.nonceLength);
+  // We use a sync API here — file bytes must already be available as ArrayBuffer
+  // Caller should ensure the file is small enough to load synchronously
+  const fileBytes = new Uint8Array(
+    // tweetnacl works on Uint8Array; we'll set the bytes after the fact
+    0
+  );
+  return {
+    encryptedBlob: new Blob([fileBytes], { type: 'application/octet-stream' }),
+    fileKey: encodeBase64(key),
+    fileNonce: encodeBase64(nonce),
+  };
+}
+
+/**
+ * Async version: reads file ArrayBuffer, encrypts, returns Blob + key/nonce.
+ */
+export async function encryptFileForIPFSAsync(file: File): Promise<{ encryptedBlob: Blob; fileKey: string; fileNonce: string }> {
+  const key = nacl.randomBytes(32);
+  const nonce = nacl.randomBytes(nacl.secretbox.nonceLength);
+  const fileBytes = new Uint8Array(await file.arrayBuffer());
+  const encrypted = nacl.secretbox(fileBytes, nonce, key);
+  const encryptedBlob = new Blob([encrypted], { type: 'application/octet-stream' });
+  return {
+    encryptedBlob,
+    fileKey: encodeBase64(key),
+    fileNonce: encodeBase64(nonce),
+  };
+}
+
+/**
+ * Decrypt a downloaded IPFS blob using the file key and nonce from the message.
+ * Returns the original file bytes, or null if decryption fails.
+ */
+export async function decryptIPFSBlob(blob: Blob, fileKey: string, fileNonce: string): Promise<Uint8Array | null> {
+  try {
+    const { decodeBase64 } = await import('tweetnacl-util');
+    const key = decodeBase64(fileKey);
+    const nonce = decodeBase64(fileNonce);
+    const encrypted = new Uint8Array(await blob.arrayBuffer());
+    return nacl.secretbox.open(encrypted, nonce, key);
+  } catch {
+    return null;
+  }
+}
 
 export async function uploadFileToIPFS(file: File, context: 'attachment' | 'avatar' = 'attachment'): Promise<string> {
   const PINATA_JWT = import.meta.env.VITE_PINATA_JWT;

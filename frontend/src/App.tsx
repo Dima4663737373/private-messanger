@@ -10,7 +10,7 @@ import ChatArea from './components/ChatArea';
 import LandingPage from './components/LandingPage';
 import Preloader from './components/Preloader';
 import { AppView, Chat, Message, Contact, DisappearTimer, DISAPPEAR_TIMERS, Room, RoomType, ChatContextAction, AppNotification, PinnedMessage, NetworkProfile } from './types';
-import { uploadFileToIPFS } from './utils/ipfs';
+import { uploadFileToIPFS, encryptFileForIPFSAsync } from './utils/ipfs';
 import { hashAddress } from './utils/aleo-utils';
 import { getAccountBalance } from './utils/aleo-rpc';
 import { logger } from './utils/logger';
@@ -835,6 +835,15 @@ const InnerApp: React.FC = () => {
     // fetchRooms is from useSync — stable by behavior
   }, [isSyncConnected, publicKey]);
 
+  // Keep-alive ping: prevents Render free-tier cold starts for active users
+  // Pings /health every 13 minutes while the tab is open
+  useEffect(() => {
+    const ping = () => safeBackendFetch('health').catch(() => {});
+    ping(); // immediate ping on mount
+    const id = setInterval(ping, 13 * 60 * 1000);
+    return () => clearInterval(id);
+  }, []);
+
   // Initialize
   useEffect(() => {
     const timer = setTimeout(() => setIsInitializing(false), 2000);
@@ -1039,6 +1048,8 @@ const InnerApp: React.FC = () => {
 
     try {
       let attachmentCID: string | undefined;
+      let attachmentFileKey: string | undefined;
+      let attachmentFileNonce: string | undefined;
       if (file) {
         // Validate file size (max 100MB)
         if (file.size > MAX_FILE_SIZE) {
@@ -1050,13 +1061,21 @@ const InnerApp: React.FC = () => {
           toast.error(`File name too long (max ${MAX_FILENAME_LENGTH} characters)`);
           return;
         }
-        toast.loading("Uploading attachment to IPFS...", { id: "ipfs-upload" });
-        attachmentCID = await uploadFileToIPFS(file);
+        toast.loading("Encrypting & uploading attachment...", { id: "ipfs-upload" });
+        // Encrypt file bytes before uploading — IPFS stores only ciphertext
+        const { encryptedBlob, fileKey, fileNonce } = await encryptFileForIPFSAsync(file);
+        const encryptedFile = new File([encryptedBlob], file.name + '.enc', { type: 'application/octet-stream' });
+        attachmentCID = await uploadFileToIPFS(encryptedFile);
+        attachmentFileKey = fileKey;
+        attachmentFileNonce = fileNonce;
         toast.success("Attachment uploaded", { id: "ipfs-upload" });
       }
 
-      // 1. Prepare encrypted payload (NO WebSocket send yet)
-      const prepared = await prepareDMMessage(contact.address, text, attachmentCID, replyTo);
+      // 1. Prepare encrypted payload — embed file key in message text when present
+      const messageText = attachmentFileKey
+        ? JSON.stringify({ t: text, fk: attachmentFileKey, fn: attachmentFileNonce })
+        : text;
+      const prepared = await prepareDMMessage(contact.address, messageText, attachmentCID, replyTo);
 
       if (!prepared) {
         toast.error('Not connected to server. Please wait and try again.');
@@ -1107,7 +1126,9 @@ const InnerApp: React.FC = () => {
           cid: attachmentCID,
           name: file.name,
           size: file.size,
-          mimeType: file.type
+          mimeType: file.type,
+          fileKey: attachmentFileKey,
+          fileNonce: attachmentFileNonce,
         } : undefined
       };
 
