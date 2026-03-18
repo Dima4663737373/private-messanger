@@ -150,10 +150,10 @@ export function useSync(
       const isMine = sender === address;
 
       // If payload is NOT encrypted (plaintext sent without recipient key), return it
-      // But only if it's short (real plaintext) — long non-NaCl payloads are garbled indexer data
+      // Only if it's clean printable ASCII — garbled indexer/binary data contains non-ASCII chars
       if (!encrypted) {
-        if (payload.length < 500) return payload;
-        return "[Encrypted Message]";
+        const isPlaintext = payload.length <= 2000 && /^[\x09\x0A\x0D\x20-\x7E]*$/.test(payload);
+        return isPlaintext ? payload : '[Encrypted Message]';
       }
 
       if (!address) return "[Encrypted Message]";
@@ -1353,23 +1353,30 @@ export function useSync(
       ? `${senderHash}_${recipientHash}`
       : `${recipientHash}_${senderHash}`;
 
-    // Fetch recipient's encryption public key from profile
-    let recipientPubKey = '';
-    try {
-      const { data } = await safeBackendFetch<any>(`profiles/${recipientAddress}`);
-      if (data && data.exists && data.profile && data.profile.encryption_public_key) {
-        recipientPubKey = data.profile.encryption_public_key;
-      }
-    } catch { /* ignore */ }
+    // Fetch recipient's encryption public key — check keyCache first, then backend
+    let recipientPubKey = keyCache.current.get(recipientAddress) || '';
+    if (!recipientPubKey) {
+      try {
+        const { data } = await safeBackendFetch<any>(`profiles/${recipientAddress}`, { timeout: 8000 });
+        if (data?.exists && data.profile?.encryption_public_key) {
+          recipientPubKey = data.profile.encryption_public_key;
+          cacheSet(keyCache.current, recipientAddress, recipientPubKey, MAX_KEY_CACHE_SIZE);
+        }
+      } catch { /* ignore — use cached key if available */ }
+    }
 
-    let encryptedPayload = text;
+    let encryptedPayload: string;
     let encryptedPayloadSelf = '';
 
     if (recipientPubKey) {
       encryptedPayload = encryptMessage(text, recipientPubKey, myKeys.secretKey);
       encryptedPayloadSelf = encryptMessage(text, myKeys.publicKey, myKeys.secretKey);
     } else {
-      logger.warn('No encryption key for recipient — sending plaintext via WS');
+      // No key available — encrypt for self only so at least sender can read it
+      // Never send plaintext: recipient will see "[Encrypted Message]" until they share their key
+      logger.warn('No encryption key for recipient — encrypting for self only');
+      encryptedPayload = encryptMessage(text, myKeys.publicKey, myKeys.secretKey);
+      encryptedPayloadSelf = encryptedPayload;
     }
 
     const tempId = `temp_${Date.now()}_${Array.from(crypto.getRandomValues(new Uint8Array(6)), b => b.toString(36)).join('').slice(0, 8)}`;
