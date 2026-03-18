@@ -77,12 +77,10 @@ function hashPersonalMessage(message: string): Uint8Array {
 function signPersonalMessage(message: string, privateKey: Uint8Array): Uint8Array {
   const msgHash = hashPersonalMessage(message);
   // @noble/curves v2: format:'recovered' returns 65-byte Uint8Array (r[32]|s[32]|recovery[1])
-  // recovery is 0 or 1; Ethereum v = recovery + 27
+  // recovery byte is 0 or 1 — @xmtp/wasm-bindings v1.9.1 uses k256 which expects recovery ∈ {0,1}
+  // (do NOT add 27 — that is Ethereum legacy format, not used by XMTP's Rust layer)
   const sig = secp256k1.sign(msgHash, privateKey, { lowS: true, format: 'recovered' });
-  const result = new Uint8Array(65);
-  result.set(sig.slice(0, 64), 0);  // r|s
-  result[64] = sig[64] + 27;        // v: 27 or 28
-  return result;
+  return sig; // 65 bytes: r[32] | s[32] | recovery[1] where recovery ∈ {0,1}
 }
 
 // ----- Public API -----
