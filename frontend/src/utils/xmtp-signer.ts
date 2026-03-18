@@ -68,24 +68,25 @@ function hashPersonalMessage(message: string): Uint8Array {
 
 /**
  * Sign a message with a secp256k1 private key using EIP-191.
- * Returns 65-byte Ethereum signature (r[32] + s[32] + v[1]).
+ * Returns 65-byte Ethereum signature [r(32) | s(32) | v(1)] where v ∈ {0, 1}.
  *
- * @noble/curves v2: sign() returns a Signature object with
- * .toCompactRawBytes() → 64 bytes (r|s) and .recovery → 0 or 1.
- * Ethereum expects v = recovery + 27.
+ * @noble/curves v2 API:
+ * - sign() with no format → compact 64-byte Uint8Array [r | s], no recovery id
+ * - sign() with format:'recovered' → 65-byte Uint8Array [recovery(1) | r(32) | s(32)]
+ *   NOTE: recovery byte is PREPENDED — must rearrange to [r | s | recovery] for XMTP.
+ *
+ * XMTP's k256 crate (via addEcdsaSignature) expects [r(32) | s(32) | v(1)] with v ∈ {0,1}.
+ * Ethereum legacy v=27/28 is NOT used — k256 RecoveryId::try_from only accepts 0 or 1.
  */
 function signPersonalMessage(message: string, privateKey: Uint8Array): Uint8Array {
   const msgHash = hashPersonalMessage(message);
-  // @noble/curves v2: format:'recovered' → 65-byte Uint8Array (r[32]|s[32]|recovery[1])
-  // recovery ∈ {0,1} — Ethereum legacy +27 is not used by XMTP's k256 layer
-  const sigEip191 = secp256k1.sign(msgHash, privateKey, { lowS: true, format: 'recovered' });
-
-  // Also try raw keccak256 (no EIP-191 prefix) — some XMTP API paths don't apply the prefix
-  // The longer signature (EIP-191) is tried first; raw is the fallback in WASM verification
-  // Both produce valid ecrecover results; XMTP server determines which variant it expects.
-  // Current evidence: both formats fail → problem is likely in WASM binding version mismatch.
-  // Returning EIP-191 variant as it matches Viem/MetaMask behaviour (canonical for EOA signers).
-  return sigEip191;
+  // format:'recovered' → [recovery(1) | r(32) | s(32)]
+  const raw = secp256k1.sign(msgHash, privateKey, { lowS: true, format: 'recovered' });
+  // Rearrange to [r(32) | s(32) | recovery(1)] as expected by XMTP addEcdsaSignature
+  const sig65 = new Uint8Array(65);
+  sig65.set(raw.slice(1)); // r+s at bytes 0-63
+  sig65[64] = raw[0];      // recovery (0 or 1) at byte 64
+  return sig65;
 }
 
 // ----- Public API -----
