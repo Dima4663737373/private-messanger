@@ -76,11 +76,12 @@ function hashPersonalMessage(message: string): Uint8Array {
  */
 function signPersonalMessage(message: string, privateKey: Uint8Array): Uint8Array {
   const msgHash = hashPersonalMessage(message);
-  const sig = secp256k1.sign(msgHash, privateKey, { lowS: true });
-
+  // @noble/curves v2: format:'recovered' returns 65-byte Uint8Array (r[32]|s[32]|recovery[1])
+  // recovery is 0 or 1; Ethereum v = recovery + 27
+  const sig = secp256k1.sign(msgHash, privateKey, { lowS: true, format: 'recovered' });
   const result = new Uint8Array(65);
-  result.set(sig.toCompactRawBytes(), 0);   // 64 bytes: r|s
-  result[64] = (sig.recovery ?? 0) + 27;   // v: 27 or 28
+  result.set(sig.slice(0, 64), 0);  // r|s
+  result[64] = sig[64] + 27;        // v: 27 or 28
   return result;
 }
 

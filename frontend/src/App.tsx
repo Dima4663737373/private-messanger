@@ -499,16 +499,6 @@ const InnerApp: React.FC = () => {
     setRoomMembers(prev => prev.filter(a => a !== kickedAddress));
   }, []);
 
-  const handleKickMember = React.useCallback(async (roomId: string, targetAddress: string) => {
-    const ok = await kickMember(roomId, targetAddress);
-    if (ok) {
-      setRoomMembers(prev => prev.filter(a => a !== targetAddress));
-      toast.success('Member removed');
-    } else {
-      toast.error('Failed to remove member');
-    }
-  }, [kickMember]);
-
   const handleDMCleared = React.useCallback((dialogHash: string) => {
     // Use contacts ref via functional update to avoid stale closure
     setContacts(currentContacts => {
@@ -606,6 +596,16 @@ const InnerApp: React.FC = () => {
 
   // Wait for encryption keys to be derived before connecting WS — prevents limited sessions on new devices
   const { isConnected: isSyncConnected, typingUsers, notifyProfileUpdate, searchProfiles, fetchMessages, fetchDialogs, fetchDialogMessages, syncProfile, cacheDecryptedMessage, sendTyping, sendReadReceipt, addReaction, removeReaction, fetchRooms, createRoom, deleteRoom: deleteRoomApi, renameRoom: renameRoomApi, joinRoom, leaveRoom, inviteMember, kickMember, fetchRoomInfo, fetchRoomMessages, sendRoomMessage, subscribeRoom, sendRoomTyping, clearDMHistory, deleteRoomMessage, editRoomMessage, prepareDMMessage, commitDMMessage, sendDMMessage, deleteDMMessage, editDMMessage, fetchPins, pinMessage, unpinMessage, fetchOnlineStatus, fetchLinkPreview, blockedByUsers } = useSync(keysReady ? publicKey : null, handleNewMessage, handleMessageDeleted, handleMessageUpdated, handleReactionUpdate, handleRoomMessage, handleRoomCreated, handleRoomDeleted, handleDMCleared, handlePinUpdate, handleRoomMessageDeleted, handleRoomMessageEdited, handleDMSent, handleReadReceipt, handleProfileUpdated, handleRoomMemberKicked);
+
+  const handleKickMember = React.useCallback(async (roomId: string, targetAddress: string) => {
+    const ok = await kickMember(roomId, targetAddress);
+    if (ok) {
+      setRoomMembers(prev => prev.filter(a => a !== targetAddress));
+      toast.success('Member removed');
+    } else {
+      toast.error('Failed to remove member');
+    }
+  }, [kickMember]);
 
   // Keep refs in sync for use inside memoized callbacks
   activeChatIdRef.current = activeChatId;
