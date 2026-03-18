@@ -837,11 +837,24 @@ const InnerApp: React.FC = () => {
   }, [isSyncConnected, publicKey]);
 
   // Keep-alive ping: prevents Render free-tier cold starts for active users
-  // Pings /health every 13 minutes while the tab is open
+  // On first load: longer timeout (70s) + toast so user knows server is waking up
   useEffect(() => {
-    const ping = () => safeBackendFetch('health').catch(() => {});
-    ping(); // immediate ping on mount
-    const id = setInterval(ping, 13 * 60 * 1000);
+    let wakeToastId: string | undefined;
+    const ping = async (isFirst = false) => {
+      if (isFirst) {
+        wakeToastId = toast.loading('Server waking up…', { id: 'wake' });
+      }
+      const res = await safeBackendFetch('health', { timeout: 70_000 }).catch(() => null);
+      if (isFirst) {
+        toast.dismiss('wake');
+        if (!res || res.error) {
+          toast.error('Server offline — retrying…', { duration: 4000 });
+          setTimeout(() => ping(true), 10_000);
+        }
+      }
+    };
+    ping(true);
+    const id = setInterval(() => ping(false), 13 * 60 * 1000);
     return () => clearInterval(id);
   }, []);
 
