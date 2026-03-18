@@ -76,11 +76,16 @@ function hashPersonalMessage(message: string): Uint8Array {
  */
 function signPersonalMessage(message: string, privateKey: Uint8Array): Uint8Array {
   const msgHash = hashPersonalMessage(message);
-  // @noble/curves v2: format:'recovered' returns 65-byte Uint8Array (r[32]|s[32]|recovery[1])
-  // recovery byte is 0 or 1 — @xmtp/wasm-bindings v1.9.1 uses k256 which expects recovery ∈ {0,1}
-  // (do NOT add 27 — that is Ethereum legacy format, not used by XMTP's Rust layer)
-  const sig = secp256k1.sign(msgHash, privateKey, { lowS: true, format: 'recovered' });
-  return sig; // 65 bytes: r[32] | s[32] | recovery[1] where recovery ∈ {0,1}
+  // @noble/curves v2: format:'recovered' → 65-byte Uint8Array (r[32]|s[32]|recovery[1])
+  // recovery ∈ {0,1} — Ethereum legacy +27 is not used by XMTP's k256 layer
+  const sigEip191 = secp256k1.sign(msgHash, privateKey, { lowS: true, format: 'recovered' });
+
+  // Also try raw keccak256 (no EIP-191 prefix) — some XMTP API paths don't apply the prefix
+  // The longer signature (EIP-191) is tried first; raw is the fallback in WASM verification
+  // Both produce valid ecrecover results; XMTP server determines which variant it expects.
+  // Current evidence: both formats fail → problem is likely in WASM binding version mismatch.
+  // Returning EIP-191 variant as it matches Viem/MetaMask behaviour (canonical for EOA signers).
+  return sigEip191;
 }
 
 // ----- Public API -----

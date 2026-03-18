@@ -1098,18 +1098,18 @@ const InnerApp: React.FC = () => {
 
       const { tempId, encryptedPayload, timestamp } = prepared;
 
-      // 2. Request wallet approval (on-chain transaction)
+      // 2. Request wallet approval (on-chain transaction) — optional, WS always continues
       let txId: string | undefined;
       toast.loading('Waiting for wallet approval...', { id: 'tx-approval' });
       try {
         txId = await sendMessageOnChain(contact.address!, encryptedPayload, timestamp, attachmentCID);
         toast.dismiss('tx-approval');
         if (txId) processedMsgIds.current.add(txId);
-      } catch (e) {
+      } catch (e: any) {
         toast.dismiss('tx-approval');
-        logger.error('On-chain transaction failed:', e?.message);
-        toast.error('Transaction failed: ' + (e?.message || 'Unknown error'));
-        return;
+        logger.warn('On-chain transaction failed — message still sent via WS:', e?.message);
+        // Show non-blocking warning; message still delivered via WS below
+        toast('⚠ Blockchain proof failed — message sent via E2E', { duration: 3000 });
       }
 
       // 3. Send via WebSocket (instant delivery to recipient)
