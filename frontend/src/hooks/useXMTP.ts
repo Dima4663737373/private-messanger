@@ -12,12 +12,19 @@
  * - dbPath: null → no OPFS database → no multi-tab conflicts
  * - Each tab initializes its own in-memory XMTP client
  * - Messages are fetched fresh from XMTP network when needed
+ *
+ * IMPORTANT: @xmtp/browser-sdk is loaded via dynamic import inside initialize().
+ * Static import causes TDZ (Temporal Dead Zone) errors: the SDK registers
+ * MessagePort handlers synchronously during module load; if a worker fires
+ * before the main bundle finishes evaluating, it accesses uninitialized vars.
  */
 
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { Client, IdentifierKind, type DecodedMessage } from '@xmtp/browser-sdk';
 import { createXmtpSigner, getXmtpEthAddress } from '../utils/xmtp-signer';
 import { logger } from '../utils/logger';
+
+// IdentifierKind.Ethereum = 0 (from @xmtp/wasm-bindings, matches xmtp-signer.ts)
+const IDENTIFIER_KIND_ETHEREUM = 0;
 
 // ----- Types -----
 
@@ -52,7 +59,7 @@ export function useXMTP(aleoAddress: string | null): UseXmtpReturn {
   const [xmtpError, setXmtpError] = useState<string | null>(null);
   const [xmtpIdentity, setXmtpIdentity] = useState<string | null>(null);
 
-  const clientRef = useRef<Client | null>(null);
+  const clientRef = useRef<any>(null);
   const myInboxIdRef = useRef<string | null>(null);
   const initAttemptedRef = useRef<string | null>(null); // track which address we initialized for
 
@@ -82,7 +89,11 @@ export function useXMTP(aleoAddress: string | null): UseXmtpReturn {
         const ethAddress = getXmtpEthAddress(aleoAddress);
         setXmtpIdentity(ethAddress);
 
-        const client = await Client.create(signer, {
+        // Dynamic import — keeps @xmtp/browser-sdk out of the main bundle chunk
+        // and prevents its module-init MessagePort handlers from causing TDZ errors.
+        const { Client } = await import('@xmtp/browser-sdk');
+
+        const client = await Client.create(signer as any, {
           env: 'production',
           // dbPath: null → no local SQLite database
           // This avoids OPFS multi-tab conflicts entirely
@@ -110,7 +121,6 @@ export function useXMTP(aleoAddress: string | null): UseXmtpReturn {
           logger.warn('[XMTP] Storage conflict (likely multi-tab). XMTP disabled for this tab.');
           setXmtpError('multi-tab');
         } else if (msg.toLowerCase().includes('signature')) {
-          // Signature errors are non-fatal — XMTP is optional, WS is primary
           logger.warn('[XMTP] Signature error during init — XMTP disabled, WS still active:', msg);
           setXmtpError('signature-error');
         } else {
@@ -146,7 +156,7 @@ export function useXMTP(aleoAddress: string | null): UseXmtpReturn {
     try {
       const ethAddress = getXmtpEthAddress(recipientAleoAddress);
       const result = await client.canMessage([
-        { identifier: ethAddress, identifierKind: IdentifierKind.Ethereum },
+        { identifier: ethAddress, identifierKind: IDENTIFIER_KIND_ETHEREUM },
       ]);
       return result.get(ethAddress) === true;
     } catch (err: any) {
@@ -169,7 +179,7 @@ export function useXMTP(aleoAddress: string | null): UseXmtpReturn {
 
       // Check registration first
       const canMsg = await client.canMessage([
-        { identifier: ethAddress, identifierKind: IdentifierKind.Ethereum },
+        { identifier: ethAddress, identifierKind: IDENTIFIER_KIND_ETHEREUM },
       ]);
 
       if (!canMsg.get(ethAddress)) {
@@ -180,7 +190,7 @@ export function useXMTP(aleoAddress: string | null): UseXmtpReturn {
       // Get recipient's inbox ID
       const inboxId = await client.fetchInboxIdByIdentifier({
         identifier: ethAddress,
-        identifierKind: IdentifierKind.Ethereum,
+        identifierKind: IDENTIFIER_KIND_ETHEREUM,
       });
 
       if (!inboxId) {
@@ -214,7 +224,7 @@ export function useXMTP(aleoAddress: string | null): UseXmtpReturn {
 
       const inboxId = await client.fetchInboxIdByIdentifier({
         identifier: ethAddress,
-        identifierKind: IdentifierKind.Ethereum,
+        identifierKind: IDENTIFIER_KIND_ETHEREUM,
       });
 
       if (!inboxId) return [];
@@ -226,8 +236,8 @@ export function useXMTP(aleoAddress: string | null): UseXmtpReturn {
       const myInboxId = myInboxIdRef.current;
 
       return rawMessages
-        .filter((msg): msg is DecodedMessage<string> => typeof msg.content === 'string')
-        .map(msg => ({
+        .filter((msg: any) => typeof msg.content === 'string')
+        .map((msg: any) => ({
           id: msg.id,
           senderInboxId: msg.senderInboxId,
           content: msg.content as string,

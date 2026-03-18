@@ -7,13 +7,26 @@
  * always produces the same Ethereum key and XMTP identity.
  *
  * Security: The derived key is only used for XMTP identity, not for any financial transactions.
+ *
+ * NOTE: @xmtp/browser-sdk is NOT imported here to avoid TDZ circular-dependency
+ * errors during Rollup bundle initialization. IdentifierKind.Ethereum = 0 is
+ * hardcoded (verified from @xmtp/wasm-bindings source).
  */
 
 import { secp256k1 } from '@noble/curves/secp256k1.js';
 import { sha256 } from '@noble/hashes/sha2.js';
 import { keccak_256 } from '@noble/hashes/sha3.js';
 import { bytesToHex } from '@noble/curves/utils.js';
-import { IdentifierKind, type Signer } from '@xmtp/browser-sdk';
+
+// IdentifierKind.Ethereum = 0 (from @xmtp/wasm-bindings)
+const IDENTIFIER_KIND_ETHEREUM = 0;
+
+// Minimal Signer interface — matches @xmtp/browser-sdk Signer without importing it
+export interface XmtpEoaSigner {
+  type: 'EOA';
+  getIdentifier: () => { identifier: string; identifierKind: number };
+  signMessage: (message: string) => Promise<Uint8Array>;
+}
 
 // ----- Key Derivation -----
 
@@ -77,7 +90,7 @@ function signPersonalMessage(message: string, privateKey: Uint8Array): Uint8Arra
  * Create an XMTP-compatible EOA signer from an Aleo address.
  * The returned signer can be passed to `Client.create(signer, options)`.
  */
-export function createXmtpSigner(aleoAddress: string): Signer {
+export function createXmtpSigner(aleoAddress: string): XmtpEoaSigner {
   const privateKey = derivePrivateKey(aleoAddress);
   const ethAddress = privateKeyToEthAddress(privateKey);
 
@@ -85,7 +98,7 @@ export function createXmtpSigner(aleoAddress: string): Signer {
     type: 'EOA' as const,
     getIdentifier: () => ({
       identifier: ethAddress,
-      identifierKind: IdentifierKind.Ethereum,
+      identifierKind: IDENTIFIER_KIND_ETHEREUM,
     }),
     signMessage: async (message: string): Promise<Uint8Array> => {
       return signPersonalMessage(message, privateKey);
