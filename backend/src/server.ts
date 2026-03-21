@@ -2616,6 +2616,15 @@ initDB().then(async () => {
     logger.info(`NODE_ENV: ${process.env.NODE_ENV || 'development'}`);
     if (!process.env.PINATA_JWT) logger.warn('[Config] PINATA_JWT not set — IPFS uploads will fail');
     if (!VAPID_PUBLIC || !VAPID_PRIVATE) logger.warn('[Config] VAPID keys not set — push notifications disabled');
+
+    // Self-ping every 4 minutes to prevent Render free tier from sleeping
+    if (IS_PRODUCTION) {
+      const SELF_URL = process.env.RENDER_EXTERNAL_URL || `https://ghost-backend-d3gg.onrender.com`;
+      setInterval(async () => {
+        try { await fetch(`${SELF_URL}/health`); } catch { /* ignore */ }
+      }, 4 * 60 * 1000);
+      logger.info(`[KeepAlive] Self-ping enabled every 4min → ${SELF_URL}/health`);
+    }
   });
 }).catch((err) => {
   logger.error('Failed to initialize database:', err);
