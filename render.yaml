@@ -18,7 +18,7 @@ services:
       - key: ALEO_API_URL
         value: https://api.explorer.provable.com/v1
       - key: ALEO_PROGRAM_ID
-        value: ghost_msg_018.aleo
+        value: ghost_msg_019.aleo
       - key: PINATA_JWT
         sync: false
       - key: HMAC_MASTER_SECRET

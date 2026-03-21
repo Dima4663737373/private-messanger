@@ -140,17 +140,14 @@ async function seedToKeypair(seedInput: string): Promise<EncryptionKeyPair> {
   };
 }
 
-// Type for signMessage from useWallet() context
-type SignMessageFn = (message: Uint8Array) => Promise<Uint8Array>;
-
 /**
  * Main entry point: get or derive encryption keys.
  *
- * @param signMessageFn - signMessage function from useWallet() context
+ * @param _unused - Deprecated, kept for backward compatibility (pass undefined)
  * @param publicKey - User's Aleo address
  */
 export async function getOrDeriveKeys(
-  signMessageFn: SignMessageFn | undefined,
+  _unused: unknown,
   publicKey: string,
   useCache: boolean = true
 ): Promise<EncryptionKeyPair> {
@@ -211,18 +208,28 @@ export async function encryptKeysWithPassphrase(
   keys: EncryptionKeyPair,
   passphrase: string,
   address: string
-): Promise<{ encrypted: string; nonce: string }> {
-  const keyMaterial = await crypto.subtle.digest(
-    'SHA-256',
-    decodeUTF8(passphrase + address)
+): Promise<{ encrypted: string; nonce: string; salt: string }> {
+  const salt = nacl.randomBytes(16);
+  const baseKey = await crypto.subtle.importKey(
+    'raw',
+    decodeUTF8(passphrase + address),
+    'PBKDF2',
+    false,
+    ['deriveBits']
   );
-  const secretKey = new Uint8Array(keyMaterial);
+  const derived = await crypto.subtle.deriveBits(
+    { name: 'PBKDF2', salt, iterations: 100_000, hash: 'SHA-256' },
+    baseKey,
+    256
+  );
+  const secretKey = new Uint8Array(derived);
   const nonce = nacl.randomBytes(nacl.secretbox.nonceLength);
   const plaintext = decodeUTF8(JSON.stringify(keys));
   const encrypted = nacl.secretbox(plaintext, nonce, secretKey);
   return {
     encrypted: encodeBase64(encrypted),
-    nonce: encodeBase64(nonce)
+    nonce: encodeBase64(nonce),
+    salt: encodeBase64(salt)
   };
 }
 
@@ -233,14 +240,35 @@ export async function decryptKeysWithPassphrase(
   encryptedB64: string,
   nonceB64: string,
   passphrase: string,
-  address: string
+  address: string,
+  saltB64?: string
 ): Promise<EncryptionKeyPair | null> {
   try {
-    const keyMaterial = await crypto.subtle.digest(
-      'SHA-256',
-      decodeUTF8(passphrase + address)
-    );
-    const secretKey = new Uint8Array(keyMaterial);
+    let secretKey: Uint8Array;
+    if (saltB64) {
+      // New PBKDF2 path
+      const salt = decodeBase64(saltB64);
+      const baseKey = await crypto.subtle.importKey(
+        'raw',
+        decodeUTF8(passphrase + address),
+        'PBKDF2',
+        false,
+        ['deriveBits']
+      );
+      const derived = await crypto.subtle.deriveBits(
+        { name: 'PBKDF2', salt, iterations: 100_000, hash: 'SHA-256' },
+        baseKey,
+        256
+      );
+      secretKey = new Uint8Array(derived);
+    } else {
+      // Legacy SHA-256 fallback for old backups
+      const keyMaterial = await crypto.subtle.digest(
+        'SHA-256',
+        decodeUTF8(passphrase + address)
+      );
+      secretKey = new Uint8Array(keyMaterial);
+    }
     const nonce = decodeBase64(nonceB64);
     const encrypted = decodeBase64(encryptedB64);
     const decrypted = nacl.secretbox.open(encrypted, nonce, secretKey);

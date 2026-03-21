@@ -11,7 +11,7 @@ export const API_CONFIG = {
   WS_URL: (import.meta.env.VITE_WS_URL || 'ws://localhost:3002').trim(),
 
   // Network Config
-  NETWORK: 'testnet3',
+  NETWORK: 'testnet',
   PROGRAM_ID
 };
 

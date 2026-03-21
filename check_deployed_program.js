@@ -1,18 +1,18 @@
-const PROGRAM_ID = "priv_messenger_leotest_008.aleo";
+const PROGRAM_ID = "ghost_msg_019.aleo";
 const RPC_BASES = [
+    "https://api.explorer.provable.com/v1",
     "https://api.explorer.aleo.org/v1",
-    "https://vm.aleo.org/api",
-    "https://testnet3.aleo.org"
+    "https://vm.aleo.org/api"
 ];
 
 async function checkDeployedProgram() {
     console.log(`Checking deployed program: ${PROGRAM_ID}\n`);
 
     const paths = [
-        `/testnet3/program/${PROGRAM_ID}`,
+        `/testnet/program/${PROGRAM_ID}`,
         `/program/${PROGRAM_ID}`,
     ];
-    
+
     for (const RPC_BASE of RPC_BASES) {
         console.log(`\nTrying RPC base: ${RPC_BASE}`);
 
@@ -26,7 +26,7 @@ async function checkDeployedProgram() {
                     console.log(`✅ Program found at ${url}\n`);
                     console.log("Program content (first 2000 chars):");
                     console.log(text.substring(0, 2000));
-                    
+
                     // Check for send_message function
                     if (text.includes("send_message")) {
                         console.log("\n✅ send_message function found in deployed program");
@@ -47,7 +47,7 @@ async function checkDeployedProgram() {
             }
         }
     }
-    
+
     console.log("\n⚠️ Program NOT found on any checked path.");
 }
 

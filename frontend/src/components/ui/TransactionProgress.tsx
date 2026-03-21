@@ -1,6 +1,7 @@
 import React from 'react';
 import { Check, Loader2 } from 'lucide-react';
 import { cn } from './Spinner';
+import { ALEO_EXPLORER_URLS } from '../../constants';
 
 export type TxStep = 'idle' | 'preparing' | 'signing' | 'broadcasting' | 'confirming' | 'confirmed' | 'failed';
 
@@ -37,7 +38,7 @@ export const TransactionProgress: React.FC<TransactionProgressProps> = ({ step, 
         <h4 className="text-sm font-medium text-white/90">Transaction Progress</h4>
         {txId && (
             <a 
-                href={`https://testnet3.aleoscan.io/transaction/${txId}`} 
+                href={`${ALEO_EXPLORER_URLS.testnet}/transaction/${txId}`}
                 target="_blank" 
                 rel="noreferrer"
                 className="text-xs text-blue-400 hover:text-blue-300"

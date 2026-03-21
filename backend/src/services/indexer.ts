@@ -5,7 +5,7 @@ import { Op } from 'sequelize';
 import { logger } from '../utils/logger';
 
 // CONSTANTS
-const PROGRAM_ID = process.env.ALEO_PROGRAM_ID || "ghost_msg_018.aleo";
+const PROGRAM_ID = process.env.ALEO_PROGRAM_ID || "ghost_msg_019.aleo";
 const ALEO_API_URL = process.env.ALEO_API_URL || "https://api.explorer.provable.com/v1"; // Production default
 
 interface AleoTransition {
@@ -123,9 +123,10 @@ export class IndexerService {
           const endHeight = Math.min(currentHeight + BATCH_SIZE, latestHeight);
           for (let h = currentHeight + 1; h <= endHeight; h++) {
             await this.processBlock(h);
-            syncStatus.last_block_height = h;
-            await syncStatus.save();
           }
+          // Batch save: persist height once per batch instead of per block
+          syncStatus.last_block_height = endHeight;
+          await syncStatus.save();
           currentHeight = endHeight;
         }
       }

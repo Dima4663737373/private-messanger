@@ -2,7 +2,7 @@
 // Combines messaging (records, encryption keys) with channels/groups proof.
 // V6: edit_message_proof, delete_message_proof (no record needed for off-chain messages).
 
-program ghost_msg_018.aleo {
+program ghost_msg_019.aleo {
 
     @noupgrade
     async constructor() {}
@@ -296,6 +296,10 @@ program ghost_msg_018.aleo {
         channel_name_hash: field,
         creator_hash: field
     ) -> Future {
+        // Verify creator_hash matches the caller
+        let computed_creator_hash: field = BHP256::hash_to_field(self.caller);
+        assert_eq(computed_creator_hash, creator_hash);
+
         // Salt the channel key with creator_hash to avoid collisions
         let channel_key: field = BHP256::hash_to_field(DialogPair { a: channel_name_hash, b: creator_hash });
         return finalize_create_channel(channel_key, creator_hash);
@@ -313,6 +317,10 @@ program ghost_msg_018.aleo {
         group_name_hash: field,
         creator_hash: field
     ) -> Future {
+        // Verify creator_hash matches the caller
+        let computed_creator_hash: field = BHP256::hash_to_field(self.caller);
+        assert_eq(computed_creator_hash, creator_hash);
+
         // Salt the group key with creator_hash to avoid collisions
         let group_key: field = BHP256::hash_to_field(DialogPair { a: group_name_hash, b: creator_hash });
         return finalize_create_group(group_key, creator_hash);
@@ -329,6 +337,10 @@ program ghost_msg_018.aleo {
         channel_name_hash: field,
         creator_hash: field
     ) -> Future {
+        // Verify creator_hash matches the caller
+        let computed_creator_hash: field = BHP256::hash_to_field(self.caller);
+        assert_eq(computed_creator_hash, creator_hash);
+
         let channel_key: field = BHP256::hash_to_field(DialogPair { a: channel_name_hash, b: creator_hash });
         return finalize_delete_channel(channel_key, creator_hash);
     }
@@ -344,6 +356,10 @@ program ghost_msg_018.aleo {
         group_name_hash: field,
         creator_hash: field
     ) -> Future {
+        // Verify creator_hash matches the caller
+        let computed_creator_hash: field = BHP256::hash_to_field(self.caller);
+        assert_eq(computed_creator_hash, creator_hash);
+
         let group_key: field = BHP256::hash_to_field(DialogPair { a: group_name_hash, b: creator_hash });
         return finalize_delete_group(group_key, creator_hash);
     }

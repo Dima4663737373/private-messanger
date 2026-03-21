@@ -13,12 +13,11 @@ export const UI_AVATARS_BASE_URL = 'https://ui-avatars.com/api/';
 /** IPFS gateway for file attachments */
 export const IPFS_GATEWAY_URL = 'https://ipfs.io/ipfs/';
 
-/** Aleo RPC endpoints (fallback chain) */
+/** Aleo RPC endpoints (fallback chain — v2 preferred, v1 as fallback) */
 export const ALEO_RPC_ENDPOINTS = [
   'https://api.explorer.provable.com/v1',
   'https://api.explorer.aleo.org/v1',
-  'https://testnet.aleorpc.com/v1',
-  'https://api.testnet.aleo.org/v1'
+  'https://testnet.aleorpc.com',
 ] as const;
 
 /** Aleo Explorer URLs by network */
@@ -34,8 +33,8 @@ export const ALEO_EXPLORER_URLS = {
 /** Default transaction fee in microcredits */
 export const TRANSACTION_FEE = 50000;
 
-/** Minimum fee in microcredits (Aleo network requirement) */
-export const MIN_FEE_MICROCREDITS = 10_000_000_000;
+/** Minimum balance in microcredits for transactions (0.01 ALEO = 10,000 microcredits) */
+export const MIN_FEE_MICROCREDITS = 10_000;
 
 /** Wallet transaction timeout (ms) */
 export const WALLET_TIMEOUT = 30000;

@@ -3,19 +3,31 @@
  * Run this after deploying to ensure the deployment was successful
  */
 
-const PROGRAM_ID = "priv_messenger_leotest_014.aleo";
+const PROGRAM_ID = "ghost_msg_019.aleo";
 const REQUIRED_FUNCTIONS = [
     "register_profile",
+    "update_profile",
     "send_message",
     "update_message",
-    "delete_message"
+    "delete_message",
+    "clear_history",
+    "delete_chat",
+    "edit_message_proof",
+    "delete_message_proof",
+    "add_contact",
+    "update_contact",
+    "delete_contact",
+    "create_channel",
+    "create_group",
+    "delete_channel",
+    "delete_group"
 ];
 
 const RPC_BASES = [
     { base: "https://api.explorer.provable.com/v2", paths: [`/programs/${PROGRAM_ID}`] },
-    { base: "https://api.explorer.provable.com/v1", paths: [`/testnet3/program/${PROGRAM_ID}`, `/program/${PROGRAM_ID}`] },
-    { base: "https://api.explorer.aleo.org/v1", paths: [`/testnet3/program/${PROGRAM_ID}`, `/program/${PROGRAM_ID}`] },
-    { base: "https://vm.aleo.org/api", paths: [`/testnet3/program/${PROGRAM_ID}`, `/program/${PROGRAM_ID}`] }
+    { base: "https://api.explorer.provable.com/v1", paths: [`/testnet/program/${PROGRAM_ID}`, `/program/${PROGRAM_ID}`] },
+    { base: "https://api.explorer.aleo.org/v1", paths: [`/testnet/program/${PROGRAM_ID}`, `/program/${PROGRAM_ID}`] },
+    { base: "https://vm.aleo.org/api", paths: [`/testnet/program/${PROGRAM_ID}`, `/program/${PROGRAM_ID}`] }
 ];
 
 async function verifyDeployment() {

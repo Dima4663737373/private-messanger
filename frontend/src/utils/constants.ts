@@ -1,8 +1,5 @@
-// Transaction fee: same as tipzo Profile / QuickDonate (50000 — works in tipzo)
-export const TRANSACTION_FEE = 50000;
-
-// For balance check / "Need X ALEO" display (0.01 ALEO = 10^10 microcredits)
-export const MIN_FEE_MICROCREDITS = 10_000_000_000;
+// Re-export from centralized constants to avoid duplicates
+export { TRANSACTION_FEE, MIN_FEE_MICROCREDITS } from '../constants';
 
 /** Safely convert a value to a numeric timestamp. Returns 0 if NaN/invalid. */
 export function safeTimestamp(val: unknown): number {

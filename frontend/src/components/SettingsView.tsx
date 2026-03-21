@@ -7,6 +7,7 @@ import { uploadFileToIPFS } from '../utils/ipfs';
 import { MAX_AVATAR_SIZE, AVATAR_ALLOWED_TYPES, IPFS_GATEWAY_URL, MAX_USERNAME_LENGTH, MAX_BIO_LENGTH } from '../constants';
 import { encryptKeysWithPassphrase, decryptKeysWithPassphrase, validateKeyPair } from '../utils/crypto';
 import { getCachedKeys, setCachedKeys } from '../utils/key-derivation';
+import { PROGRAM_ID } from '../deployed_program';
 
 interface SettingsViewProps {
   onCreateProfile: (name: string, bio: string) => Promise<void>;
@@ -573,7 +574,7 @@ const SettingsView: React.FC<SettingsViewProps> = ({
                   </div>
                   <div className="flex justify-between text-[#666]">
                     <span>Program</span>
-                    <span className="font-mono text-[#333] text-xs">ghost_msg_018.aleo</span>
+                    <span className="font-mono text-[#333] text-xs">{PROGRAM_ID}</span>
                   </div>
                   <div className="flex justify-between text-[#666]">
                     <span>Message content</span>

@@ -13,18 +13,19 @@ if [ -z "$PRIVATE_KEY" ]; then
     exit 1
 fi
 
-echo "Deploying to Aleo Mainnet..."
-echo "Program ID: private_messenger_mainnet_v1.aleo"
+PROGRAM_ID="ghost_msg_019.aleo"
+NETWORK="${NETWORK:-testnet}"
 
-# Note: This requires 'snarkos' or 'leo' CLI installed and configured
-# The private key provided in .env will be used.
+echo "Deploying to Aleo ($NETWORK)..."
+echo "Program ID: $PROGRAM_ID"
+echo "Endpoint: ${ENDPOINT:-https://api.explorer.provable.com/v1}"
 
 # Using Leo CLI (if available)
 if command -v leo &> /dev/null; then
     echo "Using Leo CLI..."
-    leo deploy --network mainnet --private-key "$PRIVATE_KEY" --priority-fee 1000000
+    leo deploy --network "$NETWORK" --private-key "$PRIVATE_KEY" --priority-fee 1000000
 else
     echo "Leo CLI not found. Please install Leo or SnarkOS."
     echo "Command to run manually:"
-    echo "leo deploy --network mainnet --private-key \$PRIVATE_KEY"
+    echo "leo deploy --network $NETWORK --private-key \$PRIVATE_KEY"
 fi

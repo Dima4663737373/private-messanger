@@ -27,7 +27,7 @@ export async function checkProgramExists(
     API_BASE,
     ...ALEO_RPC_ENDPOINTS,
     'https://vm.aleo.org/api',
-    'https://api.explorer.provable.com/v2',
+    'https://api.provable.com/v2/testnet',
   ];
 
   // Deduplicate endpoints

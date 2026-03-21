@@ -9,8 +9,9 @@ import { logger } from '../utils/logger';
 import { indexedDBStorage, StoredMessage } from '../utils/indexeddb-storage';
 import { hashAddress } from '../utils/aleo-utils';
 
-const EXPLORER_API = 'https://api.explorer.provable.com/v1';
-const PROGRAM_ID = 'ghost_msg_018.aleo';
+import { API_CONFIG } from '../config';
+const EXPLORER_API = API_CONFIG.EXPLORER_BASE;
+const PROGRAM_ID = API_CONFIG.PROGRAM_ID;
 
 export interface BlockchainMessage {
   transactionId: string;

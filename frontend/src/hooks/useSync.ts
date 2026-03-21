@@ -135,6 +135,25 @@ export function useSync(
     return text;
   };
 
+  // Check if text is readable (not garbled binary/truncated on-chain data)
+  const isReadableText = (text: string): boolean => {
+    if (!text || text.length === 0) return false;
+    // Allow printable ASCII, common Unicode (letters, digits, symbols, emoji), whitespace
+    // Reject if >30% of chars are control/replacement/box-drawing characters
+    let badChars = 0;
+    for (let i = 0; i < text.length; i++) {
+      const code = text.charCodeAt(i);
+      // Control chars (except tab, newline, CR), or replacement char U+FFFD,
+      // or box-drawing/block elements (U+2500-U+259F), or specials (U+FFF0-U+FFFF)
+      if ((code < 0x20 && code !== 0x09 && code !== 0x0A && code !== 0x0D)
+        || code === 0xFFFD
+        || (code >= 0x2500 && code <= 0x259F)) {
+        badChars++;
+      }
+    }
+    return badChars / text.length < 0.3;
+  };
+
   const decryptPayload = async (
       payload: string,
       sender: string,
@@ -167,7 +186,7 @@ export function useSync(
         if (isMine && payloadSelf && isEncryptedFormat(payloadSelf)) {
              try {
                 const decryptedSelf = await decrypt(payloadSelf, myKeys.publicKey, myKeys.secretKey);
-                if (decryptedSelf) return decryptedSelf;
+                if (decryptedSelf && isReadableText(decryptedSelf)) return decryptedSelf;
              } catch (e) { /* ignore */ }
         }
 
@@ -178,14 +197,14 @@ export function useSync(
             if (isMine) {
                 try {
                     const decrypted = await decryptAsSender(payload, otherKey, myKeys.secretKey);
-                    if (decrypted) return decrypted;
+                    if (decrypted && isReadableText(decrypted)) return decrypted;
                 } catch (e) {
                     logger.warn(`[Decrypt] decryptAsSender error:`, e);
                 }
             } else {
                 try {
                     const decrypted = await decrypt(payload, otherKey, myKeys.secretKey);
-                    if (decrypted) return decrypted;
+                    if (decrypted && isReadableText(decrypted)) return decrypted;
                 } catch (e) {
                     logger.warn(`[Decrypt] decrypt error:`, e);
                 }
@@ -196,7 +215,7 @@ export function useSync(
         if (isMine) {
             try {
                 const selfDecrypt = await decrypt(payload, myKeys.publicKey, myKeys.secretKey);
-                if (selfDecrypt) return selfDecrypt;
+                if (selfDecrypt && isReadableText(selfDecrypt)) return selfDecrypt;
             } catch { /* ignore */ }
         }
 
@@ -642,12 +661,12 @@ export function useSync(
           cacheSet(keyCache.current, rawMsg.sender, rawMsg.senderEncryptionKey, MAX_KEY_CACHE_SIZE);
         }
 
-        // Decrypt (check caches first — skip cached failures so retry is possible)
+        // Decrypt (check caches first — skip cached failures and garbled text so retry is possible)
         let text = decryptionCache.current.get(rawMsg.id);
-        if (text?.startsWith('[Encrypted')) text = undefined;
+        if (text?.startsWith('[Encrypted') || (text && !isReadableText(text))) text = undefined;
         if (!text) {
           const persisted = await getCachedMessage(rawMsg.id).catch(() => null);
-          if (persisted && !persisted.startsWith('[Encrypted')) text = persisted;
+          if (persisted && !persisted.startsWith('[Encrypted') && isReadableText(persisted)) text = persisted;
         }
         if (!text) {
           text = await decryptPayload(
@@ -708,10 +727,10 @@ export function useSync(
       }
 
       let text = decryptionCache.current.get(rawMsg.id);
-      if (text?.startsWith('[Encrypted')) text = undefined;
+      if (text?.startsWith('[Encrypted') || (text && !isReadableText(text))) text = undefined;
       if (!text) {
         const persisted = await getCachedMessage(rawMsg.id).catch(() => null);
-        if (persisted && !persisted.startsWith('[Encrypted')) text = persisted;
+        if (persisted && !persisted.startsWith('[Encrypted') && isReadableText(persisted)) text = persisted;
       }
       if (!text) {
         text = await decryptPayload(
@@ -959,6 +978,11 @@ export function useSync(
           try {
             // Check in-memory cache → IndexedDB cache → decrypt
             let text = decryptionCache.current.get(rawMsg.id) || idbCache.get(rawMsg.id);
+            // Reject garbled cached text (from old indexer data)
+            if (text && !isReadableText(text) && !text.startsWith('[')) {
+              text = undefined;
+              decryptionCache.current.delete(rawMsg.id);
+            }
             if (!text) {
                  const payload = rawMsg.encrypted_payload || rawMsg.content_encrypted;
                  text = await decryptPayload(

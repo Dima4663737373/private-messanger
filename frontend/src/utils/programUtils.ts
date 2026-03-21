@@ -6,16 +6,16 @@ import { getErrorMessage } from './errors';
 
 export const PROGRAM_ID = API_CONFIG.PROGRAM_ID;
 
-// Provable API v2 endpoint (recommended)
-const PROVABLE_API_V2 = "https://api.explorer.provable.com/v2";
+// Provable API v2 endpoint (recommended — better error messages, actively maintained)
+const PROVABLE_API_V2 = "https://api.provable.com/v2/testnet";
 // Fallback endpoints
 const RPC_ENDPOINTS = [
-    { base: API_CONFIG.EXPLORER_BASE, paths: [`/testnet3/program/${PROGRAM_ID}`, `/program/${PROGRAM_ID}`] },
+    { base: API_CONFIG.EXPLORER_BASE, paths: [`/testnet/program/${PROGRAM_ID}`, `/testnet3/program/${PROGRAM_ID}`, `/program/${PROGRAM_ID}`] },
     ...ALEO_RPC_ENDPOINTS.map(base => ({
         base,
-        paths: [`/testnet3/program/${PROGRAM_ID}`, `/program/${PROGRAM_ID}`]
+        paths: [`/testnet/program/${PROGRAM_ID}`, `/testnet3/program/${PROGRAM_ID}`, `/program/${PROGRAM_ID}`]
     })),
-    { base: "https://vm.aleo.org/api", paths: [`/testnet3/program/${PROGRAM_ID}`, `/program/${PROGRAM_ID}`] }
+    { base: "https://vm.aleo.org/api", paths: [`/testnet/program/${PROGRAM_ID}`, `/testnet3/program/${PROGRAM_ID}`, `/program/${PROGRAM_ID}`] }
 ];
 
 export interface ProgramStatus {
